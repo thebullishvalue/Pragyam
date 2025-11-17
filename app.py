@@ -1145,7 +1145,7 @@ def main():
         cash_remaining = capital - total_value
 
         # Using metric cards for the header stats
-        col1, col2, col3 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.markdown(f"<div class='metric-card'><h4>Total Invested</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
         with col2:
