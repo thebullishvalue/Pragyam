@@ -1,16 +1,3 @@
-"""
-Hedge-Fund Grade Portfolio Curation System
-
-This version incorporates a new, professional UI/UX inspired by the design
-aesthetic of pizzint.watch, featuring a "glowy matte" dark charcoal theme.
-It uses subtle glows and a cohesive color palette for a production-grade feel.
-
-**New in v12: Enhanced Market Regime Detection sensitivity to reduce "CHOP"
-classifications and improve responsiveness to changing market dynamics.**
-
-**Refactored: All strategy logic moved to strategies.py**
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -26,6 +13,13 @@ import io
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 import time # Import time for toast
+import warnings  # Add this import
+
+# --- Suppress known NumPy warnings during backtest warm-up ---
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Mean of empty slice')
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered in divide')
+# --- End suppression ---
+
 
 # --- Import Strategies from strategies.py ---
 # Ensure strategies.py is in the same directory or accessible in the path
@@ -1040,6 +1034,8 @@ def main():
             help="Choose your primary investment objective (e.g., short-term trading or long-term investing)."
         )
         
+        st.markdown("### Market Condition Mix")
+        
         mix_options = list(PORTFOLIO_STYLES[selected_main_branch]["mixes"].keys())
         
         # --- UPDATED: No more dropdown, just display the suggested mix ---
@@ -1063,6 +1059,10 @@ def main():
         st.markdown("### Portfolio Parameters")
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
+
+        st.markdown("### Risk Management")
+        st.markdown(f"**Min Position Size:** `{st.session_state.min_pos_pct:.1f}%`")
+        st.markdown(f"**Max Position Size:** `{st.session_state.max_pos_pct:.1f}%`")
 
         if st.button("🚀 Run Analysis", width='stretch', type="primary"):
             
@@ -1149,13 +1149,15 @@ def main():
         cash_remaining = capital - total_value
 
         # Using metric cards for the header stats
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(4)
         with col1:
             st.markdown(f"<div class='metric-card'><h4>Total Invested</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
         with col2:
             st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
         with col3:
             st.markdown(f"<div class='metric-card'><h4>Cash Remaining</h4><h2>{cash_remaining:,.2f}</h2></div>", unsafe_allow_html=True)
+        with col4:
+            st.markdown(f"<div class='metric-card'><h4>Max Position</h4><h2>{st.session_state.portfolio['weightage_pct'].max():.2f}%</h2></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["**📈 Portfolio**", "**📊 Performance**", "**🎯 Strategy Deep Dive**"])
