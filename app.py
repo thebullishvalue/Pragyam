@@ -1526,7 +1526,7 @@ def main():
 
     # --- ADDED: Sanket-style footer ---
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© {datetime.now().year} Pragyam | Quantitative Curation | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    st.caption(f"© {datetime.now().year} Pragyam | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
     # --- END FOOTER ---
 
 if __name__ == "__main__":
