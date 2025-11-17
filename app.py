@@ -10,6 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
 import io
+import base64 # Added for download link
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 import time # Import time for toast
@@ -49,25 +50,269 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
 st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="✨", layout="wide", initial_sidebar_state="expanded")
 
-# "Glowy Matte" Gold/Yellow Inspired Dashboard CSS
+# --- REPLACED CSS with quo.py styling ---
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    
     :root {
-        --primary-color: #FFC300; /* Vibrant Gold/Yellow */
-        --background-color: #0F0F0F; /* Near Black */
-        --secondary-background-color: #1A1A1A; /* Charcoal */
-        --text-color: #EAEAEA; /* Light Grey */
-        --text-color-darker: #888888; /* Grey */
-        --primary-rgb: 255, 195, 0; /* RGB for Gold/Yellow */
+        --primary-color: #FFC300;
+        --primary-rgb: 255, 195, 0;
+        --background-color: #0F0F0F;
+        --secondary-background-color: #1A1A1A;
+        --bg-card: #1A1A1A;
+        --bg-elevated: #2A2A2A;
+        --text-primary: #EAEAEA;
+        --text-secondary: #EAEAEA;
+        --text-muted: #888888;
+        --border-color: #2A2A2A;
+        --border-light: #3A3A3A;
+        
+        --success-green: #10b981;
+        --success-dark: #059669;
+        --danger-red: #ef4444;
+        --danger-dark: #dc2626;
+        --warning-amber: #f59e0b;
+        --info-cyan: #06b6d4;
+        
+        --extreme-long: #10b981;
+        --long: #34d399;
+        --div-long: #6ee7b7;
+        --extreme-short: #ef4444;
+        --short: #f87171;
+        --div-short: #fca5a5;
+        --neutral: #888888;
+        
+        --grade-a-plus: #10b981;
+        --grade-a: #34d399;
+        --grade-b-plus: #6ee7b7;
+        --grade-b: #fbbf24;
+        --grade-c: #f59e0b;
+        --grade-d: #ef4444;
     }
+    
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    
     .main, [data-testid="stSidebar"] {
         background-color: var(--background-color);
-        color: var(--text-color);
+        color: var(--text-primary);
     }
-    .stApp > header { background-color: transparent; }
+    
+    .stApp > header {
+        background-color: transparent;
+    }
+    
+    .block-container {
+        padding-top: 1rem;
+        max-width: 1400px;
+    }
+    
+    .premium-header {
+        background: var(--secondary-background-color);
+        padding: 1.25rem 2rem;
+        border-radius: 16px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
+        border: 1px solid var(--border-color);
+        position: relative;
+        overflow: hidden;
+        margin-top: 2.5rem;
+    }
+    
+    .premium-header::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb),0.08) 0%, transparent 50%);
+        pointer-events: none;
+    }
+    
+    .premium-header h1 {
+        margin: 0;
+        font-size: 2.50rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        letter-spacing: -0.50px;
+        position: relative;
+    }
+    
+    .premium-header .tagline {
+        color: var(--text-muted);
+        font-size: 1rem;
+        margin-top: 0.25rem;
+        font-weight: 400;
+        position: relative;
+    }
+    
+    .metric-card {
+        background-color: var(--bg-card);
+        padding: 1.25rem;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
+        margin-bottom: 0.5rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        border-color: var(--border-light);
+    }
+    
+    .metric-card h4 {
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .metric-card h2 {
+        color: var(--text-primary);
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0;
+        line-height: 1;
+    }
+    
+    .metric-card .sub-metric {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin-top: 0.5rem;
+        font-weight: 500;
+    }
+    
+    .metric-card.success h2 { color: var(--success-green); }
+    .metric-card.danger h2 { color: var(--danger-red); }
+    .metric-card.warning h2 { color: var(--warning-amber); }
+    .metric-card.info h2 { color: var(--info-cyan); }
+    .metric-card.neutral h2 { color: var(--neutral); }
+    .metric-card.primary h2 { color: var(--primary-color); } /* New class for 6th color */
+    .metric-card.white h2 { color: var(--text-primary); } /* New class for white text */
+    
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .info-box {
+        background: var(--secondary-background-color);
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--primary-color);
+        padding: 1.25rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
+    }
+    
+    .info-box h4 {
+        color: var(--primary-color);
+        margin: 0 0 0.5rem 0;
+        font-size: 1rem;
+        font-weight: 700;
+    }
+
+    /* --- START: Button CSS from sanket.py --- */
+    /* Buttons */
+    .stButton>button {
+        border: 2px solid var(--primary-color);
+        background: transparent;
+        color: var(--primary-color);
+        font-weight: 700;
+        border-radius: 12px;
+        padding: 0.75rem 2rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .stButton>button:hover {
+        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
+        background: var(--primary-color);
+        color: #1A1A1A; /* Dark text on hover for contrast */
+        transform: translateY(-2px);
+    }
+    
+    .stButton>button:active {
+        transform: translateY(0);
+    }
+
+    /* Download Links */
+    .download-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        border: 2px solid var(--primary-color);
+        background: transparent;
+        color: var(--primary-color);
+        text-decoration: none;
+        border-radius: 12px;
+        font-weight: 700;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .download-link:hover {
+        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
+        background: var(--primary-color);
+        color: #1A1A1A; /* Dark text on hover for contrast */
+        transform: translateY(-2px);
+    }
+    /* --- END: Button CSS from sanket.py --- */
+    
+    .stMarkdown table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--bg-card);
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    
+    .stMarkdown table th,
+    .stMarkdown table td {
+        text-align: left !important;
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .stMarkdown table th {
+        background-color: var(--bg-elevated);
+        font-size: 0.9rem;
+        letter-spacing: 0.5px;
+    }
+    
+    .stMarkdown table tr:last-child td {
+        border-bottom: none;
+    }
+    
+    .stMarkdown table tr:hover {
+        background-color: var(--bg-elevated);
+    }
+    
+    /* --- Additions for Pragyam UI --- */
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
     .stTabs [data-baseweb="tab"] {
-        color: var(--text-color-darker);
+        color: var(--text-muted);
         border-bottom: 2px solid transparent;
         transition: color 0.3s, border-bottom 0.3s;
     }
@@ -75,41 +320,25 @@ st.markdown("""
         color: var(--primary-color);
         border-bottom: 2px solid var(--primary-color);
     }
-    .metric-card {
-        background-color: var(--secondary-background-color);
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid var(--primary-color);
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.2);
-    }
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--text-color);
-        text-shadow: 0 0 10px rgba(var(--primary-rgb), 0.4);
-    }
-    h2 {
-        border-bottom: 2px solid var(--secondary-background-color);
-        padding-bottom: 10px;
-    }
     .stPlotlyChart, .stDataFrame {
-        border-radius: 8px;
+        border-radius: 12px;
         background-color: var(--secondary-background-color);
         padding: 10px;
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.15);
+        border: 1px solid var(--border-color);
+        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1);
     }
-    .stButton>button {
-        border: 2px solid var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        transition: all 0.3s ease-in-out;
+    h2 {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
     }
-    .stButton>button:hover {
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
-        background: var(--primary-color);
-        color: #1A1A1A; /* Dark text on hover for contrast */
-        transform: scale(1.02);
+    .section-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%);
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
+# --- END CSS REPLACEMENT ---
 
 # --- Session State Management ---
 if 'performance' not in st.session_state: st.session_state.performance = None
@@ -126,6 +355,13 @@ def fix_csv_export(df: pd.DataFrame) -> bytes:
     output = io.BytesIO()
     df.to_csv(output, index=False, encoding='utf-8-sig')
     return output.getvalue()
+
+# --- NEW: Helper for styled download link ---
+def create_export_link(data_bytes, filename):
+    """Create downloadable CSV link"""
+    b64 = base64.b64encode(data_bytes).decode()
+    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-link">📥 Download Portfolio CSV</a>'
+    return href
 
 # =========================================================================
 # --- Live Data Loading Function ---
@@ -1124,9 +1360,26 @@ def main():
                     st.session_state.max_pos_pct
                 )
                 st.success("✅ Analysis Complete!")
+        
+        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        st.markdown("### ℹ️ Platform Info")
+        st.markdown(f"""
+        <div class='info-box'>
+            <p style='font-size: 0.85rem; margin: 0; color: var(--text-muted); line-height: 1.6;'>
+                <strong>Version:</strong> v1.0.0 - Pragyam<br>
+                <strong>Engine:</strong> Walk-Forward Curation<br> 
+                <strong>Data:</strong> Live Generated
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.title("Pragyam : Quantitative Portfolio Curation System")
-    # st.subheader(f"Displaying analysis for date: {st.session_state.selected_date}" if st.session_state.selected_date else "Please run an analysis")
+    # --- REPLACED st.title with styled header ---
+    st.markdown(f"""
+    <div class="premium-header">
+        <h1>Pragyam : Quantitative Portfolio Curation System</h1>
+    </div>
+    """, unsafe_allow_html=True)
+    # --- END REPLACEMENT ---
 
     if st.session_state.portfolio is not None:
         total_value = st.session_state.portfolio['value'].sum()
@@ -1157,14 +1410,25 @@ def main():
             new_order = first_cols + other_cols
             download_df = portfolio_df[new_order]
 
-            csv = fix_csv_export(download_df)
-            st.download_button("📥 Download Portfolio CSV", csv, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", width='stretch')
-        else: st.info("👈 Run analysis from the sidebar to generate a portfolio.")
+            # --- REPLACED st.download_button with styled link ---
+            csv_bytes = fix_csv_export(download_df)
+            st.markdown(
+                create_export_link(csv_bytes, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv"), 
+                unsafe_allow_html=True
+            )
+            # --- END REPLACEMENT ---
+        else: 
+            # --- REPLACED st.info with styled info-box ---
+            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis from the sidebar to generate a portfolio.</div>", unsafe_allow_html=True)
+            # --- END REPLACEMENT ---
 
     with tab2:
         if st.session_state.performance:
             display_performance_metrics(st.session_state.performance)
-        else: st.info("👈 Run analysis to view performance metrics.")
+        else: 
+            # --- REPLACED st.info with styled info-box ---
+            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis to view performance metrics.</div>", unsafe_allow_html=True)
+            # --- END REPLACEMENT ---
 
     with tab3:
         st.header("Strategy & Subset Analysis")
@@ -1184,7 +1448,10 @@ def main():
             strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance}
             heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
             st.plotly_chart(heatmap_fig, width='stretch')
-        else: st.info("👈 Run analysis to view strategy details.")
+        else: 
+            # --- REPLACED st.info with styled info-box ---
+            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis to view strategy details.</div>", unsafe_allow_html=True)
+            # --- END REPLACEMENT ---
 
 if __name__ == "__main__":
     main()
