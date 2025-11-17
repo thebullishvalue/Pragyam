@@ -48,7 +48,9 @@ except ImportError:
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
-st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="✨", layout="wide", initial_sidebar_state="expanded")
+# --- REPLACED: page_icon with non-emoji ---
+st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+VERSION = "v1.1.0 - Curation Engine" # Added for footer
 
 # --- REPLACED CSS with quo.py styling ---
 st.markdown("""
@@ -360,7 +362,8 @@ def fix_csv_export(df: pd.DataFrame) -> bytes:
 def create_export_link(data_bytes, filename):
     """Create downloadable CSV link"""
     b64 = base64.b64encode(data_bytes).decode()
-    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-link">📥 Download Portfolio CSV</a>'
+    # --- REPLACED: Emoji in download link ---
+    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-link">Download Portfolio CSV</a>'
     return href
 
 # =========================================================================
@@ -853,13 +856,15 @@ class MarketRegimeDetectorV2:
         return 'CRISIS', 0.85 # Fallback
     
     def _map_regime_to_mix(self, regime: str) -> str:
+        # --- REPLACED: Emojis in mix names ---
         mapping = {
-            'STRONG_BULL': '🐂 Bull Market Mix', 'BULL': '🐂 Bull Market Mix',
-            'WEAK_BULL': '📊 Chop/Consolidate Mix', 'CHOP': '📊 Chop/Consolidate Mix',
-            'WEAK_BEAR': '📊 Chop/Consolidate Mix', 'BEAR': '🐻 Bear Market Mix',
-            'CRISIS': '🐻 Bear Market Mix'
+            'STRONG_BULL': 'Bull Market Mix', 'BULL': 'Bull Market Mix',
+            'WEAK_BULL': 'Chop/Consolidate Mix', 'CHOP': 'Chop/Consolidate Mix',
+            'WEAK_BEAR': 'Chop/Consolidate Mix', 'BEAR': 'Bear Market Mix',
+            'CRISIS': 'Bear Market Mix'
         }
-        return mapping.get(regime, '📊 Chop/Consolidate Mix')
+        return mapping.get(regime, 'Chop/Consolidate Mix')
+        # --- END REPLACEMENT ---
     
     def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float) -> str:
         lines = [f"**Detected Regime:** {regime} (Score: {score:.2f}, Confidence: {confidence:.0%})", ""]
@@ -910,7 +915,8 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
         
         if len(historical_data) < 10:
             return (
-                "🐂 Bull Market Mix",
+                # --- REPLACED: Emoji ---
+                "Bull Market Mix",
                 "⚠️ Insufficient historical data (< 10 periods). Defaulting to Bull Mix.",
                 0.30, {}
             )
@@ -922,7 +928,8 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
     except Exception as e:
         logging.error(f"Error in get_market_mix_suggestion_v3: {e}")
         return (
-            "🐂 Bull Market Mix",
+            # --- REPLACED: Emoji ---
+            "Bull Market Mix",
             f"⚠️ Error during regime detection: {e}. Defaulting to Bull Mix.",
             0.30, {}
         )
@@ -1160,47 +1167,49 @@ def main():
         'MOM_v2': MOM2Strategy() 
     }
     
+    # --- REPLACED: Emojis from keys and mix names ---
     PORTFOLIO_STYLES = {
-        "⚡ Swing Trading": {
+        "Swing Trading": {
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
-                "🐂 Bull Market Mix": {
+                "Bull Market Mix": {
                     "strategies": ['CL2', 'CL3', 'VolatilitySurfer', 'PR_v1'],
                     "rationale": "Counter-intuitive smooth-trend specialists. CL2/CL3 dominate bull swings (14.4-14.6% returns) by avoiding momentum whipsaw in strong trends. VolatilitySurfer provides superior risk management (Calmar 141.93). PR_v1 captures pullbacks within uptrend. MomentumMasters deliberately EXCLUDED - performs worst in bull swings (9.24% vs 14.55% for CL2) due to premature stop-outs."
                 },
                 
-                "🐻 Bear Market Mix": {
+                "Bear Market Mix": {
                     "strategies": ['VolatilitySurfer', 'MOM_v1', 'MomentumMasters'],
                     "rationale": "Volatility-first defense with measured aggression. VolatilitySurfer dominates bear swings (-1.21% loss vs -4.71% average) through superior drawdown control (-4.61% vs -5.54% average). MOM_v1 provides 38% win rate (best in bears) through adaptive positioning. MomentumMasters limited to 20% - surprisingly resilient in bears (-2.53%) despite failing in bulls."
                 },
                 
-                "📊 Chop/Consolidate Mix": {
+                "Chop/Consolidate Mix": {
                     "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
                     "rationale": "Range masters with breakout validation. VolatilitySurfer dominates chop swings (12.53% vs 7.96% for worst) with exceptional Calmar (20.42). MomentumMasters surprisingly effective in chop (11.60%, #2) - volatility enables quick pivots. MOM_v1 stabilizes with consistent middle performance (10.59%). CL strategies completely excluded - fail in choppy conditions (bottom 4 positions consistently)."
                 }
             }
         },
         
-        "💰 SIP Investment": {
+        "SIP Investment": {
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
-                "🐂 Bull Market Mix": {
+                "Bull Market Mix": {
                     "strategies": ['CL_v1', 'CL2', 'VolatilitySurfer', 'MOM_v1'],
                     "rationale": "Regime-specific reversion: CL strategies excel. CL_v1/CL2 deliver highest returns in bull SIPs (13.12% vs 11.57% for MomentumMasters) through low-volatility trend capture. VolatilitySurfer provides best risk-adjusted returns (Calmar 13.19) despite lower absolute performance. MOM_v1 stabilizes with adaptive allocation. MomentumMasters deliberately EXCLUDED despite 65% win rate - absolute returns lag (11.57%, dead last)."
                 },
                 
-                "🐻 Bear Market Mix": {
+                "Bear Market Mix": {
                     "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
                     "rationale": "Damage control with VolatilitySurfer anchor. VolatilitySurfer loses least in bear SIPs (-4.12% vs -5.86% average) with shallowest drawdown (-6.07% vs -8.97% average). MomentumMasters at 25% for measured participation (-4.80%, #2 overall). MOM_v1 provides adaptive defense (37% win rate, highest in bears). All CL strategies excluded - catastrophic bear SIP performance (bottom 4 positions, losses -5.54% to -5.86%)."
                 },
                 
-                "📊 Chop/Consolidate Mix": {
+                "Chop/Consolidate Mix": {
                     "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
         }
     }
+    # --- END REPLACEMENT ---
     
     # --- NEW: `on_change` callback for the date input ---
     def update_regime_suggestion():
@@ -1218,6 +1227,7 @@ def main():
         
         # --- FIX: Moved st.toast out of cached function ---
         toast_msg = f"Fetching regime data for {selected_date.date()}..."
+        # --- REPLACED: Emoji in toast ---
         st.toast(toast_msg, icon="🧠")
         # --- END FIX ---
         
@@ -1246,8 +1256,10 @@ def main():
 
         options_list = list(PORTFOLIO_STYLES.keys())
         default_index = 0 # Default to first item
-        if "💰 SIP Investment" in options_list:
-            default_index = options_list.index("💰 SIP Investment")
+        # --- REPLACED: Logic to find default index ---
+        if "SIP Investment" in options_list:
+            default_index = options_list.index("SIP Investment")
+        # --- END REPLACEMENT ---
 
         selected_main_branch = st.selectbox(
             "1. Select Investment Style",
@@ -1280,7 +1292,8 @@ def main():
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
-        if st.button("🚀 Run Analysis", width='stretch', type="primary"):
+        # --- REPLACED: Button emoji removed ---
+        if st.button("Run Analysis", width='stretch', type="primary"):
             
             # --- Set fixed lookback period ---
             lookback_files = 25
@@ -1302,6 +1315,7 @@ def main():
             total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
             fetch_start_date = selected_date_dt - timedelta(days=total_days_to_fetch)
             toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {selected_date_dt.date()}..."
+            # --- REPLACED: Emoji in toast ---
             st.toast(toast_msg, icon="⏳")
             # --- END FIX ---
 
@@ -1455,7 +1469,23 @@ def main():
         with tab1:
             st.header("Curated Portfolio Holdings")
             display_df = st.session_state.portfolio[['symbol', 'price', 'units', 'weightage_pct', 'value']]
-            st.dataframe(display_df.style.format({'price': '{:,.2f}', 'value': '{:,.2f}', 'units': '{:,.2f}', 'weightage_pct': '{:.2f}%'}))
+            
+            # --- START REPLACEMENT ---
+            # Format the dataframe using pandas styler and apply CSS class
+            styled_df = display_df.style.format({
+                'price': '{:,.2f}', 
+                'value': '{:,.2f}', 
+                'units': '{:,.0f}', # Changed to whole number
+                'weightage_pct': '{:.2f}%'
+            }).set_table_attributes(
+                'class="stMarkdown table"' # Apply the CSS class from quo.py
+            ).hide(
+                axis="index" # Hide the default pandas index
+            )
+            
+            # Convert to HTML and render using st.markdown
+            st.markdown(styled_df.to_html(), unsafe_allow_html=True)
+            # --- END REPLACEMENT ---
             
             # Prepare DataFrame for CSV export with specific column order
             portfolio_df = st.session_state.portfolio
@@ -1493,6 +1523,11 @@ def main():
             heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
             st.plotly_chart(heatmap_fig, width='stretch')
         # --- REMOVED REDUNDANT ELSE BLOCKS ---
+
+    # --- ADDED: Sanket-style footer ---
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.caption(f"© {datetime.now().year} Pragyam | Quantitative Curation | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    # --- END FOOTER ---
 
 if __name__ == "__main__":
     main()
