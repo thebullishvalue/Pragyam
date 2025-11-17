@@ -1060,10 +1060,6 @@ def main():
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
-        st.markdown("### Risk Management")
-        st.markdown(f"**Min Position Size:** `{st.session_state.min_pos_pct:.1f}%`")
-        st.markdown(f"**Max Position Size:** `{st.session_state.max_pos_pct:.1f}%`")
-
         if st.button("🚀 Run Analysis", width='stretch', type="primary"):
             
             # --- 1. Load Main Data for Backtest ---
