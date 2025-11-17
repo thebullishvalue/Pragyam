@@ -159,8 +159,8 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
     logging.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
 
     # Use a toast for the loading message
-    toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {end_date.date()}..."
-    st.toast(toast_msg, icon="⏳")
+    # toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {end_date.date()}..."
+    # st.toast(toast_msg, icon="⏳") # <-- MOVED out of cached function
     
     try:
         live_data = generate_historical_data(
@@ -661,8 +661,8 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
     fetch_start_date = end_date - timedelta(days=regime_days_to_fetch)
     
     # Use a toast for the loading message
-    toast_msg = f"Fetching regime data for {end_date.date()}..."
-    st.toast(toast_msg, icon="🧠")
+    # toast_msg = f"Fetching regime data for {end_date.date()}..."
+    # st.toast(toast_msg, icon="🧠") # <-- MOVED out of cached function
     
     try:
         historical_data = generate_historical_data(
@@ -999,6 +999,11 @@ def main():
         # The strptime line was incorrect as we already have a date object
         selected_date = datetime.combine(selected_date_obj, datetime.min.time())
         
+        # --- FIX: Moved st.toast out of cached function ---
+        toast_msg = f"Fetching regime data for {selected_date.date()}..."
+        st.toast(toast_msg, icon="🧠")
+        # --- END FIX ---
+        
         # This function is cached, so it's fast on repeated calls
         mix_name, explanation, confidence, details = get_market_mix_suggestion_v3(selected_date)
         
@@ -1070,6 +1075,14 @@ def main():
                 st.stop()
                 
             selected_date_dt = datetime.combine(selected_date_obj, datetime.min.time())
+
+            # --- FIX: Moved st.toast out of cached function ---
+            # Re-calculate fetch_start_date components for the toast message
+            total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
+            fetch_start_date = selected_date_dt - timedelta(days=total_days_to_fetch)
+            toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {selected_date_dt.date()}..."
+            st.toast(toast_msg, icon="⏳")
+            # --- END FIX ---
 
             all_historical_data = load_historical_data(selected_date_dt, lookback_files)
             
