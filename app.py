@@ -1145,15 +1145,13 @@ def main():
         cash_remaining = capital - total_value
 
         # Using metric cards for the header stats
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"<div class='metric-card'><h4>Total Invested</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
         with col2:
             st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
         with col3:
             st.markdown(f"<div class='metric-card'><h4>Cash Remaining</h4><h2>{cash_remaining:,.2f}</h2></div>", unsafe_allow_html=True)
-        with col4:
-            st.markdown(f"<div class='metric-card'><h4>Max Position</h4><h2>{st.session_state.portfolio['weightage_pct'].max():.2f}%</h2></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["**📈 Portfolio**", "**📊 Performance**", "**🎯 Strategy Deep Dive**"])
