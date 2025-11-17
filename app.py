@@ -47,7 +47,7 @@ except ImportError:
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
-st.set_page_config(page_title="Pragati : Quantitative Portfolio Curation System", page_icon="✨", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="✨", layout="wide", initial_sidebar_state="expanded")
 
 # "Glowy Matte" Gold/Yellow Inspired Dashboard CSS
 st.markdown("""
@@ -140,7 +140,7 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
         lookback_files: The number of trading days *prior* to end_date to use for training.
         
     Returns:
-        A list of tuples in the format Pragati expects: [(date, DataFrame), ...]
+        A list of tuples in the format Pragyam expects: [(date, DataFrame), ...]
         Or an empty list if data fetching fails.
     """
     logging.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
@@ -709,7 +709,7 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     fig = px.area(df_melted, x='date', y='Weight', color='Category', title=title,
                   labels={'Weight': y_axis_title, 'date': 'Date', 'Category': 'Category'})
     fig.update_layout(template='plotly_dark', yaxis_tickformat=".0%")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def display_performance_metrics(performance: Dict):
     """
@@ -774,7 +774,7 @@ def display_performance_metrics(performance: Dict):
                              title="Growth of ₹1 Investment Over Time",
                              labels={'equity': 'Growth of ₹1', 'date': 'Date', 'strategy': 'Strategy'})
         fig_equity.update_layout(template='plotly_dark', legend_title_text='Strategy')
-        st.plotly_chart(fig_equity, use_container_width=True)
+        st.plotly_chart(fig_equity, width='stretch')
 
     # --- NEW: Strategy Weight Evolution Chart ---
     plot_weight_evolution(
@@ -801,7 +801,7 @@ def display_performance_metrics(performance: Dict):
         full_df = pd.concat(df_list)
         fig_sharpe = px.line(full_df, x='date', y='rolling_sharpe', color='strategy', title="Strategy Rolling Sharpe Ratio (3-Period)")
         fig_sharpe.update_layout(template='plotly_dark', legend_title_text='Strategy', yaxis_title="Sharpe Ratio")
-        st.plotly_chart(fig_sharpe, use_container_width=True)
+        st.plotly_chart(fig_sharpe, width='stretch')
 
     # Section for the Strategy Correlation Matrix
     st.subheader("Strategy Correlation Matrix")
@@ -826,7 +826,7 @@ def display_performance_metrics(performance: Dict):
     corr_matrix = returns_df.corr()
     fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale='Portland', aspect="auto")
     fig_corr.update_layout(title="Correlation of Strategy Returns", template='plotly_dark')
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width='stretch')
 
 
 def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
@@ -856,7 +856,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
                     labels=dict(x="10-Stock Tier", y="Strategy", color="Sharpe Ratio"),
                     title="<b>Sharpe Ratio by 10-Stock Tier</b>")
     fig.update_layout(template='plotly_dark')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def display_subset_weight_evolution(subset_weights_history: List[Dict], strategies: List[str]):
     """Displays an interactive chart for subset weight evolution."""
@@ -1137,7 +1137,7 @@ def main():
                 )
                 st.success("✅ Analysis Complete!")
 
-    st.title("Pragati : Quantitative Portfolio Curation System")
+    st.title("Pragyam : Quantitative Portfolio Curation System")
     # st.subheader(f"Displaying analysis for date: {st.session_state.selected_date}" if st.session_state.selected_date else "Please run an analysis")
 
     if st.session_state.portfolio is not None:
@@ -1149,9 +1149,9 @@ def main():
         with col1:
             st.markdown(f"<div class='metric-card'><h4>Total Invested</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
         with col2:
-            st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
-        with col3:
             st.markdown(f"<div class='metric-card'><h4>Cash Remaining</h4><h2>{cash_remaining:,.2f}</h2></div>", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["**📈 Portfolio**", "**📊 Performance**", "**🎯 Strategy Deep Dive**"])
@@ -1195,7 +1195,7 @@ def main():
             st.subheader(f"Conviction Heatmap (for {st.session_state.selected_date})")
             strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance}
             heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
-            st.plotly_chart(heatmap_fig, use_container_width=True)
+            st.plotly_chart(heatmap_fig, width='stretch')
         else: st.info("👈 Run analysis to view strategy details.")
 
 if __name__ == "__main__":
