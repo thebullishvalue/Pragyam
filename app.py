@@ -963,26 +963,6 @@ def main():
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
-        },
-        
-        "🌍 All Weather": {
-            "description": "Balanced, long-term (6-18 months) portfolio for all market regimes. Dynamic regime-aware allocation.",
-            "mixes": {
-                "🐂 Bull Market Mix": {
-                    "strategies": ['CL_v1', 'CL2', 'VolatilitySurfer', 'MOM_v1', 'PR_v1'],
-                    "rationale": "Bull-optimized multi-factor ensemble. CL_v1/CL2 (combined 40%) capture smooth bull trends with highest returns (13.12% in SIP, 14.4-14.6% in Swing). VolatilitySurfer (25%) provides risk management with best Calmar ratios across bull regimes (13.19 SIP, 141.93 Swing). MOM_v1 (20%) stabilizes through adaptive factors. PR_v1 (15%) captures tactical pullbacks. MomentumMasters excluded - consistently worst in both bull SIP (11.57%, #8) and bull Swing (9.24%, #8)."
-                },
-                
-                "🐻 Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'MOM_v1', 'MomentumMasters', 'CL_v1'],
-                    "rationale": "Drawdown minimization with VolatilitySurfer leadership. VolatilitySurfer (40%) anchors with best bear performance across SIP (-4.12%, #1) and Swing (-1.21%, #1) while maintaining shallowest drawdowns. MOM_v1 (25%) provides highest bear win rates (37-38%) through adaptive defensive positioning. MomentumMasters (20%) contributes measured participation - surprisingly resilient in bears. CL_v1 (15%) limited to crisis monitoring - most CL strategies fail bears (bottom 4 positions)."
-                },
-                
-                "📊 Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1', 'MOM_v2', 'PR_v1'],
-                    "rationale": "Range dominance architecture. VolatilitySurfer (35%) leads with exceptional chop performance (9.95% SIP #1, 12.53% Swing #1) and Calmar ratios (12.17 SIP, 20.42 Swing). MomentumMasters (25%) surprisingly effective in chop (#2 in both SIP 8.91% and Swing 11.60%) - high volatility enables range pivots. MOM_v1 (20%) provides consistent middle ground. MOM_v2 (10%) adds statistical arbitrage. PR_v1 (10%) tactical fades. All CL strategies excluded - systematic chop failure (bottom 4 in both SIP and Swing)."
-                }
-            }
         }
     }
     
@@ -1028,13 +1008,17 @@ def main():
         
         st.markdown("### Portfolio Style Selection")
 
+        options_list = list(PORTFOLIO_STYLES.keys())
+        default_index = 0 # Default to first item
+        if "💰 SIP Investment" in options_list:
+            default_index = options_list.index("💰 SIP Investment")
+
         selected_main_branch = st.selectbox(
             "1. Select Investment Style",
-            options=list(PORTFOLIO_STYLES.keys()),
+            options=options_list,
+            index=default_index,
             help="Choose your primary investment objective (e.g., short-term trading or long-term investing)."
         )
-        
-        st.markdown("### Market Condition Mix")
         
         mix_options = list(PORTFOLIO_STYLES[selected_main_branch]["mixes"].keys())
         
@@ -1046,15 +1030,15 @@ def main():
              update_regime_suggestion()
 
         
-        st.markdown("### Training Data Selection")
-        lookback_files = st.number_input(
-            "Lookback Files for Training",
-            min_value=10,
-            max_value=1000, # Set a reasonable max
-            value=25, # Default to 25
-            step=5,
-            help=f"Number of historical files (days) to use for training, prior to the analysis date."
-        )
+        # st.markdown("### Training Data Selection") # Removed header
+        # lookback_files = st.number_input( # Removed number input
+        #     "Lookback Files for Training",
+        #     min_value=10,
+        #     max_value=1000, # Set a reasonable max
+        #     value=25, # Default to 25
+        #     step=5,
+        #     help=f"Number of historical files (days) to use for training, prior to the analysis date."
+        # )
 
         st.markdown("### Portfolio Parameters")
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
@@ -1062,6 +1046,10 @@ def main():
 
         if st.button("🚀 Run Analysis", width='stretch', type="primary"):
             
+            # --- Set fixed lookback period ---
+            lookback_files = 25
+            # --- End fixed lookback ---
+
             # --- 1. Load Main Data for Backtest ---
             # This is the main data-loading call, triggered by the button
             
@@ -1147,7 +1135,7 @@ def main():
         # Using metric cards for the header stats
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"<div class='metric-card'><h4>Total Invested</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-card'><h4>Cash Utilized</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
         with col2:
             st.markdown(f"<div class='metric-card'><h4>Cash Remaining</h4><h2>{cash_remaining:,.2f}</h2></div>", unsafe_allow_html=True)
         with col3:
