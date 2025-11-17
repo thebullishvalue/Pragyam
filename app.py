@@ -313,12 +313,19 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
             strategy_weights_history.append({'date': test_date, **strategy_weights})
             subset_weights_history.append({'date': test_date, **subset_weights})
 
-            oos_perf['System_Curated']['returns'].append({'return': compute_portfolio_return(curated_port, next_df), 'date': next_date})
-            logging.info(f"  - COMPLETED: Curating out-of-sample portfolio for {test_date.date()}")
+            # --- FIX: Check for empty portfolio before accessing columns ---
+            if curated_port.empty:
+                logging.warning(f"  - No curated portfolio generated for {test_date.date()}. Appending 0 return.")
+                oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+            else:
+                oos_perf['System_Curated']['returns'].append({'return': compute_portfolio_return(curated_port, next_df), 'date': next_date})
+                logging.info(f"  - COMPLETED: Curating out-of-sample portfolio for {test_date.date()}")
 
-            weights = curated_port['weightage_pct'] / 100
-            entropy = -np.sum(weights * np.log2(weights))
-            weight_entropies.append(entropy)
+                weights = curated_port['weightage_pct'] / 100
+                entropy = -np.sum(weights * np.log2(weights))
+                weight_entropies.append(entropy)
+            # --- END FIX ---
+
         except Exception as e:
             logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
             oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
@@ -1033,8 +1040,6 @@ def main():
             help="Choose your primary investment objective (e.g., short-term trading or long-term investing)."
         )
         
-        st.markdown("### Market Condition Mix")
-        
         mix_options = list(PORTFOLIO_STYLES[selected_main_branch]["mixes"].keys())
         
         # --- UPDATED: No more dropdown, just display the suggested mix ---
@@ -1059,11 +1064,7 @@ def main():
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
-        st.markdown("### Risk Management")
-        st.markdown(f"**Min Position Size:** `{st.session_state.min_pos_pct:.1f}%`")
-        st.markdown(f"**Max Position Size:** `{st.session_state.max_pos_pct:.1f}%`")
-
-        if st.button("🚀 Run Analysis", use_container_width=True, type="primary"):
+        if st.button("🚀 Run Analysis", width='stretch', type="primary"):
             
             # --- 1. Load Main Data for Backtest ---
             # This is the main data-loading call, triggered by the button
@@ -1155,8 +1156,6 @@ def main():
             st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
         with col3:
             st.markdown(f"<div class='metric-card'><h4>Cash Remaining</h4><h2>{cash_remaining:,.2f}</h2></div>", unsafe_allow_html=True)
-        with col4:
-            st.markdown(f"<div class='metric-card'><h4>Max Position</h4><h2>{st.session_state.portfolio['weightage_pct'].max():.2f}%</h2></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["**📈 Portfolio**", "**📊 Performance**", "**🎯 Strategy Deep Dive**"])
@@ -1175,7 +1174,7 @@ def main():
             download_df = portfolio_df[new_order]
 
             csv = fix_csv_export(download_df)
-            st.download_button("📥 Download Portfolio CSV", csv, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", use_container_width=True)
+            st.download_button("📥 Download Portfolio CSV", csv, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", width='stretch')
         else: st.info("👈 Run analysis from the sidebar to generate a portfolio.")
 
     with tab2:
