@@ -1228,7 +1228,7 @@ def main():
 
 
     with st.sidebar:
-        st.markdown("# ⚙️ Configuration")
+        st.markdown("# Configuration")
         st.markdown("### Analysis Configuration")
         
         today = datetime.now()
@@ -1362,7 +1362,7 @@ def main():
                 st.success("✅ Analysis Complete!")
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        st.markdown("### ℹ️ Platform Info")
+        st.markdown("### Platform Info")
         st.markdown(f"""
         <div class='info-box'>
             <p style='font-size: 0.85rem; margin: 0; color: var(--text-muted); line-height: 1.6;'>
@@ -1381,7 +1381,62 @@ def main():
     """, unsafe_allow_html=True)
     # --- END REPLACEMENT ---
 
-    if st.session_state.portfolio is not None:
+    # --- UPDATED: Show welcome screen if no analysis has run ---
+    if st.session_state.portfolio is None or st.session_state.performance is None:
+        st.markdown("""
+        <div class='info-box welcome'>
+            <h4>Welcome to the Pragyam Curation System</h4>
+            <p>
+                This platform uses a walk-forward engine to backtest and curate a final portfolio
+                based on a dynamic mix of quantitative strategies.
+            </p>
+            <strong>To begin, please follow these steps:</strong>
+            <ol style="margin-left: 20px; margin-top: 10px;">
+                <li>Select your desired <strong>Analysis Date</strong> in the sidebar.</li>
+                <li>Choose your <strong>Investment Style</strong> (e.g., SIP Investment, Swing Trading).</li>
+                <li>Adjust your <strong>Capital</strong> and desired <strong>Number of Positions</strong>.</li>
+                <li>Click the <strong>Run Analysis</strong> button to start the curation.</li>
+            </ol>
+            <p style="margin-top: 1rem; font-weight: 600; color: var(--primary-color);">
+                The system will automatically detect the market regime and select the optimal strategy mix for you.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        
+        # Feature highlights
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div class='metric-card info'>
+                <h4>REGIME-AWARE</h4>
+                <h2>Auto-Detects</h2>
+                <div class='sub-metric'>Bull, Bear, or Chop Mix</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class='metric-card success'>
+                <h4>DYNAMIC</h4>
+                <h2>Strategy Curation</h2>
+                <div class='sub-metric'>Weights strategies by performance</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div class='metric-card primary'>
+                <h4>WALK-FORWARD</h4>
+                <h2>Robust Backtesting</h2>
+                <div class='sub-metric'>Avoids lookahead bias</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    else:
+        # --- This is the existing code that runs *after* analysis ---
         total_value = st.session_state.portfolio['value'].sum()
         cash_remaining = capital - total_value
 
@@ -1395,11 +1450,10 @@ def main():
             st.markdown(f"<div class='metric-card'><h4>Positions</h4><h2>{len(st.session_state.portfolio)}</h2></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["**📈 Portfolio**", "**📊 Performance**", "**🎯 Strategy Deep Dive**"])
+        tab1, tab2, tab3 = st.tabs(["**Portfolio**", "**Performance**", "**Strategy Deep Dive**"])
 
-    with tab1:
-        st.header("Curated Portfolio Holdings")
-        if st.session_state.portfolio is not None:
+        with tab1:
+            st.header("Curated Portfolio Holdings")
             display_df = st.session_state.portfolio[['symbol', 'price', 'units', 'weightage_pct', 'value']]
             st.dataframe(display_df.style.format({'price': '{:,.2f}', 'value': '{:,.2f}', 'units': '{:,.2f}', 'weightage_pct': '{:.2f}%'}))
             
@@ -1417,22 +1471,12 @@ def main():
                 unsafe_allow_html=True
             )
             # --- END REPLACEMENT ---
-        else: 
-            # --- REPLACED st.info with styled info-box ---
-            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis from the sidebar to generate a portfolio.</div>", unsafe_allow_html=True)
-            # --- END REPLACEMENT ---
 
-    with tab2:
-        if st.session_state.performance:
+        with tab2:
             display_performance_metrics(st.session_state.performance)
-        else: 
-            # --- REPLACED st.info with styled info-box ---
-            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis to view performance metrics.</div>", unsafe_allow_html=True)
-            # --- END REPLACEMENT ---
 
-    with tab3:
-        st.header("Strategy & Subset Analysis")
-        if st.session_state.performance and st.session_state.current_df is not None:
+        with tab3:
+            st.header("Strategy & Subset Analysis")
             # Get the list of strategies that were actually run in the analysis
             strategies_in_performance = [k for k in st.session_state.performance.get('strategy', {}).keys() if k != 'System_Curated']
 
@@ -1448,10 +1492,7 @@ def main():
             strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance}
             heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
             st.plotly_chart(heatmap_fig, width='stretch')
-        else: 
-            # --- REPLACED st.info with styled info-box ---
-            st.markdown("<div class='info-box'><h4>Heads up!</h4>👈 Run analysis to view strategy details.</div>", unsafe_allow_html=True)
-            # --- END REPLACEMENT ---
+        # --- REMOVED REDUNDANT ELSE BLOCKS ---
 
 if __name__ == "__main__":
     main()
