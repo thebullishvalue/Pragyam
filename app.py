@@ -1272,7 +1272,7 @@ def main():
         
         # --- UPDATED: No more dropdown, just display the suggested mix ---
         if st.session_state.suggested_mix:
-             pass # Removed the st.info message
+             st.info(f"**Suggested Mix:** {suggested_mix.split(' ')[1]} (Confidence: {confidence:.0%})", icon="💡") # Removed the st.info message
         else:
              # Run it once on the first load
              update_regime_suggestion()
