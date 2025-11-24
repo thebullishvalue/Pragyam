@@ -10,11 +10,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
 import io
-import base64 # Added for download link
+import base64
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
-import time # Import time for toast
-import warnings  # Add this import
+import time
+import warnings
 
 # --- Suppress known NumPy warnings during backtest warm-up ---
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='Mean of empty slice')
@@ -23,7 +23,6 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 
 
 # --- Import Strategies from strategies.py ---
-# Ensure strategies.py is in the same directory or accessible in the path
 try:
     from strategies import (
         BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy, 
@@ -48,11 +47,10 @@ except ImportError:
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
-# --- REPLACED: page_icon with non-emoji ---
 st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
-VERSION = "v1.1.0 - Curation Engine" # Added for footer
+VERSION = "v1.1.0 - Curation Engine"
 
-# --- REPLACED CSS with quo.py styling ---
+# --- CSS Styling ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -71,26 +69,10 @@ st.markdown("""
         --border-light: #3A3A3A;
         
         --success-green: #10b981;
-        --success-dark: #059669;
         --danger-red: #ef4444;
-        --danger-dark: #dc2626;
         --warning-amber: #f59e0b;
         --info-cyan: #06b6d4;
-        
-        --extreme-long: #10b981;
-        --long: #34d399;
-        --div-long: #6ee7b7;
-        --extreme-short: #ef4444;
-        --short: #f87171;
-        --div-short: #fca5a5;
         --neutral: #888888;
-        
-        --grade-a-plus: #10b981;
-        --grade-a: #34d399;
-        --grade-b-plus: #6ee7b7;
-        --grade-b: #fbbf24;
-        --grade-c: #f59e0b;
-        --grade-d: #ef4444;
     }
     
     * {
@@ -198,8 +180,8 @@ st.markdown("""
     .metric-card.warning h2 { color: var(--warning-amber); }
     .metric-card.info h2 { color: var(--info-cyan); }
     .metric-card.neutral h2 { color: var(--neutral); }
-    .metric-card.primary h2 { color: var(--primary-color); } /* New class for 6th color */
-    .metric-card.white h2 { color: var(--text-primary); } /* New class for white text */
+    .metric-card.primary h2 { color: var(--primary-color); }
+    .metric-card.white h2 { color: var(--text-primary); }
     
     .status-badge {
         display: inline-flex;
@@ -230,7 +212,6 @@ st.markdown("""
         font-weight: 700;
     }
 
-    /* --- START: Button CSS from sanket.py --- */
     /* Buttons */
     .stButton>button {
         border: 2px solid var(--primary-color);
@@ -247,7 +228,7 @@ st.markdown("""
     .stButton>button:hover {
         box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
         background: var(--primary-color);
-        color: #1A1A1A; /* Dark text on hover for contrast */
+        color: #1A1A1A;
         transform: translateY(-2px);
     }
     
@@ -275,10 +256,9 @@ st.markdown("""
     .download-link:hover {
         box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
         background: var(--primary-color);
-        color: #1A1A1A; /* Dark text on hover for contrast */
+        color: #1A1A1A;
         transform: translateY(-2px);
     }
-    /* --- END: Button CSS from sanket.py --- */
     
     .stMarkdown table {
         width: 100%;
@@ -311,7 +291,6 @@ st.markdown("""
         background-color: var(--bg-elevated);
     }
     
-    /* --- Additions for Pragyam UI --- */
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
     .stTabs [data-baseweb="tab"] {
         color: var(--text-muted);
@@ -340,15 +319,14 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-# --- END CSS REPLACEMENT ---
 
 # --- Session State Management ---
 if 'performance' not in st.session_state: st.session_state.performance = None
 if 'portfolio' not in st.session_state: st.session_state.portfolio = None
 if 'current_df' not in st.session_state: st.session_state.current_df = None
 if 'selected_date' not in st.session_state: st.session_state.selected_date = None
-if 'suggested_mix' not in st.session_state: st.session_state.suggested_mix = None # For auto-selection
-# Set fixed position size limits
+if 'suggested_mix' not in st.session_state: st.session_state.suggested_mix = None
+if 'regime_display' not in st.session_state: st.session_state.regime_display = None # For sidebar display
 if 'min_pos_pct' not in st.session_state: st.session_state.min_pos_pct = 1.0
 if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 10.0
 
@@ -358,43 +336,27 @@ def fix_csv_export(df: pd.DataFrame) -> bytes:
     df.to_csv(output, index=False, encoding='utf-8-sig')
     return output.getvalue()
 
-# --- NEW: Helper for styled download link ---
 def create_export_link(data_bytes, filename):
     """Create downloadable CSV link"""
     b64 = base64.b64encode(data_bytes).decode()
-    # --- REPLACED: Emoji in download link ---
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-link">Download Portfolio CSV</a>'
     return href
 
 # =========================================================================
 # --- Live Data Loading Function ---
-@st.cache_data(ttl=3600, show_spinner=False) # Cache live data for 1 hour to speed up re-runs
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[datetime, pd.DataFrame]]:
     """
     Fetches and processes all historical data on-the-fly using the
-    backdata.py module. This is the main data engine for the app.
-    
-    Args:
-        end_date: The final "analysis date" selected by the user.
-        lookback_files: The number of trading days *prior* to end_date to use for training.
-        
-    Returns:
-        A list of tuples in the format Pragyam expects: [(date, DataFrame), ...]
-        Or an empty list if data fetching fails.
+    backdata.py module.
     """
     logging.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
     
-    # We need data for the training period + enough data for the indicators (e.g., 200-day MA)
-    # 1.5x buffer for non-trading days, + 30 days extra buffer
     total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
     fetch_start_date = end_date - timedelta(days=total_days_to_fetch)
     
     logging.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
 
-    # Use a toast for the loading message
-    # toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {end_date.date()}..."
-    # st.toast(toast_msg, icon="⏳") # <-- MOVED out of cached function
-    
     try:
         live_data = generate_historical_data(
             symbols_to_process=SYMBOLS_UNIVERSE,
@@ -506,7 +468,7 @@ def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFr
 
 def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], historical_data: List[Tuple[datetime, pd.DataFrame]]) -> Dict:
     MIN_TRAIN_FILES = 2
-    TRAINING_CAPITAL = 2500000.0  # Set to a robust value for the given universe
+    TRAINING_CAPITAL = 2500000.0
     if len(historical_data) < MIN_TRAIN_FILES + 1:
         st.error(f"Not enough historical data for the selected period. Need at least {MIN_TRAIN_FILES + 1} files to run a backtest.")
         return {}
@@ -520,7 +482,6 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
     progress_bar = st.progress(0, text="Initializing backtest...")
     total_steps = len(historical_data) - MIN_TRAIN_FILES - 1
     
-    # Handle the edge case where there aren't enough steps to loop
     if total_steps <= 0:
         st.error(f"Not enough data for a single backtest step. Need at least {MIN_TRAIN_FILES + 2} days of data.")
         progress_bar.empty()
@@ -542,11 +503,9 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
             logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
             curated_port, strategy_weights, subset_weights = curate_final_portfolio(_strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0)
             
-            # Store weight history
             strategy_weights_history.append({'date': test_date, **strategy_weights})
             subset_weights_history.append({'date': test_date, **subset_weights})
 
-            # --- FIX: Check for empty portfolio before accessing columns ---
             if curated_port.empty:
                 logging.warning(f"  - No curated portfolio generated for {test_date.date()}. Appending 0 return.")
                 oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
@@ -557,7 +516,6 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
                 weights = curated_port['weightage_pct'] / 100
                 entropy = -np.sum(weights * np.log2(weights))
                 weight_entropies.append(entropy)
-            # --- END FIX ---
 
         except Exception as e:
             logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
@@ -604,14 +562,13 @@ def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dic
             subset_weights[name] = {}
             continue
 
-        # Stabilize the exp calculation to prevent overflow
         stable_sharpes = tier_sharpes - np.max(tier_sharpes)
         exp_sharpes = np.exp(stable_sharpes)
         total_exp = np.sum(exp_sharpes)
 
         if total_exp > 0 and np.isfinite(total_exp):
             subset_weights[name] = {tier: exp_sharpes[i] / total_exp for i, tier in enumerate(tier_names)}
-        else: # Fallback to equal weighting
+        else:
             equal_weight = 1.0 / len(tier_names) if tier_names else 0
             subset_weights[name] = {tier: equal_weight for tier in tier_names}
 
@@ -633,7 +590,7 @@ def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dic
                 if symbol in aggregated_holdings: aggregated_holdings[symbol]['weight'] += final_weight
                 else: aggregated_holdings[symbol] = {'price': price, 'weight': final_weight}
     if not aggregated_holdings: 
-        return pd.DataFrame(), {}, {} # Return empty objects if no holdings
+        return pd.DataFrame(), {}, {}
         
     final_port = pd.DataFrame([{'symbol': s, **d} for s, d in aggregated_holdings.items()]).sort_values('weight', ascending=False).head(num_positions)
     total_weight = final_port['weight'].sum()
@@ -654,7 +611,6 @@ class MarketRegimeDetectorV2:
     """
     
     def __init__(self):
-        # --- GRANULARITY V3: Increased sensitivity to reduce "CHOP" classification. ---
         self.regime_thresholds = {
             'CRISIS': {'score': -1.0, 'confidence': 0.85},
             'BEAR': {'score': -0.5, 'confidence': 0.75},
@@ -695,7 +651,6 @@ class MarketRegimeDetectorV2:
         }
 
     def _analyze_momentum_regime(self, window: list) -> Dict:
-        """Track momentum evolution over time"""
         rsi_values = [df['rsi latest'].mean() for _, df in window]
         osc_values = [df['osc latest'].mean() for _, df in window]
         
@@ -718,7 +673,6 @@ class MarketRegimeDetectorV2:
         return {'strength': strength, 'score': score, 'current_rsi': current_rsi, 'rsi_trend': rsi_trend, 'current_osc': current_osc, 'osc_trend': osc_trend}
 
     def _analyze_trend_quality(self, window: list) -> Dict:
-        """Assess trend quality and persistence"""
         above_ma200_pct = [(df['price'] > df['ma200 latest']).mean() for _, df in window]
         ma_alignment = [(df['ma90 latest'] > df['ma200 latest']).mean() for _, df in window]
         
@@ -740,7 +694,6 @@ class MarketRegimeDetectorV2:
         return {'quality': quality, 'score': score, 'above_200dma': current_above_200, 'ma_alignment': current_alignment, 'trend_consistency': trend_consistency}
 
     def _analyze_market_breadth(self, df: pd.DataFrame) -> Dict:
-        """Analyze participation and breadth indicators"""
         rsi_bullish = (df['rsi latest'] > 50).mean()
         osc_positive = (df['osc latest'] > 0).mean()
         rsi_weak = (df['rsi latest'] < 40).mean()
@@ -763,16 +716,14 @@ class MarketRegimeDetectorV2:
         return {'quality': quality, 'score': score, 'rsi_bullish_pct': rsi_bullish, 'osc_positive_pct': osc_positive, 'divergence': divergence}
 
     def _analyze_volatility_regime(self, window: list) -> Dict:
-        """Classify volatility regime and its implications"""
         bb_widths = [((4 * df['dev20 latest']) / (df['ma20 latest'] + 1e-6)).mean() for _, df in window]
         current_bbw = bb_widths[-1]
         vol_trend = np.polyfit(range(len(bb_widths)), bb_widths, 1)[0]
         
-        # --- GRANULARITY V3: Panic is now a bearish signal ---
         if current_bbw < 0.08 and vol_trend < 0:
-            regime, score = 'SQUEEZE', 0.5  # Slightly positive, anticipates breakout
+            regime, score = 'SQUEEZE', 0.5 
         elif current_bbw > 0.15 and vol_trend > 0:
-            regime, score = 'PANIC', -1.0  # Bearish signal
+            regime, score = 'PANIC', -1.0 
         elif current_bbw > 0.12:
             regime, score = 'ELEVATED', -0.5
         else:
@@ -781,15 +732,13 @@ class MarketRegimeDetectorV2:
         return {'regime': regime, 'score': score, 'current_bbw': current_bbw, 'vol_trend': vol_trend}
 
     def _analyze_statistical_extremes(self, df: pd.DataFrame) -> Dict:
-        """Detect statistical extreme conditions"""
         extreme_oversold = (df['zscore latest'] < -2.0).mean()
         extreme_overbought = (df['zscore latest'] > 2.0).mean()
         
-        # --- FIX: Inverted scoring logic ---
         if extreme_oversold > 0.40:
-            extreme_type, score = 'DEEPLY_OVERSOLD', 1.5  # Contrarian BULLISH signal
+            extreme_type, score = 'DEEPLY_OVERSOLD', 1.5 
         elif extreme_overbought > 0.40:
-            extreme_type, score = 'DEEPLY_OVERBOUGHT', -1.5 # Contrarian BEARISH signal
+            extreme_type, score = 'DEEPLY_OVERBOUGHT', -1.5
         elif extreme_oversold > 0.20:
             extreme_type, score = 'OVERSOLD', 0.75
         elif extreme_overbought > 0.20:
@@ -800,20 +749,18 @@ class MarketRegimeDetectorV2:
         return {'type': extreme_type, 'score': score, 'zscore_extreme_oversold_pct': extreme_oversold, 'zscore_extreme_overbought_pct': extreme_overbought}
 
     def _analyze_correlation_regime(self, df: pd.DataFrame) -> Dict:
-        """Analyze cross-sectional correlation (systemic risk)"""
         avg_std = (df['rsi latest'].std() / 100 + df['osc latest'].std() / 100 + df['zscore latest'].std() / 5) / 3
         
         if avg_std < 0.15:
-            regime, score = 'HIGH_CORRELATION', -0.5  # Risk-off
+            regime, score = 'HIGH_CORRELATION', -0.5 
         elif avg_std > 0.30:
-            regime, score = 'LOW_CORRELATION', 0.5   # Risk-on, stock picking
+            regime, score = 'LOW_CORRELATION', 0.5 
         else:
             regime, score = 'NORMAL', 0.0
             
         return {'regime': regime, 'score': score, 'dispersion': avg_std}
 
     def _analyze_velocity(self, window: list) -> Dict:
-        """Measure rate of change in key metrics"""
         if len(window) < 5: return {'acceleration': 'UNKNOWN', 'score': 0.0}
         
         recent_rsis = [w[1]['rsi latest'].mean() for w in window[-5:]]
@@ -835,28 +782,23 @@ class MarketRegimeDetectorV2:
         return {'acceleration': velocity, 'score': score, 'avg_velocity': avg_velocity}
 
     def _calculate_composite_score(self, metrics: Dict) -> float:
-        # --- GRANULARITY V3: Increased weight on momentum and velocity, removed correlation ---
         weights = { 'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15, 'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15 }
         return sum(metrics[factor]['score'] * weight for factor, weight in weights.items())
     
     def _classify_regime(self, score: float, metrics: Dict) -> Tuple[str, float]:
-        """Map composite score to regime with confidence"""
         if metrics['volatility']['regime'] == 'PANIC' and score < -0.5 and metrics['breadth']['quality'] == 'CAPITULATION':
             return 'CRISIS', 0.90
             
-        # --- FIX: Iterate from most bearish to most bullish to prevent incorrect classification ---
         sorted_thresholds = sorted(self.regime_thresholds.items(), key=lambda item: item[1]['score'])
         
         for regime, threshold in reversed(sorted_thresholds):
             if score >= threshold['score']:
-                # Downgrade confidence if breadth is divergent
                 confidence = threshold['confidence'] * 0.75 if metrics['breadth']['quality'] == 'DIVERGENT' else threshold['confidence']
                 return regime, confidence
 
-        return 'CRISIS', 0.85 # Fallback
+        return 'CRISIS', 0.85
     
     def _map_regime_to_mix(self, regime: str) -> str:
-        # --- REPLACED: Emojis in mix names ---
         mapping = {
             'STRONG_BULL': 'Bull Market Mix', 'BULL': 'Bull Market Mix',
             'WEAK_BULL': 'Chop/Consolidate Mix', 'CHOP': 'Chop/Consolidate Mix',
@@ -864,7 +806,6 @@ class MarketRegimeDetectorV2:
             'CRISIS': 'Bear Market Mix'
         }
         return mapping.get(regime, 'Chop/Consolidate Mix')
-        # --- END REPLACEMENT ---
     
     def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float) -> str:
         lines = [f"**Detected Regime:** {regime} (Score: {score:.2f}, Confidence: {confidence:.0%})", ""]
@@ -889,22 +830,11 @@ class MarketRegimeDetectorV2:
             lines.append(f"• **Extremes:** {metrics['extremes']['type']} detected")
         return "\n".join(lines)
 
-@st.cache_data(ttl=3600, show_spinner=False) # Cache regime detection for 1 hour
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, Dict]:
-    """
-    Fetches *just enough* data to run the regime detection model.
-    This is designed to be a lightweight call.
-    """
     detector = MarketRegimeDetectorV2()
-    
-    # Fetch data for regime detection: 200-day MA + 10-day lookback
-    # (200 * 1.5) + 30 buffer = 330 days
     regime_days_to_fetch = int(MAX_INDICATOR_PERIOD * 1.5) + 30 
     fetch_start_date = end_date - timedelta(days=regime_days_to_fetch)
-    
-    # Use a toast for the loading message
-    # toast_msg = f"Fetching regime data for {end_date.date()}..."
-    # st.toast(toast_msg, icon="🧠") # <-- MOVED out of cached function
     
     try:
         historical_data = generate_historical_data(
@@ -915,20 +845,17 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
         
         if len(historical_data) < 10:
             return (
-                # --- REPLACED: Emoji ---
                 "Bull Market Mix",
                 "⚠️ Insufficient historical data (< 10 periods). Defaulting to Bull Mix.",
                 0.30, {}
             )
             
         regime_name, mix_name, confidence, details = detector.detect_regime(historical_data)
-        
         return mix_name, details['explanation'], confidence, details
 
     except Exception as e:
         logging.error(f"Error in get_market_mix_suggestion_v3: {e}")
         return (
-            # --- REPLACED: Emoji ---
             "Bull Market Mix",
             f"⚠️ Error during regime detection: {e}. Defaulting to Bull Mix.",
             0.30, {}
@@ -937,7 +864,6 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
 
 # --- UI & Visualization Functions ---
 def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: str):
-    """Generic function to plot weight evolution over time."""
     if not weight_history:
         st.warning(f"No data available for {title}.")
         return
@@ -955,59 +881,41 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     st.plotly_chart(fig, width='stretch')
 
 def display_performance_metrics(performance: Dict):
-    """
-    Renders the full performance dashboard for the backtest results.
-    This includes cumulative metrics, equity curve, risk metrics, and advanced analytics.
-    """
     if not performance:
         st.warning("Performance data not available. Please run an analysis.")
         return
 
     st.header("Out-of-Sample Performance Analysis")
 
-    # Section for key cumulative performance indicators
     st.subheader("Cumulative Performance")
     curated_metrics = performance.get('strategy', {}).get('System_Curated', {}).get('metrics', {})
 
-    # Display metrics in 5 columns for better layout
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Annual Return", f"{curated_metrics.get('annual_return', 0):.2%}",
-                help="The geometric average return on an annualized basis. Higher is better.")
-    col2.metric("Total Return", f"{curated_metrics.get('total_return', 0):.2%}",
-                help="The total compounded return over the entire backtest period. Higher is better.")
-    col3.metric("Sharpe Ratio", f"{curated_metrics.get('sharpe', 0):.2f}",
-                help="Measures return per unit of total risk (volatility). Good > 1, Excellent > 2.")
-    col4.metric("Calmar Ratio", f"{curated_metrics.get('calmar', 0):.2f}",
-                help="Annualized return divided by the max drawdown. Good > 1, Excellent > 3.")
-    col5.metric("Win Rate", f"{curated_metrics.get('win_rate', 0):.2%}",
-                help="The percentage of periods with a positive return. Good > 50%.")
+    col1.metric("Annual Return", f"{curated_metrics.get('annual_return', 0):.2%}", help="The geometric average return on an annualized basis. Higher is better.")
+    col2.metric("Total Return", f"{curated_metrics.get('total_return', 0):.2%}", help="The total compounded return over the entire backtest period. Higher is better.")
+    col3.metric("Sharpe Ratio", f"{curated_metrics.get('sharpe', 0):.2f}", help="Measures return per unit of total risk (volatility). Good > 1, Excellent > 2.")
+    col4.metric("Calmar Ratio", f"{curated_metrics.get('calmar', 0):.2f}", help="Annualized return divided by the max drawdown. Good > 1, Excellent > 3.")
+    col5.metric("Win Rate", f"{curated_metrics.get('win_rate', 0):.2%}", help="The percentage of periods with a positive return. Good > 50%.")
 
-    # Section for Risk and other System-level metrics
     st.subheader("Risk & System Metrics")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Annual Volatility", f"{curated_metrics.get('volatility', 0):.2%}",
-                help="The annualized standard deviation of returns (risk). Lower is better.")
-    col2.metric("Max Drawdown", f"{curated_metrics.get('max_drawdown', 0):.2%}",
-                help="The largest peak-to-trough decline in value. Closer to 0 is better.")
-    col3.metric("Sortino Ratio", f"{curated_metrics.get('sortino', 0):.2f}",
-                help="Measures return per unit of downside risk. Good > 1, Excellent > 2.")
-    col4.metric("Kelly Criterion", f"{curated_metrics.get('kelly_criterion', 0):.2%}",
-                help="Theoretical optimal fraction of capital to allocate. Prone to estimation error; use with caution.")
+    col1.metric("Annual Volatility", f"{curated_metrics.get('volatility', 0):.2%}", help="The annualized standard deviation of returns (risk). Lower is better.")
+    col2.metric("Max Drawdown", f"{curated_metrics.get('max_drawdown', 0):.2%}", help="The largest peak-to-trough decline in value. Closer to 0 is better.")
+    col3.metric("Sortino Ratio", f"{curated_metrics.get('sortino', 0):.2f}", help="Measures return per unit of downside risk. Good > 1, Excellent > 2.")
+    col4.metric("Kelly Criterion", f"{curated_metrics.get('kelly_criterion', 0):.2%}", help="Theoretical optimal fraction of capital to allocate. Prone to estimation error; use with caution.")
     
     avg_entropy = curated_metrics.get('avg_weight_entropy')
     if avg_entropy is not None:
-        st.metric("Average Weight Entropy", f"{avg_entropy:.3f}",
-                  help="Measures portfolio diversification. Higher values indicate a more diversified, less concentrated portfolio.")
+        st.metric("Average Weight Entropy", f"{avg_entropy:.3f}", help="Measures portfolio diversification. Higher values indicate a more diversified, less concentrated portfolio.")
 
     st.markdown("---")
 
-    # Section for the Equity Curve visualization
     st.subheader("Growth of Investment (Equity Curve)")
     equity_curves = []
     for name, perf in performance.get('strategy', {}).items():
         if perf.get('returns'):
             df = pd.DataFrame(perf['returns']).sort_values('date')
-            df['equity'] = (1 + df['return']).cumprod() # Calculate cumulative growth
+            df['equity'] = (1 + df['return']).cumprod()
             df['strategy'] = name
             equity_curves.append(df)
 
@@ -1019,23 +927,20 @@ def display_performance_metrics(performance: Dict):
         fig_equity.update_layout(template='plotly_dark', legend_title_text='Strategy')
         st.plotly_chart(fig_equity, width='stretch')
 
-    # --- NEW: Strategy Weight Evolution Chart ---
     plot_weight_evolution(
         performance.get('strategy_weights_history', []),
         title="Strategy Weight Evolution Over Time",
         y_axis_title="Strategy Weight"
     )
 
-    # Section for the Rolling Sharpe Ratio analysis
     st.subheader("Rolling Sharpe Ratio (3-Period Window)")
     df_list = []
     for name, perf in performance.get('strategy', {}).items():
         if perf.get('returns'):
             df = pd.DataFrame(perf['returns']).sort_values('date')
-            # Calculate rolling metrics over a 3-period window
             rolling_mean = df['return'].rolling(window=3).mean()
             rolling_std = df['return'].rolling(window=3).std()
-            periods_per_year = 52 # Assuming weekly data for annualization
+            periods_per_year = 52 
             df['rolling_sharpe'] = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(periods_per_year)
             df['strategy'] = name
             df_list.append(df)
@@ -1046,25 +951,15 @@ def display_performance_metrics(performance: Dict):
         fig_sharpe.update_layout(template='plotly_dark', legend_title_text='Strategy', yaxis_title="Sharpe Ratio")
         st.plotly_chart(fig_sharpe, width='stretch')
 
-    # Section for the Strategy Correlation Matrix
     st.subheader("Strategy Correlation Matrix")
     returns_df = pd.DataFrame()
     for name, perf in performance.get('strategy', {}).items():
         if perf.get('returns'):
-            # --- FIX: START ---
-            # Create DataFrame from list of dicts
             df_raw = pd.DataFrame(perf['returns'])
-            
-            # Drop potential duplicate dates before setting index
-            # This directly prevents the "duplicate labels" issue
             df = df_raw.drop_duplicates(subset='date', keep='last').set_index('date')
-            
-            # Log if we actually dropped anything
             if len(df_raw) > len(df):
                 logging.warning(f"Removed {len(df_raw) - len(df)} duplicate date entries for strategy '{name}'.")
-
             returns_df[name] = df['return']
-            # --- FIX: END ---
 
     corr_matrix = returns_df.corr()
     fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale='Portland', aspect="auto")
@@ -1102,7 +997,6 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
     st.plotly_chart(fig, width='stretch')
 
 def display_subset_weight_evolution(subset_weights_history: List[Dict], strategies: List[str]):
-    """Displays an interactive chart for subset weight evolution."""
     st.markdown("---")
     st.subheader("Subset Tier Weight Evolution")
 
@@ -1167,7 +1061,6 @@ def main():
         'MOM_v2': MOM2Strategy() 
     }
     
-    # --- REPLACED: Emojis from keys and mix names ---
     PORTFOLIO_STYLES = {
         "Swing Trading": {
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
@@ -1209,32 +1102,31 @@ def main():
             }
         }
     }
-    # --- END REPLACEMENT ---
     
-    # --- NEW: `on_change` callback for the date input ---
     def update_regime_suggestion():
         """
         Called when the analysis date changes. Fetches *just enough*
         data to run the regime model and updates the session state.
         """
-        selected_date_obj = st.session_state.get('analysis_date_str') # This is a datetime.date object
+        selected_date_obj = st.session_state.get('analysis_date_str') 
         if not selected_date_obj:
             return
             
-        # --- FIX: Convert datetime.date to datetime.datetime ---
-        # The strptime line was incorrect as we already have a date object
         selected_date = datetime.combine(selected_date_obj, datetime.min.time())
         
-        # --- FIX: Moved st.toast out of cached function ---
         toast_msg = f"Fetching regime data for {selected_date.date()}..."
-        # --- REPLACED: Emoji in toast ---
         st.toast(toast_msg, icon="🧠")
-        # --- END FIX ---
         
-        # This function is cached, so it's fast on repeated calls
         mix_name, explanation, confidence, details = get_market_mix_suggestion_v3(selected_date)
         
         st.session_state.suggested_mix = mix_name
+        
+        # --- NEW: Store detailed regime info for sidebar display ---
+        st.session_state.regime_display = {
+            'mix': mix_name,
+            'confidence': confidence,
+            'explanation': explanation
+        }
 
 
     with st.sidebar:
@@ -1245,21 +1137,39 @@ def main():
         selected_date_str = st.date_input(
             "Select Analysis Date",
             value=today,
-            min_value=today - timedelta(days=5*365), # 5 years back
+            min_value=today - timedelta(days=5*365),
             max_value=today,
             help="Choose a date to run the portfolio curation.",
-            key='analysis_date_str', # Add a key to access the value
-            on_change=update_regime_suggestion # Set the callback
+            key='analysis_date_str',
+            on_change=update_regime_suggestion 
         )
+
+        # --- NEW: Dynamic Market Regime Info Card ---
+        # Trigger initial calculation if needed
+        if st.session_state.suggested_mix is None:
+             update_regime_suggestion()
+
+        if st.session_state.regime_display:
+            data = st.session_state.regime_display
+            # Using HTML/CSS to blend with the existing sidebar UI (metric-card/info-box style)
+            st.markdown(f"""
+            <div style="background-color: var(--secondary-background-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin: 10px 0 20px 0; border-left: 3px solid var(--primary-color); box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 4px;">Market Regime</div>
+                <div style="color: var(--text-primary); font-size: 1.1rem; font-weight: 700; line-height: 1.2;">{data['mix']}</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                    <span style="color: var(--text-muted); font-size: 0.8rem;">Confidence</span>
+                    <span style="color: var(--primary-color); font-weight: 600; font-size: 0.8rem;">{data['confidence']:.0%}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        # --- END NEW CARD ---
         
         st.markdown("### Portfolio Style Selection")
 
         options_list = list(PORTFOLIO_STYLES.keys())
-        default_index = 0 # Default to first item
-        # --- REPLACED: Logic to find default index ---
+        default_index = 0 
         if "SIP Investment" in options_list:
             default_index = options_list.index("SIP Investment")
-        # --- END REPLACEMENT ---
 
         selected_main_branch = st.selectbox(
             "1. Select Investment Style",
@@ -1270,39 +1180,14 @@ def main():
         
         mix_options = list(PORTFOLIO_STYLES[selected_main_branch]["mixes"].keys())
         
-        # --- UPDATED: No more dropdown, just display the suggested mix ---
-        if st.session_state.suggested_mix:
-             pass
-        else:
-             # Run it once on the first load
-             update_regime_suggestion()
-
-        
-        # st.markdown("### Training Data Selection") # Removed header
-        # lookback_files = st.number_input( # Removed number input
-        #     "Lookback Files for Training",
-        #     min_value=10,
-        #     max_value=1000, # Set a reasonable max
-        #     value=25, # Default to 25
-        #     step=5,
-        #     help=f"Number of historical files (days) to use for training, prior to the analysis date."
-        # )
-
         st.markdown("### Portfolio Parameters")
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
-        # --- REPLACED: Button emoji removed ---
         if st.button("Run Analysis", width='stretch', type="primary"):
             
-            # --- Set fixed lookback period ---
             lookback_files = 25
-            # --- End fixed lookback ---
-
-            # --- 1. Load Main Data for Backtest ---
-            # This is the main data-loading call, triggered by the button
             
-            # --- FIX: Get date object from state and convert to datetime ---
             selected_date_obj = st.session_state.get('analysis_date_str')
             if not selected_date_obj:
                 st.error("Analysis date is missing. Please select a date.")
@@ -1310,37 +1195,25 @@ def main():
                 
             selected_date_dt = datetime.combine(selected_date_obj, datetime.min.time())
 
-            # --- FIX: Moved st.toast out of cached function ---
-            # Re-calculate fetch_start_date components for the toast message
             total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
             fetch_start_date = selected_date_dt - timedelta(days=total_days_to_fetch)
             toast_msg = f"Fetching live data for {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {selected_date_dt.date()}..."
-            # --- REPLACED: Emoji in toast ---
             st.toast(toast_msg, icon="⏳")
-            # --- END FIX ---
 
             all_historical_data = load_historical_data(selected_date_dt, lookback_files)
             
             if not all_historical_data:
                 st.error("Application cannot start: No historical data could be loaded or generated.")
-                st.stop() # Stop execution if no data
+                st.stop()
 
-            # --- 2. Filter data for training and current day ---
-            # all_historical_data is already pre-filtered up to selected_date_str
-            # The last item is the "current" data frame
             current_date, current_df = all_historical_data[-1]
-            
-            # The rest is the training data
             training_data = all_historical_data[:-1]
             
-            # Apply the user's lookback filter
             if len(training_data) > lookback_files:
                 training_data_window = training_data[-lookback_files:]
             else:
-                training_data_window = training_data # Use all available if less than requested
+                training_data_window = training_data
             
-            # Add the "current" day to the end of the training window
-            # The backtester needs it to calculate the *final* portfolio
             training_data_window_with_current = training_data_window + [(current_date, current_df)]
             
             st.session_state.current_df = current_df
@@ -1350,7 +1223,6 @@ def main():
                 st.error(f"Not enough training data loaded ({len(training_data_window_with_current)} days). Need at least 10. Check date range or lookback period.")
                 st.stop()
                 
-            # --- 3. Determine Strategies to Run ---
             if not st.session_state.suggested_mix:
                 st.error("Market regime could not be determined. Please select a valid date. Analysis cannot run.")
                 st.stop()
@@ -1360,7 +1232,6 @@ def main():
             style_strategies = PORTFOLIO_STYLES[selected_main_branch]["mixes"][final_mix_to_use]['strategies']
             strategies_to_run = {name: strategies[name] for name in style_strategies}
 
-            # --- 4. Run the Backtest & Curation ---
             st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
             
             if st.session_state.performance:
@@ -1387,15 +1258,12 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-    # --- REPLACED st.title with styled header ---
     st.markdown(f"""
     <div class="premium-header">
         <h1>Pragyam : Quantitative Portfolio Curation System</h1>
     </div>
     """, unsafe_allow_html=True)
-    # --- END REPLACEMENT ---
 
-    # --- UPDATED: Show welcome screen if no analysis has run ---
     if st.session_state.portfolio is None or st.session_state.performance is None:
         st.markdown("""
         <div class='info-box welcome'>
@@ -1419,7 +1287,6 @@ def main():
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         
-        # Feature highlights
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -1450,11 +1317,9 @@ def main():
             """, unsafe_allow_html=True)
 
     else:
-        # --- This is the existing code that runs *after* analysis ---
         total_value = st.session_state.portfolio['value'].sum()
         cash_remaining = capital - total_value
 
-        # Using metric cards for the header stats
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"<div class='metric-card'><h4>Cash Utilized</h4><h2>{total_value:,.2f}</h2></div>", unsafe_allow_html=True)
@@ -1470,44 +1335,36 @@ def main():
             st.header("Curated Portfolio Holdings")
             display_df = st.session_state.portfolio[['symbol', 'price', 'units', 'weightage_pct', 'value']]
             
-            # --- START REPLACEMENT ---
-            # Format the dataframe using pandas styler and apply CSS class
             styled_df = display_df.style.format({
                 'price': '{:,.2f}', 
                 'value': '{:,.2f}', 
-                'units': '{:,.0f}', # Changed to whole number
+                'units': '{:,.0f}',
                 'weightage_pct': '{:.2f}%'
             }).set_table_attributes(
-                'class="stMarkdown table"' # Apply the CSS class from quo.py
+                'class="stMarkdown table"' 
             ).hide(
-                axis="index" # Hide the default pandas index
+                axis="index"
             )
             
-            # Convert to HTML and render using st.markdown
             st.markdown(styled_df.to_html(), unsafe_allow_html=True)
-            # --- END REPLACEMENT ---
             
-            # Prepare DataFrame for CSV export with specific column order
             portfolio_df = st.session_state.portfolio
             first_cols = ['symbol', 'price', 'units']
             other_cols = [col for col in portfolio_df.columns if col not in first_cols]
             new_order = first_cols + other_cols
             download_df = portfolio_df[new_order]
 
-            # --- REPLACED st.download_button with styled link ---
             csv_bytes = fix_csv_export(download_df)
             st.markdown(
                 create_export_link(csv_bytes, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv"), 
                 unsafe_allow_html=True
             )
-            # --- END REPLACEMENT ---
 
         with tab2:
             display_performance_metrics(st.session_state.performance)
 
         with tab3:
             st.header("Strategy & Subset Analysis")
-            # Get the list of strategies that were actually run in the analysis
             strategies_in_performance = [k for k in st.session_state.performance.get('strategy', {}).keys() if k != 'System_Curated']
 
             create_subset_heatmap(st.session_state.performance.get('subset'), strategies_in_performance)
@@ -1522,12 +1379,9 @@ def main():
             strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance}
             heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
             st.plotly_chart(heatmap_fig, width='stretch')
-        # --- REMOVED REDUNDANT ELSE BLOCKS ---
 
-    # --- ADDED: Sanket-style footer ---
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.caption(f"© {datetime.now().year} Pragyam | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
-    # --- END FOOTER ---
 
 if __name__ == "__main__":
     main()
