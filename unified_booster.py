@@ -1,4 +1,3 @@
-
 # ============================================================================
 # Unified Market Analysis (UMA) - Complete Implementation for Pragyam System
 # BACKEND: INVESTPY (Investing.com)
@@ -291,10 +290,20 @@ class MacroMultipleRegression:
         'US10Y': {'name': 'U.S. 10Y', 'country': 'united states', 'type': 'bond'},
         'US02Y': {'name': 'U.S. 2Y', 'country': 'united states', 'type': 'bond'},
         'US30Y': {'name': 'U.S. 30Y', 'country': 'united states', 'type': 'bond'},
+        'JP10Y': {'name': 'Japan 10Y', 'country': 'japan', 'type': 'bond'},
+        'JP02Y': {'name': 'Japan 2Y', 'country': 'japan', 'type': 'bond'},
+        'CN10Y': {'name': 'China 10Y', 'country': 'china', 'type': 'bond'},
+        'CN02Y': {'name': 'China 2Y', 'country': 'china', 'type': 'bond'},
+        'EU10Y': {'name': 'Germany 10Y', 'country': 'germany', 'type': 'bond'},
+        'EU02Y': {'name': 'Germany 2Y', 'country': 'germany', 'type': 'bond'},
+        'GB10Y': {'name': 'U.K. 10Y', 'country': 'united kingdom', 'type': 'bond'},
+        'GB02Y': {'name': 'U.K. 2Y', 'country': 'united kingdom', 'type': 'bond'},
+        'IN10Y': {'name': 'India 10Y', 'country': 'india', 'type': 'bond'},
+        'IN02Y': {'name': 'India 2Y', 'country': 'india', 'type': 'bond'},
         'DXY': {'name': 'US Dollar Index', 'country': 'united states', 'type': 'index'},
-        'GOLD': {'name': 'Gold', 'country': 'united states', 'type': 'commodity'}, # Futures
-        'SILVER': {'name': 'Silver', 'country': 'united states', 'type': 'commodity'}, # Futures
-        'OIL': {'name': 'Crude Oil WTI', 'country': 'united states', 'type': 'commodity'},
+        'GOLD': {'name': 'Gold', 'country': None, 'type': 'commodity'},
+        'SILVER': {'name': 'Silver', 'country': None, 'type': 'commodity'},
+        'OIL': {'name': 'Crude Oil', 'country': None, 'type': 'commodity'},
         'USDINR': {'name': 'USD/INR', 'country': None, 'type': 'currency_cross'},
         'EURINR': {'name': 'EUR/INR', 'country': None, 'type': 'currency_cross'},
         'GBPINR': {'name': 'GBP/INR', 'country': None, 'type': 'currency_cross'},
@@ -335,7 +344,7 @@ class MacroMultipleRegression:
                 elif asset_type == 'index':
                     data = investpy.get_index_historical_data(index=name, country=country, from_date=from_date, to_date=to_date)
                 elif asset_type == 'commodity':
-                    data = investpy.get_commodity_historical_data(commodity=name, country=country, from_date=from_date, to_date=to_date)
+                    data = investpy.get_commodity_historical_data(commodity=name, from_date=from_date, to_date=to_date)
                 elif asset_type == 'currency_cross':
                     data = investpy.get_currency_cross_historical_data(currency_cross=name, from_date=from_date, to_date=to_date)
                 
