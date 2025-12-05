@@ -24,6 +24,9 @@ from typing import Dict, Set, Optional, Tuple, List
 from dataclasses import dataclass
 import warnings
 import time
+from functools import lru_cache
+import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings('ignore')
 
@@ -656,49 +659,43 @@ class UMAPortfolioBooster:
         
         logging.info(f"UMA Booster (Investpy) initialized: boost={boost_multiplier}x")
 
+    @lru_cache(maxsize=128)
+    def _investpy_fetch_cached(self, clean_symbol: str, from_str: str, to_str: str) -> Optional[pd.DataFrame]:
+        """Cached investpy fetch – separate func for cleaner lru_cache"""
+        if not INVESTPY_AVAILABLE:
+            return None
+        try:
+            df = investpy.get_stock_historical_data(
+                stock=clean_symbol,
+                country='india',
+                from_date=from_str,
+                to_date=to_str
+            )
+            if df is None or df.empty:
+                return None
+            df.columns = [c.lower() for c in df.columns]
+            if not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df.index)
+            return df
+        except Exception as e:
+            logging.debug(f"Cache-miss fetch error for {clean_symbol}: {e}")
+            return None
+
     def _fetch_symbol_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """
         Fetch historical data for a symbol using investpy.
         Assumes NSE (India) context if suffix is .NS or implicit.
         """
-        if not INVESTPY_AVAILABLE:
-            return None
-        
         try:
-            # Investpy takes name ('RELIANCE') and country ('india')
-            # It does not want '.NS'
             clean_symbol = symbol.replace('.NS', '')
-            country = 'india' # Assuming India based on Pragyam system context
-            
             end_date = datetime.now()
             start_date = end_date - timedelta(days=self.lookback_days)
-            
             from_str = start_date.strftime('%d/%m/%Y')
             to_str = end_date.strftime('%d/%m/%Y')
             
-            # Note: This looks up by symbol/ticker, not full company name
-            df = investpy.get_stock_historical_data(
-                stock=clean_symbol,
-                country=country,
-                from_date=from_str,
-                to_date=to_str
-            )
-            
-            if df is None or df.empty:
-                return None
-            
-            # Standardize
-            df.columns = [c.lower() for c in df.columns]
-            
-            # Investpy index might not be datetime by default in older versions
-            if not isinstance(df.index, pd.DatetimeIndex):
-                df.index = pd.to_datetime(df.index)
-                
+            # Use the cached fetcher
+            df = self._investpy_fetch_cached(clean_symbol, from_str, to_str)
             return df
-            
-        except RuntimeError as re:
-            logging.debug(f"Investpy Error (Symbol not found or blocked): {symbol} - {re}")
-            return None
         except Exception as e:
             logging.debug(f"Failed to fetch {symbol}: {e}")
             return None
@@ -715,24 +712,44 @@ class UMAPortfolioBooster:
         start_date = end_date - timedelta(days=self.lookback_days)
         macro_data = self.uma.mmr.fetch_macro_data(start_date, end_date)
         
-        for symbol in symbols:
+        # Pre-fetch all stock data in parallel
+        stock_data = {}
+        max_workers = min(5, len(symbols))  # Conservative concurrency
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetches
+            future_to_symbol = {
+                executor.submit(self._fetch_symbol_data, symbol): symbol 
+                for symbol in symbols
+            }
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    df = future.result()
+                    if df is not None and len(df) >= 100:
+                        stock_data[symbol] = df
+                        # Staggered sleep: ~0.2s effective per thread (total sleep reduced)
+                        time.sleep(0.2 / max_workers)  # Distribute delay
+                except Exception as e:
+                    logging.debug(f"Parallel fetch error for {symbol}: {e}")
+        
+        logging.info(f"Pre-fetched data for {len(stock_data)}/{len(symbols)} symbols")
+        
+        # Compute UMA in parallel on pre-fetched data
+        uma_futures = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:  # CPU cores for computations
+            for symbol, df in stock_data.items():
+                future = executor.submit(self.uma.has_buy_signal, df, macro_data)
+                uma_futures[future] = symbol
+        
+        for future in as_completed(uma_futures):
+            symbol = uma_futures[future]
             try:
-                # Rate limit kindness for scraping
-                time.sleep(0.5)
-                
-                df = self._fetch_symbol_data(symbol)
-                
-                if df is None or len(df) < 100: # Need history
-                    continue
-                
-                if self.uma.has_buy_signal(df, macro_data):
+                if future.result():
                     clean_symbol = symbol.replace('.NS', '')
                     buy_signals.add(clean_symbol)
                     logging.info(f"✅ UMA Buy signal: {symbol}")
-                    
             except Exception as e:
-                logging.debug(f"Error processing {symbol}: {e}")
-                continue
+                logging.debug(f"Parallel UMA error for {symbol}: {e}")
         
         logging.info(f"UMA Booster: {len(buy_signals)} buy signals from {len(symbols)} symbols")
         return buy_signals
