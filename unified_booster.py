@@ -803,6 +803,31 @@ def get_uma_analysis(symbol: str, lookback_days: int = 200) -> Optional[Dict]:
         logging.error(f"UMA analysis failed for {symbol}: {e}")
         return None
 
+def boost_portfolio_with_unified_signals(
+    portfolio_df: pd.DataFrame,
+    symbols: List[str],
+    boost_multiplier: float = 1.15,
+    max_boost_weight: float = 0.15,
+    lookback_days: int = 100
+) -> pd.DataFrame:
+    """
+    Unified wrapper: Detects buy signals across symbols and applies portfolio boosts.
+    Matches the exact signature expected by app.py.
+    """
+    if portfolio_df.empty:
+        return portfolio_df
+    
+    booster = UMAPortfolioBooster(
+        lookback_days=lookback_days,
+        boost_multiplier=boost_multiplier,
+        max_boost_weight=max_boost_weight
+    )
+    
+    buy_signals = booster.get_buy_signals(symbols)
+    boosted_portfolio = booster.apply_boost(portfolio_df, buy_signals)
+    
+    return boosted_portfolio
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
     print("=== UMA (Investpy Backend) Test ===")
