@@ -1890,131 +1890,121 @@ class VolatilitySurfer(BaseStrategy):
         return self._allocate_portfolio(eligible_stocks, sip_amount)
 
 # =====================================
-# MAX ALPHA: HyperVelocity Strategy
+# MAX ALPHA: HyperVelocity Strategy (Revised)
 # =====================================
 class HyperVelocity(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        HyperVelocity: Maximum Momentum Acceleration.
+        HyperVelocity: Maximum Momentum Acceleration (Inclusive Scoring).
         - Philosophy: Captures the 'Vertical Phase' of a trend.
-        - Mechanism: Prioritizes the rate of expansion between Fast (9) and Slow (21) Oscillator EMAs.
-        - Alpha Edge: Beats standard momentum by focusing on 'Jerk' (change in acceleration) rather than just speed.
+        - Mechanism: Scores ALL stocks based on momentum spread and acceleration.
+        - Fix: Removed hard filters that clipped results. Uses continuous scoring.
         """
         required_columns = [
-            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
-            '9ema osc latest', '21ema osc latest', '9ema osc weekly', '21ema osc weekly',
-            'ma20 latest', 'ma90 latest', 'ma200 latest'
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest', '21ema osc latest', 
+            'ma20 latest', 'ma90 latest'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Velocity Calculation (The Engine)
-        # Calculate the spread between fast and slow EMAs of the oscillator.
-        # A widening positive spread indicates accelerating momentum.
-        velocity_daily = df['9ema osc latest'] - df['21ema osc latest']
-        velocity_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
-
-        # 2. The "Power Zone" Filter
-        # We only want stocks that are accelerating positively.
-        # Price must be above the short-term mean (MA20) to confirm direction.
-        # RSI must be > 55 (proven strength) but not theoretically capped (we allow > 80).
-        valid_trend = (velocity_daily > 0) & (df['price'] > df['ma20 latest']) & (df['rsi latest'] > 55)
-
-        # 3. Multi-Timeframe Turbo
-        # If the Weekly timeframe is ALSO accelerating, we apply a massive multiplier.
-        weekly_turbo = np.where(velocity_weekly > 0, 1.5, 0.8)
-
-        # 4. Pure Alpha Scoring
-        # Score = Velocity Magnitude * Weekly Alignment
-        # We clip negative velocity to 0 because we don't short.
-        base_score = np.maximum(velocity_daily, 0)
+        # 1. Acceleration Score (Velocity)
+        # Difference between Fast and Slow EMA of Oscillator.
+        # Positive = Accelerating Up, Negative = Decelerating.
+        velocity = df['9ema osc latest'] - df['21ema osc latest']
         
-        # Add a bonus for "Fresh" explosions (Z-score crossing 1 or 2 recently)
-        # We approximate this by high oscillator values.
-        explosion_bonus = np.where(df['osc latest'] > 50, 1.2, 1.0)
+        # Normalize velocity to a score (add constant to handle negatives without zeroing out)
+        # We want even slight negative velocity stocks to be considered if other factors are good, 
+        # but heavily penalized.
+        velocity_score = np.clip(velocity, -50, 100) + 50 
 
-        df['velocity_score'] = (base_score * weekly_turbo * explosion_bonus)
+        # 2. RSI Power Score
+        # We want RSI > 50. Higher is better up to 80.
+        # RSI 30 = Score 0, RSI 80 = Score 50.
+        rsi_score = np.clip(df['rsi latest'] - 30, 0, 50)
 
-        # 5. Aggressive Filtering
-        # Filter out anything with a score of 0 or weak momentum
-        eligible_stocks = df[valid_trend & (df['velocity_score'] > 0)].copy()
+        # 3. Trend Alignment Score
+        # Is price above MA20?
+        trend_bonus = np.where(df['price'] > df['ma20 latest'], 1.2, 0.8)
+
+        # 4. Oscillator Magnitude
+        # High raw oscillator confirms volume backing.
+        # Map -100 to 100 range to 0 to 20 score
+        osc_score = np.clip((df['osc latest'] + 100) / 10, 0, 20)
+
+        # 5. Composite Velocity Score
+        df['velocity_final'] = (velocity_score + rsi_score + osc_score) * trend_bonus
+
+        # 6. Sort and Rank (No hard filtering)
+        eligible_stocks = df.sort_values('velocity_final', ascending=False).copy()
+
+        # 7. Allocation
+        # Apply exponential weighting to favor top ranks, but allow tail participation
+        # Softmax-like approach but simpler: relative score
+        total_score = eligible_stocks['velocity_final'].sum()
         
-        # Sort by highest velocity score - we want the fastest movers.
-        eligible_stocks = eligible_stocks.sort_values('velocity_score', ascending=False)
-
-        # 6. Allocation
-        total_score = eligible_stocks['velocity_score'].sum()
         if total_score > 0:
-            # Aggressive weighting: Top scores get significantly more capital
-            eligible_stocks['weightage'] = eligible_stocks['velocity_score'] / total_score
+            eligible_stocks['weightage'] = eligible_stocks['velocity_final'] / total_score
         else:
-            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+            # Fallback
+            eligible_stocks['weightage'] = 1.0 / len(eligible_stocks)
 
         return self._allocate_portfolio(eligible_stocks, sip_amount)
 
 
 # =====================================
-# MAX ALPHA: OrbitalStrike Strategy
+# MAX ALPHA: OrbitalStrike Strategy (Revised)
 # =====================================
 class OrbitalStrike(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        OrbitalStrike: Statistical Breakout & Escape Velocity.
-        - Philosophy: Buys 'Escape Velocity'. Breaks the statistical ceiling with high conviction.
-        - Mechanism: Targets stocks piercing the Upper Bollinger Band with confirming Liquidity Oscillator strength.
-        - Alpha Edge: Weights positions by Z-Score Magnitude. The more 'impossible' the move, the bigger the bet.
+        OrbitalStrike: Statistical Breakout (Continuous Scoring).
+        - Philosophy: Buys 'Escape Velocity'.
+        - Mechanism: Scores 'Breakout Intensity' instead of using binary filters.
+        - Fix: Removed hard 'price > band' filter. Uses proximity scoring to ensure full portfolio.
         """
         required_columns = [
             'symbol', 'price', 'osc latest', 'zscore latest', 'rsi latest',
-            'ma20 latest', 'dev20 latest', 'ma90 latest', 'ma200 latest'
+            'ma20 latest', 'dev20 latest'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Bollinger Band Calculation
+        # 1. Bollinger Band Proximity Score
+        # Upper Band
         upper_band = df['ma20 latest'] + (2 * df['dev20 latest'])
         
-        # 2. Breakout Detection
-        # Is price currently defying gravity (above upper band)?
-        # AND is the move statistically significant (Z-Score > 1.5)?
-        breakout_condition = (df['price'] > upper_band) & (df['zscore latest'] > 1.5)
-
-        # 3. The "Fuel" Check (Liquidity Oscillator)
-        # A breakout without volume/liquidity impact is a fake-out.
-        # We demand the Oscillator be POSITIVE.
-        fuel_check = df['osc latest'] > 0
-
-        # 4. Trajectory Control (Trend Alignment)
-        # We prefer breakouts that are aligned with the long-term trend to avoid "Dead Cat Bounces".
-        # Price > MA200 is the hard floor.
-        trajectory_check = df['price'] > df['ma200 latest']
-
-        # 5. Composite Scoring: The "Strike Score"
-        # Base Score starts with the Z-Score (how extreme is this move?)
-        # We want outliers. A 3-sigma move is better than a 2-sigma move in a breakout regime.
-        strike_score = np.clip(df['zscore latest'], 0, 5.0) 
+        # Calculate how close price is to the upper band (or how far above)
+        # Normalized by volatility (dev20)
+        # Score 0.0 = At MA20
+        # Score 1.0 = At Upper Band
+        # Score 1.5 = Blasting through Upper Band
+        # We use a safe division
+        dist_from_mean = df['price'] - df['ma20 latest']
+        volatility_unit = df['dev20 latest'] + 1e-6
+        bb_position_score = dist_from_mean / (2 * volatility_unit)
         
-        # Multiplier for RSI Intensity
-        # High RSI (70+) is NOT a sell signal here; it's a "Rocket Booster" signal.
-        rsi_booster = np.where(df['rsi latest'] > 70, 1.5, 1.0)
-        
-        # Multiplier for Oscillator Conviction
-        # If Osc > 50, it means massive buying pressure.
-        osc_booster = np.where(df['osc latest'] > 50, 1.3, 1.0)
+        # We focus on the upper end. Clip negative values (below mean) to small number.
+        bb_score = np.clip(bb_position_score, 0.1, 3.0)
 
-        df['strike_score'] = strike_score * rsi_booster * osc_booster
+        # 2. Z-Score Energy
+        # Higher Z-score = More statistical significance to the move.
+        # We map Z-score -1 to +4 into a positive multiplier.
+        z_score_energy = np.clip(df['zscore latest'] + 1.0, 0.5, 5.0)
 
-        # 6. Apply Filters
-        # Only take stocks meeting ALL conditions
-        mask = breakout_condition & fuel_check & trajectory_check
-        eligible_stocks = df[mask].copy()
-        
-        # Sort by the most powerful strikes
-        eligible_stocks = eligible_stocks.sort_values('strike_score', ascending=False)
+        # 3. Oscillator Conviction
+        # If Oscillator is positive, we are good. If negative, penalize.
+        osc_conviction = np.where(df['osc latest'] > 0, 1.5, 0.5)
 
-        # 7. Allocation
+        # 4. Trajectory Score (Composite)
+        df['strike_score'] = bb_score * z_score_energy * osc_conviction
+
+        # 5. Sort by highest Strike Score
+        eligible_stocks = df.sort_values('strike_score', ascending=False).copy()
+
+        # 6. Allocation
         total_score = eligible_stocks['strike_score'].sum()
+        
         if total_score > 0:
             eligible_stocks['weightage'] = eligible_stocks['strike_score'] / total_score
         else:
-            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+             eligible_stocks['weightage'] = 1.0 / len(eligible_stocks)
 
         return self._allocate_portfolio(eligible_stocks, sip_amount)
