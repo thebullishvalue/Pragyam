@@ -7,7 +7,9 @@ import logging
 from typing import List, Dict, Optional
 
 # --- CONFIGURATION ---
-MACRO_SYMBOLS = {
+
+# 1. Symbols fetched from Stooq (Existing)
+MACRO_SYMBOLS_STOOQ = {
     "India 10Y": "10YINY.B",
     "India 02Y": "2YINY.B",
     "US 30Y": "30YUSY.B",
@@ -29,6 +31,23 @@ MACRO_SYMBOLS = {
     "Japan 02Y": "2YJPY.B",
     "Singapore 10Y": "10YSGY.B",
 }
+
+# 2. Symbols fetched from Yahoo Finance (New)
+MACRO_SYMBOLS_YF = {
+    "SGDINR": "SGDINR=X",
+    "USDINR": "USDINR=X",
+    "GBPINR": "GBPINR=X",
+    "EURINR": "EURINR=X",
+    "JPYINR": "JPYINR=X",
+    "GOLD": "GC=F",       # Gold Futures
+    "SILVER": "SI=F",     # Silver Futures
+    "USOIL": "CL=F",      # WTI Crude Oil
+    "UKOIL": "BZ=F",      # Brent Crude Oil
+    "DXY": "DX-Y.NYB"     # US Dollar Index
+}
+
+# Combine all for lookup logic
+ALL_MACRO_SYMBOLS = {**MACRO_SYMBOLS_STOOQ, **MACRO_SYMBOLS_YF}
 
 # Global cache to prevent re-fetching macro data
 _MACRO_DATA_CACHE = None
@@ -57,7 +76,7 @@ def calculate_atr(df, length=14):
 # --- DATA FETCHING ---
 
 def fetch_macro_data_cached(start_date, end_date):
-    """Fetches macro data once and caches it."""
+    """Fetches macro data from Stooq AND Yahoo Finance, merges, and caches it."""
     global _MACRO_DATA_CACHE, _MACRO_CACHE_KEY
     
     # Cache key based on date range
@@ -66,27 +85,68 @@ def fetch_macro_data_cached(start_date, end_date):
     if _MACRO_DATA_CACHE is not None and _MACRO_CACHE_KEY == cache_key:
         return _MACRO_DATA_CACHE
 
-    logging.info(f"Fetching Macro Data from Stooq ({start_date} to {end_date})...")
-    try:
-        macro_tickers = list(MACRO_SYMBOLS.values())
-        macro_df = web.DataReader(macro_tickers, "stooq", start=start_date, end=end_date)
-        
-        if isinstance(macro_df.columns, pd.MultiIndex):
-            if 'Close' in macro_df.columns.get_level_values(0):
-                macro_df = macro_df['Close']
-            elif 'Value' in macro_df.columns.get_level_values(0):
-                macro_df = macro_df['Value']
-        
-        macro_df = macro_df.sort_index()
-        
-        if macro_df.empty:
-            logging.warning("⚠️ Stooq returned EMPTY macro data. MMR will be 0.")
-        else:
-            logging.info(f"✅ Macro Data Fetched: {macro_df.shape[0]} rows, {macro_df.shape[1]} cols")
+    logging.info(f"Fetching Macro Data ({start_date} to {end_date})...")
+    
+    combined_macro_df = pd.DataFrame()
 
-        _MACRO_DATA_CACHE = macro_df
+    try:
+        # --- 1. Fetch from Stooq ---
+        stooq_tickers = list(MACRO_SYMBOLS_STOOQ.values())
+        if stooq_tickers:
+            stooq_df = web.DataReader(stooq_tickers, "stooq", start=start_date, end=end_date)
+            
+            if isinstance(stooq_df.columns, pd.MultiIndex):
+                if 'Close' in stooq_df.columns.get_level_values(0):
+                    stooq_df = stooq_df['Close']
+                elif 'Value' in stooq_df.columns.get_level_values(0):
+                    stooq_df = stooq_df['Value']
+            
+            # Ensure index is timezone-naive
+            if stooq_df.index.tz is not None:
+                stooq_df.index = stooq_df.index.tz_localize(None)
+            
+            combined_macro_df = stooq_df.sort_index()
+
+        # --- 2. Fetch from Yahoo Finance ---
+        yf_tickers = list(MACRO_SYMBOLS_YF.values())
+        if yf_tickers:
+            # Add 1 day buffer for yfinance inclusive/exclusive handling
+            yf_end = end_date + datetime.timedelta(days=1) if isinstance(end_date, datetime.date) else end_date
+            
+            yf_data = yf.download(yf_tickers, start=start_date, end=yf_end, progress=False, auto_adjust=False)
+            
+            if not yf_data.empty:
+                # Extract Close prices
+                if 'Close' in yf_data.columns:
+                     yf_close = yf_data['Close']
+                else:
+                     yf_close = yf_data # Fallback if single series
+
+                # Ensure index is timezone-naive
+                if yf_close.index.tz is not None:
+                    yf_close.index = yf_close.index.tz_localize(None)
+                
+                yf_close = yf_close.sort_index()
+
+                # --- 3. Merge ---
+                # Join Stooq and YF data on Date index
+                if combined_macro_df.empty:
+                    combined_macro_df = yf_close
+                else:
+                    combined_macro_df = combined_macro_df.join(yf_close, how='outer')
+
+        # Forward fill to handle different holidays/trading hours
+        combined_macro_df = combined_macro_df.sort_index().ffill()
+        
+        if combined_macro_df.empty:
+            logging.warning("⚠️ Macro data fetch returned EMPTY results. MMR will be 0.")
+        else:
+            logging.info(f"✅ Macro Data Fetched: {combined_macro_df.shape[0]} rows, {combined_macro_df.shape[1]} cols")
+
+        _MACRO_DATA_CACHE = combined_macro_df
         _MACRO_CACHE_KEY = cache_key
-        return macro_df
+        return combined_macro_df
+
     except Exception as e:
         logging.error(f"❌ Error fetching macro data: {e}")
         return pd.DataFrame()
@@ -129,14 +189,17 @@ def fetch_data_for_booster(target_ticker, analysis_date, days_back=200):
         # 3. Join
         if target_df.index.tz is not None:
             target_df.index = target_df.index.tz_localize(None)
-        if not macro_df.empty and macro_df.index.tz is not None:
-             macro_df.index = macro_df.index.tz_localize(None)
-
-        if macro_df.empty:
+        
+        if not macro_df.empty:
+            # Ensure macro is same timezone (naive) before join
+             if macro_df.index.tz is not None:
+                 macro_df.index = macro_df.index.tz_localize(None)
+             
+             # Join left to keep target dates
+             combined = target_df.join(macro_df, how='left').ffill()
+             return combined
+        else:
              return target_df # Proceed without macro (MMR will be 0)
-
-        combined = target_df.join(macro_df, how='left').ffill()
-        return combined
 
     except Exception as e:
         logging.error(f"Booster Data Fetch Error for {target_ticker}: {e}")
@@ -213,11 +276,11 @@ def calculate_msf(df, length=20, roc_len=14, clip=3.0):
     msf_raw = (osc_momentum + osc_structure + osc_flow) / np.sqrt(3.0)
     msf_signal = sigmoid(msf_raw * np.sqrt(3.0), 1.0)
     
-    # --- MODIFIED: Return micro_norm as well ---
     return msf_signal, micro_norm
 
 def calculate_mmr(df, length=20, num_vars=5):
-    macro_cols = [c for c in df.columns if c in MACRO_SYMBOLS.values()]
+    # Use ALL_MACRO_SYMBOLS to find relevant columns
+    macro_cols = [c for c in df.columns if c in ALL_MACRO_SYMBOLS.values()]
     target = df['Close']
     
     if not macro_cols:
@@ -273,7 +336,6 @@ def calculate_unified_signal(df):
     base_weight = 0.5
     
     # 1. Component Calculation
-    # --- MODIFIED: Capture Micro Norm ---
     df['MSF'], df['Micro'] = calculate_msf(df, length, roc_len)
     df['MMR'], df['MMR_Quality'] = calculate_mmr(df, length)
     
@@ -304,8 +366,7 @@ def calculate_unified_signal(df):
     
     # 3. Lime Circle Logic (Confirmed Buy)
     # Strong Agreement (> 0.3) + Oversold (< -5) + Micro Structure > 0
-    strong_agreement = agreement > 0.3
-    # --- MODIFIED: Added Micro Condition ---
+    strong_agreement = agreement > 0.25
     df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5) & (df['Micro'] > 0)
     
     return df
@@ -381,7 +442,6 @@ def boost_portfolio_with_unified_signals(
             latest_agreement = latest_row['MSF'] * latest_row['MMR']
             
             # --- DEBUG LOGGING ---
-            # If Unified Osc is in oversold zone, print why it didn't trigger
             if latest_unified < -2.0:
                 status = "🟢 BUY" if latest_signal else "⚪ NO TRIGGER"
                 logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agree: {latest_agreement:.2f} | Micro: {latest_micro:.2f} | {status}")
