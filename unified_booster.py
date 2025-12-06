@@ -151,7 +151,7 @@ def fetch_macro_data_cached(start_date, end_date):
         logging.error(f"❌ Error fetching macro data: {e}")
         return pd.DataFrame()
 
-def fetch_data_for_booster(target_ticker, analysis_date, days_back=200):
+def fetch_data_for_booster(target_ticker, analysis_date, days_back=100):
     """Fetches Target + Cached Macro Data and joins them."""
     # Convert analysis_date to date object if it's datetime
     if isinstance(analysis_date, datetime.datetime):
