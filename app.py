@@ -59,7 +59,7 @@ VERSION = "v1.1.0 - Curation Engine"
 # — CSS Styling —
 st.markdown("""
 <style>
-    @import url('[https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap](https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap)');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
     
     :root {
         --primary-color: #FFC300;
@@ -509,7 +509,18 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
 
         try:
             logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
-            curated_port, strategy_weights, subset_weights = curate_final_portfolio(_strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0)
+            
+            # --- MODIFIED: apply_booster=False for OOS loop as requested ---
+            curated_port, strategy_weights, subset_weights = curate_final_portfolio(
+                _strategies, 
+                in_sample_perf, 
+                test_df, 
+                TRAINING_CAPITAL, 
+                30, 
+                1.0, 
+                10.0, 
+                apply_booster=False
+            )
             
             strategy_weights_history.append({'date': test_date, **strategy_weights})
             subset_weights_history.append({'date': test_date, **subset_weights})
@@ -553,7 +564,18 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
         'subset_weights_history': subset_weights_history
     }
 
-def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dict, current_df: pd.DataFrame, sip_amount: float, num_positions: int, min_pos_pct: float, max_pos_pct: float) -> Tuple[pd.DataFrame, Dict, Dict]:
+# --- MODIFIED: Added apply_booster flag ---
+def curate_final_portfolio(
+    strategies: Dict[str, BaseStrategy], 
+    performance: Dict, 
+    current_df: pd.DataFrame, 
+    sip_amount: float, 
+    num_positions: int, 
+    min_pos_pct: float, 
+    max_pos_pct: float,
+    apply_booster: bool = False
+) -> Tuple[pd.DataFrame, Dict, Dict]:
+    
     strategy_weights = calculate_strategy_weights(performance)
     subset_weights = {}
     for name in strategies:
@@ -611,10 +633,10 @@ def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dic
     final_port_df = final_port.sort_values('weightage_pct', ascending=False).reset_index(drop=True)
 
     # --- UNIFIED MARKET ANALYSIS BOOSTER LAYER ---
-    # Apply weight boost for symbols with buy signals (non-invasive layer)
+    # Only runs if apply_booster is True and enabled in config
     booster_config = st.session_state.get('booster_config', {'enabled': False})
 
-    if UNIFIED_BOOSTER_AVAILABLE and booster_config.get('enabled', False) and not final_port_df.empty:
+    if UNIFIED_BOOSTER_AVAILABLE and apply_booster and booster_config.get('enabled', False) and not final_port_df.empty:
         try:
             logging.info("Applying Unified Market Analysis booster...")
             
@@ -1321,6 +1343,7 @@ def main():
             st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
             
             if st.session_state.performance:
+                # --- MODIFIED: apply_booster=True for Final Analysis ---
                 st.session_state.portfolio, _, _ = curate_final_portfolio(
                     strategies_to_run,
                     st.session_state.performance,
@@ -1328,7 +1351,8 @@ def main():
                     capital,
                     num_positions,
                     st.session_state.min_pos_pct,
-                    st.session_state.max_pos_pct
+                    st.session_state.max_pos_pct,
+                    apply_booster=True 
                 )
                 st.success("✅ Analysis Complete!")
         
