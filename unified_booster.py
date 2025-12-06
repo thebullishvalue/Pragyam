@@ -315,7 +315,8 @@ class MarketDataFetcher:
         "Singapore 10Y Bond Yield": "10YSGY.B",
     }
     
-    DISPLAY_NAMES = {k: v['name'] for k, v in MACRO_MAPPINGS.items()}
+    # FIX: Use keys as display names since values are just ticker strings
+    DISPLAY_NAMES = {k: k for k in MACRO_MAPPINGS.keys()}
     
     def __init__(self, cache: Optional[DataCache] = None):
         self.cache = cache or _data_cache
@@ -393,12 +394,12 @@ class MarketDataFetcher:
         if cached is not None:
             return cached
         
-        mapping = self.MACRO_MAPPINGS.get(var_name)
-        if not mapping:
+        ticker = self.MACRO_MAPPINGS.get(var_name)
+        if not ticker:
             return None
         
         try:
-            ticker = mapping['ticker']
+            # FIX: ticker is the value string directly, not a dict
             df = web.DataReader(ticker, 'stooq', start=start_date, end=end_date)
             
             if df is None or df.empty:
@@ -1302,7 +1303,7 @@ if __name__ == "__main__":
     
     print(f"\nBuy signals detected: {len(buy_signals)}")
     for sym, tier in buy_signals.items():
-        print(f"  🟢 {sym}: Tier {tier}")
+        print(f"   🟢 {sym}: Tier {tier}")
     
     print("\nTesting Portfolio Boost...")
     test_portfolio = pd.DataFrame({
