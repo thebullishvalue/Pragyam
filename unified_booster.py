@@ -73,6 +73,19 @@ def calculate_atr(df, length=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(window=length).mean()
 
+def calculate_rsi_series(series, length=14):
+    """Calculates RSI for a pandas Series (e.g., an Oscillator)"""
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).fillna(0)
+    loss = (-delta.where(delta < 0, 0)).fillna(0)
+    
+    avg_gain = gain.rolling(window=length, min_periods=1).mean()
+    avg_loss = loss.rolling(window=length, min_periods=1).mean()
+    
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
+
 # --- DATA FETCHING ---
 
 def fetch_macro_data_cached(start_date, end_date):
@@ -328,7 +341,7 @@ def calculate_mmr(df, length=20, num_vars=5):
 
 def calculate_unified_signal(df):
     """
-    Calculates the Unified Oscillator and checks for the Lime Color Circle condition.
+    Calculates the Unified Oscillator and checks for the 3 Tiers of Buy Signals.
     """
     length = 20
     roc_len = 14
@@ -364,10 +377,35 @@ def calculate_unified_signal(df):
     df['Unified'] = (unified_signal * multiplier).clip(-1.0, 1.0)
     df['Unified_Osc'] = df['Unified'] * 10
     
-    # 3. Lime Circle Logic (Confirmed Buy)
-    # Strong Agreement (> 0.25) + Oversold (< -5)
-    strong_agreement = agreement > 0.25
-    df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5)
+    # --- TIERED BUY SIGNAL LOGIC ---
+    
+    # 1. Calc Bollinger Bands & RSI on Oscillator (needed for Tier 3)
+    bb_len = 20
+    bb_mult = 2.0
+    bb_basis = df['Unified_Osc'].rolling(bb_len).mean()
+    bb_dev = df['Unified_Osc'].rolling(bb_len).std()
+    bb_lower = bb_basis - (bb_mult * bb_dev)
+    
+    # RSI on Oscillator
+    rsi_osc = calculate_rsi_series(df['Unified_Osc'], 14)
+    
+    # 2. Define Signals
+    
+    # Tier 1: Confirmed Bullish (Lime Circle)
+    # Strong Agreement (> 0.3) + Oversold (< -5)
+    strong_agreement = agreement > 0.3
+    df['Tier1_Signal'] = strong_agreement & (df['Unified_Osc'] < -5)
+    
+    # Tier 2: Bullish Divergence
+    # Oscillator Rising + Price Falling + Oscillator < -5
+    osc_rising = df['Unified_Osc'] > df['Unified_Osc'].shift(1)
+    price_falling = df['Close'] < df['Close'].shift(1)
+    df['Tier2_Signal'] = osc_rising & price_falling & (df['Unified_Osc'] < -5)
+    
+    # Tier 3: Is Oversold
+    # Note: User likely meant 'Oversold' as 'Overbought' is usually a sell signal.
+    # Logic: Below lower Bollinger Band AND RSI < 40 (standard Pine Script logic)
+    df['Tier3_Signal'] = (df['Unified_Osc'] < bb_lower) & (rsi_osc < 40)
     
     return df
 
@@ -382,7 +420,11 @@ def boost_portfolio_with_unified_signals(
     analysis_date: Optional[datetime.datetime] = None
 ) -> pd.DataFrame:
     """
-    Analyzes each symbol in the portfolio using the Unified Market Analysis indicator.
+    Analyzes each symbol using tiered Unified Market Analysis.
+    Tiers:
+      1. Confirmed Bullish (Lime Circle): Full Boost
+      2. Bullish Divergence: Medium Boost
+      3. Oversold: Minor Boost
     """
     
     if portfolio_df.empty:
@@ -392,14 +434,13 @@ def boost_portfolio_with_unified_signals(
     if analysis_date is None:
         analysis_date = datetime.datetime.now()
     
-    # Ensure analysis_date is a datetime object
     if isinstance(analysis_date, datetime.date) and not isinstance(analysis_date, datetime.datetime):
         analysis_date = datetime.datetime.combine(analysis_date, datetime.datetime.min.time())
 
     logging.info(f"--- Unified Booster: Analysis for {analysis_date.date()} ---")
     
     boosted_df = portfolio_df.copy()
-    boost_indices = []
+    boost_updates = [] # Store (index, multiplier_to_apply)
 
     # Prefetch macro
     end_date = analysis_date.date()
@@ -419,71 +460,89 @@ def boost_portfolio_with_unified_signals(
         try:
             df_analyzed = calculate_unified_signal(df)
             
-            # Check the specific analysis date
+            # Find closest date
             try:
-                # Use get_indexer to find the nearest date on or before analysis_date
                 target_idx = df_analyzed.index.get_indexer([analysis_date], method='pad')[0]
                 latest_row = df_analyzed.iloc[target_idx]
                 latest_date_in_df = df_analyzed.index[target_idx]
             except:
-                # Fallback to last row if exact match fails
                 latest_row = df_analyzed.iloc[-1]
                 latest_date_in_df = df_analyzed.index[-1]
 
-            # Date sanity check: Is the data too old?
             days_diff = (analysis_date - latest_date_in_df).days
             if days_diff > 5:
-                logging.warning(f"   [{symbol}] Data outdated by {days_diff} days (Last: {latest_date_in_df.date()}). Skipping.")
+                logging.warning(f"   [{symbol}] Data outdated by {days_diff} days. Skipping.")
                 continue
 
-            latest_signal = latest_row['Buy_Signal']
-            latest_unified = latest_row['Unified_Osc']
-            latest_micro = latest_row['Micro']
-            latest_agreement = latest_row['MSF'] * latest_row['MMR']
+            # 3. Check Tiers (Hierarchy)
+            tier1 = latest_row['Tier1_Signal']
+            tier2 = latest_row['Tier2_Signal']
+            tier3 = latest_row['Tier3_Signal']
             
-            # --- DEBUG LOGGING ---
-            if latest_unified < -2.0:
-                status = "🟢 BUY" if latest_signal else "⚪ NO TRIGGER"
-                logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agree: {latest_agreement:.2f} | Micro: {latest_micro:.2f} | {status}")
-                if not latest_signal and latest_unified < -5.0:
-                    if latest_agreement <= 0.25:
-                        logging.info(f"      -> Failed: Weak Agreement (Req > 0.25, Got {latest_agreement:.2f})")
+            osc_val = latest_row['Unified_Osc']
+
+            applied_mult = 1.0
+            trigger_reason = ""
             
-            if latest_signal:
-                boost_indices.append(idx)
-                logging.info(f"🚀 BOOST CONFIRMED: {symbol} on {latest_date_in_df.date()}")
+            # Scale the boost factor based on multiplier input
+            # Example: If boost=1.15 (15% increase)
+            # Tier 1: 15% increase
+            # Tier 2: 10% increase (approx 2/3)
+            # Tier 3: 5% increase (approx 1/3)
             
+            boost_delta = boost_multiplier - 1.0 # e.g. 0.15
+            
+            if tier1:
+                # Full Boost
+                applied_mult = boost_multiplier
+                trigger_reason = "TIER 1 (Confirmed Bullish)"
+            elif tier2:
+                # Medium Boost (66% of delta)
+                applied_mult = 1.0 + (boost_delta * 0.66)
+                trigger_reason = "TIER 2 (Bullish Divergence)"
+            elif tier3:
+                # Minor Boost (33% of delta)
+                applied_mult = 1.0 + (boost_delta * 0.33)
+                trigger_reason = "TIER 3 (Oversold)"
+            
+            # Debug Log for near-misses or hits
+            if applied_mult > 1.0:
+                logging.info(f"🚀 {symbol}: {trigger_reason} on {latest_date_in_df.date()} | Osc: {osc_val:.2f} | Boost: {applied_mult:.3f}x")
+                boost_updates.append((idx, applied_mult))
+            elif osc_val < -2.0:
+                 logging.info(f"   [{symbol}] No Signal | Osc: {osc_val:.2f} (Tier1:{tier1} Tier2:{tier2} Tier3:{tier3})")
+
         except Exception as e:
             logging.error(f"Error calculating booster for {symbol}: {e}")
             continue
 
     # 4. Apply Boost
-    if boost_indices:
+    if boost_updates:
         original_total_weight = boosted_df['weightage_pct'].sum()
         
-        for idx in boost_indices:
+        for idx, mult in boost_updates:
             current_weight = boosted_df.at[idx, 'weightage_pct']
-            new_weight = current_weight * boost_multiplier
+            new_weight = current_weight * mult
             
-            # Cap at max_boost_weight (converted to percentage)
+            # Cap at max_boost_weight
             max_pct = max_boost_weight * 100
             if new_weight > max_pct:
                 new_weight = max_pct
                 
             boosted_df.at[idx, 'weightage_pct'] = new_weight
             
-        # 5. Re-normalize to original total weight
+        # 5. Re-normalize
         new_total_weight = boosted_df['weightage_pct'].sum()
         if new_total_weight > 0:
             boosted_df['weightage_pct'] = (boosted_df['weightage_pct'] / new_total_weight) * original_total_weight
         
-        # Recalculate units and value
+        # Recalculate units/value
         if 'price' in boosted_df.columns and 'value' in boosted_df.columns:
             total_value = boosted_df['value'].sum()
             boosted_df['units'] = np.floor((total_value * boosted_df['weightage_pct'] / 100) / boosted_df['price'])
             boosted_df['value'] = boosted_df['units'] * boosted_df['price']
 
-        logging.info(f"--- Booster Applied to {len(boost_indices)} positions ---")
+        logging.info(f"--- Booster Applied to {len(boost_updates)} positions ---")
     else:
         logging.info("--- No Boost Signals Detected ---")
 
