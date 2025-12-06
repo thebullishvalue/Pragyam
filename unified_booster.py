@@ -286,28 +286,33 @@ class MarketDataFetcher:
     
     # Macro data mappings for Stooq tickers
     MACRO_MAPPINGS = {
-        # Bonds
-        'US10Y': {'ticker': '10USY.B', 'name': 'U.S. 10Y Yield'},
-        'US02Y': {'ticker': '2USY.B', 'name': 'U.S. 2Y Yield'},
-        'US30Y': {'ticker': '30USY.B', 'name': 'U.S. 30Y Yield'},
-        'JP10Y': {'ticker': '10JPY.B', 'name': 'Japan 10Y'},
-        'EU10Y': {'ticker': '10DEM.B', 'name': 'Germany 10Y (EU Proxy)'},
-        'GB10Y': {'ticker': '10UKY.B', 'name': 'U.K. 10Y'},
-        'IN10Y': {'ticker': '10INY.B', 'name': 'India 10Y'},
-        
-        # Currencies
-        'USDINR': {'ticker': 'USDINR', 'name': 'USD/INR'},
-        'EURINR': {'ticker': 'EURINR', 'name': 'EUR/INR'},
-        'GBPINR': {'ticker': 'GBPINR', 'name': 'GBP/INR'},
-        'JPYINR': {'ticker': 'JPYINR', 'name': 'JPY/INR'},
-        
-        # Commodities
-        'GOLD': {'ticker': 'XAUUSD', 'name': 'Gold Spot'},
-        'SILVER': {'ticker': 'XAGUSD', 'name': 'Silver Spot'},
-        'OIL': {'ticker': 'CL.F', 'name': 'Crude Oil WTI Futures'},
-        
-        # Indices
-        'DXY': {'ticker': 'DX.F', 'name': 'US Dollar Index'},
+        # India
+        "India 10Y Bond Yield": "10YINY.B",
+        "India 02Y Bond Yield": "2YINY.B",
+        # US
+        "US 30Y Bond Yield": "30YUSY.B",
+        "US 10Y Bond Yield": "10YUSY.B",
+        #"US 05Y Bond Yield": "5YUSY.B",
+        "US 02Y Bond Yield": "2YUSY.B",
+        # UK
+        "UK 30Y Bond Yield": "30YUKY.B",
+        "UK 10Y Bond Yield": "10YUKY.B",
+        #"UK 05Y Bond Yield": "5YUKY.B",
+        "UK 02Y Bond Yield": "2YUKY.B",
+        # EU (Germany)
+        "EU (Germany) 30Y Bond Yield": "30YDEY.B",
+        "EU (Germany) 10Y Bond Yield": "10YDEY.B",
+        #"EU (Germany) 05Y Bond Yield": "5YDEY.B",
+        "EU (Germany) 02Y Bond Yield": "2YDEY.B",
+        # China
+        "China 10Y Bond Yield": "10YCNY.B",
+        "China 02Y Bond Yield": "2YCNY.B",
+        # Japan
+        "Japan 30Y Bond Yield": "30YJPY.B",
+        "Japan 10Y Bond Yield": "10YJPY.B",
+        "Japan 02Y Bond Yield": "2YJPY.B",
+        # Singapore
+        "Singapore 10Y Bond Yield": "10YSGY.B",
     }
     
     DISPLAY_NAMES = {k: v['name'] for k, v in MACRO_MAPPINGS.items()}
