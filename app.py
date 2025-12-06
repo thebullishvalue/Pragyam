@@ -25,8 +25,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 try:
     from strategies import (
         BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy,
-        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer, AdaptiveVolBreakout, VolReversalHarvester,
-        AlphaSurge, ReturnPyramid
+        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer, AdaptiveVolBreakout, VolReversalHarvester, AlphaSurge, ReturnPyramid
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it’s in the same directory.")
