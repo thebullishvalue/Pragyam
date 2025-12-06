@@ -1116,7 +1116,7 @@ def main():
         'MOM_v2': MOM2Strategy(),
         'QV': VolReversalHarvester(),
         'AP': AdaptiveVolBreakout(),
-        'VS': VolumeSurge(),
+        'VS': AlphaSurge(),
         'RP': ReturnPyramid(),
     }
 
