@@ -2081,3 +2081,218 @@ class VolReversalHarvester(BaseStrategy):
         )
 
         return self._allocate_portfolio(eligible_stocks, sip_amount)
+        
+# =====================================
+# NEW: AlphaSurge Strategy
+# =====================================
+# Thesis: Alpha Surge Capture - Identifies stocks with explosive alpha generation potential
+# by detecting synchronized multi-timeframe momentum surges (EMA crossovers + oscillator velocity)
+# combined with statistical undervaluation (negative z-score pullbacks in uptrends).
+# Maximizes returns by pyramid allocation: 70% to top 10%, 20% to next 20%, 10% to rest,
+# ensuring heavy concentration in highest-conviction surge candidates.
+class AlphaSurge(BaseStrategy):
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        """
+        AlphaSurge: Explosive Momentum Surge Detector.
+        - Core Thesis: Surge in alpha occurs when short-term momentum (9EMA > 21EMA) accelerates
+          through a pullback (negative z-score) in an established uptrend (price > MA90/200).
+        - Allocation: Pyramid weighting - heavy on top decile for max return capture.
+        """
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Uptrend Filter (Base Conviction)
+        uptrend_score = np.where(
+            (df['price'] > df['ma90 latest']) & (df['ma90 latest'] > df['ma200 latest']) &
+            (df['price'] > df['ma90 weekly']),
+            1.5,  # Strong uptrend
+            np.where(
+                (df['price'] > df['ma200 latest']) | (df['price'] > df['ma90 weekly']),
+                1.0,  # Moderate uptrend
+                0.2   # Downtrend penalty
+            )
+        )
+        df['uptrend_conviction'] = uptrend_score
+
+        # 2. Momentum Surge Score (EMA Crossover Velocity)
+        # Velocity: Rate of change in oscillator via EMA diff
+        daily_velocity = (df['9ema osc latest'] - df['21ema osc latest']) / (df['21ema osc latest'] + 1e-6)
+        weekly_velocity = (df['9ema osc weekly'] - df['21ema osc weekly']) / (df['21ema osc weekly'] + 1e-6)
+        surge_velocity = np.tanh(daily_velocity * 0.6 + weekly_velocity * 0.4) * 2 + 1  # Normalize to 0-3
+
+        # Oscillator Surge Confirmation (positive and accelerating)
+        osc_surge = np.where(
+            (df['osc latest'] > 10) & (df['osc weekly'] > 5) & (daily_velocity > 0),
+            2.0,
+            np.where(
+                (df['osc latest'] > 0) | (df['osc weekly'] > 0),
+                1.2,
+                0.5
+            )
+        )
+        df['surge_score'] = surge_velocity * osc_surge
+
+        # 3. Pullback Opportunity (Undervaluation via Z-Score)
+        # Negative z-score indicates pullback in uptrend - high return potential
+        pullback_potential = np.clip(-df['zscore latest'] * 0.7 - df['zscore weekly'] * 0.3, 0, 3.0)
+        df['pullback_score'] = pullback_potential + 0.5  # Minimum baseline
+
+        # 4. RSI Surge Readiness (Not overbought, building strength)
+        rsi_readiness = np.where(
+            (df['rsi latest'] > 50) & (df['rsi latest'] < 70),
+            1.5,
+            np.where(df['rsi latest'] > 40, 1.1, 0.6)
+        )
+        df['rsi_factor'] = rsi_readiness * np.where(df['rsi weekly'] > 45, 1.2, 0.8)
+
+        # 5. Composite Alpha Score
+        df['alpha_score'] = (
+            df['surge_score'] * df['pullback_score'] * df['rsi_factor'] * df['uptrend_conviction']
+        )
+
+        # Ensure positive scores
+        df['alpha_score'] = np.maximum(df['alpha_score'], 0.01)
+
+        # 6. Pyramid Allocation Logic
+        df_sorted = df.sort_values('alpha_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        # Top 10%: 70% allocation (equal within tier)
+        top10_end = max(1, int(n * 0.1))
+        df_sorted.loc[:top10_end-1, 'weightage'] = 0.7 / top10_end if top10_end > 0 else 0
+
+        # Next 20%: 20% allocation
+        next20_end = min(n, top10_end + int(n * 0.2))
+        if next20_end > top10_end:
+            count = next20_end - top10_end
+            df_sorted.loc[top10_end:next20_end-1, 'weightage'] = 0.2 / count
+
+        # Remaining 70%: 10% allocation (equal)
+        remaining_start = next20_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.1 / count
+
+        # Normalize to sum=1
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: ReturnPyramid Strategy
+# =====================================
+# Thesis: Return Pyramid Builder - Projects forward returns based on deviation magnitude
+# (z-score extremes) amplified by momentum persistence (oscillator consistency) and trend leverage.
+# Maximizes returns by extreme concentration: 80% to top 5 stocks, 15% to next 10, 5% to rest,
+# betting heavily on the outliers with highest projected reversion + momentum upside.
+class ReturnPyramid(BaseStrategy):
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        """
+        ReturnPyramid: Extreme Concentration on High-Return Outliers.
+        - Core Thesis: Highest returns come from stocks at statistical extremes (high |z-score|)
+          with persistent momentum (aligned oscillators) in favorable trends, projecting
+          explosive mean-reversion + continuation hybrids.
+        - Allocation: Ultra-pyramid - 80% on top 5 for max return amplification.
+        """
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc weekly', 'zscore latest', 'zscore weekly',
+            'ma90 latest', 'ma200 latest', 'ma90 weekly', 'ma200 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Projected Return Potential (Z-Score Magnitude)
+        # High |z-score| = high reversion potential; sign matters for direction
+        # Focus on positive extremes for upside, but include negative with momentum flip
+        z_magnitude = np.abs(df['zscore latest']) * 0.6 + np.abs(df['zscore weekly']) * 0.4
+        z_direction = np.where(
+            df['zscore latest'] > 1.5, 2.0,  # Strong positive
+            np.where(
+                (df['zscore latest'] < -1.5) & (df['9ema osc latest'] > 0),  # Negative but turning
+                1.5,
+                np.where(df['zscore latest'] > 0, 1.2, 0.8)
+            )
+        )
+        df['return_potential'] = z_magnitude * z_direction
+
+        # 2. Momentum Persistence Score
+        # Aligned signs across timeframes and EMAs
+        persistence = np.where(
+            (np.sign(df['osc latest']) == np.sign(df['osc weekly'])) &
+            (np.sign(df['9ema osc latest']) == np.sign(df['21ema osc latest'])),
+            2.2,
+            np.where(
+                np.sign(df['osc latest']) == np.sign(df['osc weekly']),
+                1.5,
+                1.0
+            )
+        )
+        df['persistence_score'] = persistence * (1 + np.abs(df['osc latest'] - df['osc weekly']) / 200)  # Reward extremes
+
+        # 3. Trend Leverage (Amplifies Returns)
+        # Price relative to MAs, weighted long-term
+        trend_leverage = (
+            (df['price'] / df['ma200 latest'] - 1) * 0.5 +
+            (df['price'] / df['ma90 weekly'] - 1) * 0.5
+        )
+        df['trend_leverage'] = np.tanh(trend_leverage) * 1.5 + 0.5  # Normalize to 0-2
+
+        # 4. RSI Amplification (Avoid Exhaustion)
+        rsi_amp = np.where(
+            40 < df['rsi latest'] < 65, 1.4,  # Sweet spot
+            np.where(df['rsi latest'] > 65, 0.9, 1.1)  # Penalize overbought, reward building
+        )
+        df['rsi_amp'] = rsi_amp * np.where(df['rsi weekly'] > 50, 1.1, 0.9)
+
+        # 5. Composite Return Projection
+        df['projected_return'] = (
+            df['return_potential'] * df['persistence_score'] *
+            df['trend_leverage'] * df['rsi_amp']
+        )
+
+        # Ensure positive
+        df['projected_return'] = np.maximum(df['projected_return'], 0.01)
+
+        # 6. Ultra-Pyramid Allocation
+        df_sorted = df.sort_values('projected_return', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        # Top 5 stocks: 80% allocation (equal within)
+        top5_end = min(5, n)
+        df_sorted.loc[:top5_end-1, 'weightage'] = 0.8 / top5_end
+
+        # Next 10 stocks: 15%
+        next10_end = min(n, top5_end + 10)
+        if next10_end > top5_end:
+            count = next10_end - top5_end
+            df_sorted.loc[top5_end:next10_end-1, 'weightage'] = 0.15 / count
+
+        # Remaining: 5% equal
+        remaining_start = next10_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.05 / count
+        elif top5_end < n:
+            # If less than 15 total, adjust remaining
+            remaining_count = n - top5_end
+            df_sorted.loc[top5_end:, 'weightage'] = 0.15 / remaining_count
+        else:
+            # All in top 5, already set
+
+        # Normalize
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
