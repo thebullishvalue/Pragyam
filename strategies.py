@@ -2187,13 +2187,6 @@ class AlphaSurge(BaseStrategy):
 
         return self._allocate_portfolio(df_sorted, sip_amount)
 
-# =====================================
-# NEW: ReturnPyramid Strategy
-# =====================================
-# Thesis: Return Pyramid Builder - Projects forward returns based on deviation magnitude
-# (z-score extremes) amplified by momentum persistence (oscillator consistency) and trend leverage.
-# Maximizes returns by extreme concentration: 80% to top 5 stocks, 15% to next 10, 5% to rest,
-# betting heavily on the outliers with highest projected reversion + momentum upside.
 class ReturnPyramid(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
@@ -2205,7 +2198,7 @@ class ReturnPyramid(BaseStrategy):
         """
         required_columns = [
             'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
-            '9ema osc latest', '21ema osc weekly', 'zscore latest', 'zscore weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest', 'zscore weekly',
             'ma90 latest', 'ma200 latest', 'ma90 weekly', 'ma200 weekly'
         ]
         df = self._clean_data(df, required_columns)
@@ -2248,7 +2241,7 @@ class ReturnPyramid(BaseStrategy):
 
         # 4. RSI Amplification (Avoid Exhaustion)
         rsi_amp = np.where(
-            40 < df['rsi latest'] < 65, 1.4,  # Sweet spot
+            (df['rsi latest'] > 40) & (df['rsi latest'] < 65), 1.4,  # Sweet spot
             np.where(df['rsi latest'] > 65, 0.9, 1.1)  # Penalize overbought, reward building
         )
         df['rsi_amp'] = rsi_amp * np.where(df['rsi weekly'] > 50, 1.1, 0.9)
@@ -2270,7 +2263,8 @@ class ReturnPyramid(BaseStrategy):
 
         # Top 5 stocks: 80% allocation (equal within)
         top5_end = min(5, n)
-        df_sorted.loc[:top5_end-1, 'weightage'] = 0.8 / top5_end
+        if top5_end > 0:
+            df_sorted.loc[:top5_end-1, 'weightage'] = 0.8 / top5_end
 
         # Next 10 stocks: 15%
         next10_end = min(n, top5_end + 10)
@@ -2283,16 +2277,20 @@ class ReturnPyramid(BaseStrategy):
         if remaining_start < n:
             count = n - remaining_start
             df_sorted.loc[remaining_start:, 'weightage'] = 0.05 / count
-        elif top5_end < n:
-            # If less than 15 total, adjust remaining
-            remaining_count = n - top5_end
-            df_sorted.loc[top5_end:, 'weightage'] = 0.15 / remaining_count
+        elif top5_end < n and next10_end == top5_end:
+            # If no next10 assigned (e.g., n < top5 +1), adjust remaining to 15% + 5% = 20%? Wait, no: if next10_end == top5_end, means n <= top5_end, so no remaining
+            pass
         else:
-            pass # All in top 5, already set
+            # If less than full tiers, but some remaining after top5
+            if top5_end < n:
+                remaining_count = n - top5_end
+                df_sorted.loc[top5_end:, 'weightage'] = 0.20 / remaining_count  # 15% + 5% combined
 
         # Normalize
         total_w = df_sorted['weightage'].sum()
         if total_w > 0:
             df_sorted['weightage'] /= total_w
+        else:
+            df_sorted['weightage'] = 1.0 / n
 
         return self._allocate_portfolio(df_sorted, sip_amount)
