@@ -2288,7 +2288,7 @@ class ReturnPyramid(BaseStrategy):
             remaining_count = n - top5_end
             df_sorted.loc[top5_end:, 'weightage'] = 0.15 / remaining_count
         else:
-            # All in top 5, already set
+            pass # All in top 5, already set
 
         # Normalize
         total_w = df_sorted['weightage'].sum()
