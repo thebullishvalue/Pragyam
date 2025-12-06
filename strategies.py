@@ -1890,69 +1890,62 @@ class VolatilitySurfer(BaseStrategy):
         return self._allocate_portfolio(eligible_stocks, sip_amount)
 
 # =====================================
-# MAX ALPHA: ApexAlpha_v1 Strategy
+# MAX ALPHA: HyperVelocity Strategy
 # =====================================
-class ApexAlpha(BaseStrategy):
+class HyperVelocity(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        ApexAlpha_v1: The Slingshot (Mean Reversion in Secular Trend).
-        - Philosophy: Aggressively buys 'Strong Stocks on Sale'.
-        - Core Mechanism: Filters for strong Weekly MA trends, then hunts for Daily Oscillator Z-Score extremes (oversold).
-        - Alpha Driver: Exploits the mathematical probability of a snap-back when a strong asset is statistically oversold.
+        HyperVelocity: Maximum Momentum Acceleration.
+        - Philosophy: Captures the 'Vertical Phase' of a trend.
+        - Mechanism: Prioritizes the rate of expansion between Fast (9) and Slow (21) Oscillator EMAs.
+        - Alpha Edge: Beats standard momentum by focusing on 'Jerk' (change in acceleration) rather than just speed.
         """
         required_columns = [
             'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
-            'zscore latest', 'zscore weekly', 'ma20 latest', 'ma90 latest', 'ma200 latest',
-            'dev20 latest', '9ema osc latest', '21ema osc latest'
+            '9ema osc latest', '21ema osc latest', '9ema osc weekly', '21ema osc weekly',
+            'ma20 latest', 'ma90 latest', 'ma200 latest'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Secular Trend Filter (Weekly Structure)
-        # We only want stocks that are structurally bullish.
-        # Condition: Price > 90MA (Quarterly Trend) AND 90MA > 200MA (Golden Stack)
-        secular_bull = (df['price'] > df['ma90 latest']) & (df['ma90 latest'] > df['ma200 latest'])
+        # 1. Velocity Calculation (The Engine)
+        # Calculate the spread between fast and slow EMAs of the oscillator.
+        # A widening positive spread indicates accelerating momentum.
+        velocity_daily = df['9ema osc latest'] - df['21ema osc latest']
+        velocity_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+
+        # 2. The "Power Zone" Filter
+        # We only want stocks that are accelerating positively.
+        # Price must be above the short-term mean (MA20) to confirm direction.
+        # RSI must be > 55 (proven strength) but not theoretically capped (we allow > 80).
+        valid_trend = (velocity_daily > 0) & (df['price'] > df['ma20 latest']) & (df['rsi latest'] > 55)
+
+        # 3. Multi-Timeframe Turbo
+        # If the Weekly timeframe is ALSO accelerating, we apply a massive multiplier.
+        weekly_turbo = np.where(velocity_weekly > 0, 1.5, 0.8)
+
+        # 4. Pure Alpha Scoring
+        # Score = Velocity Magnitude * Weekly Alignment
+        # We clip negative velocity to 0 because we don't short.
+        base_score = np.maximum(velocity_daily, 0)
         
-        # 2. The "Panic" Trigger (Daily Oversold)
-        # We look for statistical deviation (Z-Score) below -1.5 or RSI < 40
-        panic_mode = (df['zscore latest'] < -1.5) | (df['rsi latest'] < 40)
+        # Add a bonus for "Fresh" explosions (Z-score crossing 1 or 2 recently)
+        # We approximate this by high oscillator values.
+        explosion_bonus = np.where(df['osc latest'] > 50, 1.2, 1.0)
+
+        df['velocity_score'] = (base_score * weekly_turbo * explosion_bonus)
+
+        # 5. Aggressive Filtering
+        # Filter out anything with a score of 0 or weak momentum
+        eligible_stocks = df[valid_trend & (df['velocity_score'] > 0)].copy()
         
-        # 3. The "Turn" Confirmation (Micro-Structure)
-        # Ideally, we want the oscillator to be starting its turn, or at least deeply oversold.
-        # Oscillator is below -50 OR 9EMA crossed above 21EMA (Momentum Ignition)
-        turn_confirmation = (df['osc latest'] < -50) | (df['9ema osc latest'] > df['21ema osc latest'])
+        # Sort by highest velocity score - we want the fastest movers.
+        eligible_stocks = eligible_stocks.sort_values('velocity_score', ascending=False)
 
-        # 4. Volatility Compression (The Coil)
-        # Low volatility relative to price usually precedes a larger move.
-        volatility_ratio = df['dev20 latest'] / (df['price'] + 1e-6)
-        coil_factor = np.where(volatility_ratio < 0.02, 1.5, 1.0) # Bonus for tight coils
-
-        # 5. Composite Scoring
-        # Base score starts high if Secular Bull is True
-        score = np.where(secular_bull, 100.0, 0.0)
-        
-        # Add points for the depth of the pullback (The "Value" play)
-        # Deeper negative z-score = Higher Score (up to a limit)
-        pullback_score = np.clip(np.abs(df['zscore latest']), 0, 4.0) * 20 
-        
-        # Add points for RSI "Sweet Spot" (40-50 range is often a dip in a trend)
-        rsi_score = np.where((df['rsi latest'] > 30) & (df['rsi latest'] < 55), 30.0, 0.0)
-
-        # Total Alpha Score
-        df['alpha_score'] = (
-            score + 
-            (pullback_score * np.where(panic_mode, 1.0, 0.0)) + 
-            rsi_score
-        ) * coil_factor * np.where(turn_confirmation, 1.2, 0.8)
-
-        # 6. Filter & Sort
-        # We only want positive conviction
-        eligible_stocks = df[df['alpha_score'] > 50].copy()
-        eligible_stocks = eligible_stocks.sort_values('alpha_score', ascending=False)
-
-        # 7. Allocation
-        total_score = eligible_stocks['alpha_score'].sum()
+        # 6. Allocation
+        total_score = eligible_stocks['velocity_score'].sum()
         if total_score > 0:
-            eligible_stocks['weightage'] = eligible_stocks['alpha_score'] / total_score
+            # Aggressive weighting: Top scores get significantly more capital
+            eligible_stocks['weightage'] = eligible_stocks['velocity_score'] / total_score
         else:
             return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
 
@@ -1960,65 +1953,67 @@ class ApexAlpha(BaseStrategy):
 
 
 # =====================================
-# MAX ALPHA: QuantumFlow Strategy
+# MAX ALPHA: OrbitalStrike Strategy
 # =====================================
-class QuantumFlow(BaseStrategy):
+class OrbitalStrike(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        QuantumFlow: Multi-Timeframe Cycle Synchronization.
-        - Philosophy: Momentum is strongest when Daily and Weekly cycles align in phase.
-        - Core Mechanism: Calculates a 'Resonance Score' based on the Weekly Oscillator rising from the bottom
-          while the Daily Oscillator accelerates through the zero-line.
-        - Alpha Driver: Filters out daily noise by demanding weekly kinetic energy.
+        OrbitalStrike: Statistical Breakout & Escape Velocity.
+        - Philosophy: Buys 'Escape Velocity'. Breaks the statistical ceiling with high conviction.
+        - Mechanism: Targets stocks piercing the Upper Bollinger Band with confirming Liquidity Oscillator strength.
+        - Alpha Edge: Weights positions by Z-Score Magnitude. The more 'impossible' the move, the bigger the bet.
         """
         required_columns = [
-            'symbol', 'price', 'osc latest', 'osc weekly', '9ema osc latest', 
-            '21ema osc latest', '9ema osc weekly', '21ema osc weekly', 'rsi weekly'
+            'symbol', 'price', 'osc latest', 'zscore latest', 'rsi latest',
+            'ma20 latest', 'dev20 latest', 'ma90 latest', 'ma200 latest'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Weekly Potential Energy (Rising from bottom)
-        # Weekly Osc is negative but its fast EMA (9) is above slow EMA (21)
-        # This implies the weekly trend is shifting from Bearish to Bullish.
-        weekly_turn = (df['osc weekly'] < 0) & (df['9ema osc weekly'] > df['21ema osc weekly'])
-        weekly_bull = (df['osc weekly'] > 0) & (df['9ema osc weekly'] > df['21ema osc weekly'])
+        # 1. Bollinger Band Calculation
+        upper_band = df['ma20 latest'] + (2 * df['dev20 latest'])
         
-        # 2. Daily Kinetic Energy (Velocity)
-        # Daily Oscillator is positive and accelerating (Gap between 9 and 21 is widening)
-        daily_velocity = (df['9ema osc latest'] - df['21ema osc latest'])
-        daily_bull = (df['osc latest'] > 0) & (daily_velocity > 0)
+        # 2. Breakout Detection
+        # Is price currently defying gravity (above upper band)?
+        # AND is the move statistically significant (Z-Score > 1.5)?
+        breakout_condition = (df['price'] > upper_band) & (df['zscore latest'] > 1.5)
 
-        # 3. Resonance (Alignment)
-        # High Resonance = Weekly Turn (Early) OR Weekly Bull (Continuation) AND Daily Bull
-        resonance = (weekly_turn | weekly_bull) & daily_bull
+        # 3. The "Fuel" Check (Liquidity Oscillator)
+        # A breakout without volume/liquidity impact is a fake-out.
+        # We demand the Oscillator be POSITIVE.
+        fuel_check = df['osc latest'] > 0
 
-        # 4. Scoring Logic
-        # Base Momentum Score
-        mom_score = df['osc latest'] + (df['osc weekly'] * 0.5)
+        # 4. Trajectory Control (Trend Alignment)
+        # We prefer breakouts that are aligned with the long-term trend to avoid "Dead Cat Bounces".
+        # Price > MA200 is the hard floor.
+        trajectory_check = df['price'] > df['ma200 latest']
+
+        # 5. Composite Scoring: The "Strike Score"
+        # Base Score starts with the Z-Score (how extreme is this move?)
+        # We want outliers. A 3-sigma move is better than a 2-sigma move in a breakout regime.
+        strike_score = np.clip(df['zscore latest'], 0, 5.0) 
         
-        # Quality Multiplier
-        # We penalize if Weekly RSI is already Overbought (>75) - limited fuel left
-        fuel_factor = np.where(df['rsi weekly'] > 75, 0.5, 1.0)
+        # Multiplier for RSI Intensity
+        # High RSI (70+) is NOT a sell signal here; it's a "Rocket Booster" signal.
+        rsi_booster = np.where(df['rsi latest'] > 70, 1.5, 1.0)
         
-        # Velocity Bonus
-        # Stocks moving fast get a higher weight
-        velocity_bonus = np.clip(daily_velocity, 0, 20) 
+        # Multiplier for Oscillator Conviction
+        # If Osc > 50, it means massive buying pressure.
+        osc_booster = np.where(df['osc latest'] > 50, 1.3, 1.0)
 
-        df['quantum_score'] = (
-            (mom_score * 0.4) + 
-            (np.where(resonance, 100, 0) * 0.6) +
-            velocity_bonus
-        ) * fuel_factor
+        df['strike_score'] = strike_score * rsi_booster * osc_booster
 
-        # 5. Filter for Resonance
-        # We strictly want stocks that are "In Phase"
-        eligible_stocks = df[df['quantum_score'] > 0].copy()
-        eligible_stocks = eligible_stocks.sort_values('quantum_score', ascending=False)
+        # 6. Apply Filters
+        # Only take stocks meeting ALL conditions
+        mask = breakout_condition & fuel_check & trajectory_check
+        eligible_stocks = df[mask].copy()
+        
+        # Sort by the most powerful strikes
+        eligible_stocks = eligible_stocks.sort_values('strike_score', ascending=False)
 
-        # 6. Allocation
-        total_score = eligible_stocks['quantum_score'].sum()
+        # 7. Allocation
+        total_score = eligible_stocks['strike_score'].sum()
         if total_score > 0:
-            eligible_stocks['weightage'] = eligible_stocks['quantum_score'] / total_score
+            eligible_stocks['weightage'] = eligible_stocks['strike_score'] / total_score
         else:
             return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
 
