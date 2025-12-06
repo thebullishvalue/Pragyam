@@ -441,18 +441,23 @@ class MarketDataFetcher:
 
 
 # ============================================================================
-# SECTION 5-7: ANALYTICS (MSF, MMR, INTEGRATOR)
+# SECTION 5: MSF - MOMENTUM STRUCTURE FLOW (Vectorized)
 # ============================================================================
 
-# ... (MSF and MMR classes remain unchanged, omitting for brevity in this snippet if untouched, 
-#      but including full code for file generation) ...
-
 class MomentumStructureFlow:
+    """
+    MSF (Momentum Structure Flow) - Analyzes internal price dynamics.
+    Fully vectorized implementation for performance.
+    """
+    
     def __init__(self, params: UMAParameters):
         self.params = params
         self.stats = StatisticalUtils()
     
     def calculate(self, df: pd.DataFrame) -> Dict[str, pd.Series]:
+        """
+        Calculate all MSF components (vectorized).
+        """
         results = {}
         length = self.params.length
         zscore_clip = self.params.zscore_clip
@@ -460,98 +465,117 @@ class MomentumStructureFlow:
         # Ensure column names are lowercase
         df = df.copy()
         df.columns = [c.lower() for c in df.columns]
+        
         close = df['close']
         high = df['high']
         low = df['low']
         open_price = df['open']
         volume = df['volume']
         
-        # 3.1 Momentum
+        # === 3.1 Momentum Component (ROC-based) - Vectorized ===
         roc_raw = self.stats.roc(close, self.params.roc_length)
         roc_z = self.stats.zscore_clipped(roc_raw, length, zscore_clip)
         momentum_norm = self.stats.sigmoid(roc_z, 1.5)
         results['momentum_norm'] = momentum_norm
         
-        # 3.2 Microstructure
+        # === 3.2 Market Microstructure Component - Vectorized ===
         intrabar_direction = (high + low) / 2 - open_price
         vol_ma = self.stats.sma(volume, length)
+        
         with np.errstate(divide='ignore', invalid='ignore'):
             vol_ratio = np.where(vol_ma > 0, volume / vol_ma, 1.0)
         vol_ratio = pd.Series(vol_ratio, index=df.index)
+        
         vw_direction = self.stats.sma(intrabar_direction * vol_ratio, length)
         price_change_impact = close - close.shift(5)
         vw_impact = self.stats.sma(price_change_impact * vol_ratio, length)
+        
         microstructure_raw = vw_direction - vw_impact
         microstructure_z = self.stats.zscore_clipped(microstructure_raw, length, zscore_clip)
         microstructure_norm = self.stats.sigmoid(microstructure_z, 1.5)
         results['microstructure_norm'] = microstructure_norm
         
-        # 3.3 Volatility Regime
+        # === 3.3 Volatility Regime - Vectorized ===
         price_mean = self.stats.sma(close, length)
         price_stdev = self.stats.stdev(close, length)
         conf_mult = 1.96 if self.params.confidence_level >= 0.95 else 1.645
+        
         upper_bound = price_mean + conf_mult * price_stdev
         lower_bound = price_mean - conf_mult * price_stdev
         band_width = upper_bound - lower_bound
+        
         with np.errstate(divide='ignore', invalid='ignore'):
             price_position = np.where(band_width > 0, (close - lower_bound) / band_width * 2 - 1, 0.0)
         price_position = pd.Series(np.clip(price_position, -1.5, 1.5), index=df.index)
+        
         results['price_position'] = price_position
         results['upper_bound'] = upper_bound
         results['lower_bound'] = lower_bound
         
-        # 3.4 Composite Trend
+        # === 3.4 Composite Trend - Vectorized ===
         trend_fast = self.stats.sma(close, 5)
         trend_slow = self.stats.sma(close, length)
         trend_diff_z = self.stats.zscore_clipped(trend_fast - trend_slow, length, zscore_clip)
+        
         price_change_5 = close.diff(5)
         momentum_accel_raw = price_change_5.diff(5)
         momentum_accel_z = self.stats.zscore_clipped(momentum_accel_raw, length, zscore_clip)
+        
         atr_val = self.stats.atr(high, low, close, 14)
         with np.errstate(divide='ignore', invalid='ignore'):
             vol_adj_mom_raw = np.where(atr_val > 0, price_change_5 / atr_val, 0.0)
         vol_adj_mom_raw = pd.Series(vol_adj_mom_raw, index=df.index)
         vol_adj_mom_z = self.stats.zscore_clipped(vol_adj_mom_raw, length, zscore_clip)
+        
         mean_reversion_z = self.stats.zscore_clipped(close - price_mean, length, zscore_clip)
+        
+        # Variance-preserving combination
         composite_trend_z = (trend_diff_z + momentum_accel_z + vol_adj_mom_z + mean_reversion_z) / np.sqrt(4.0)
         composite_trend_norm = self.stats.sigmoid(composite_trend_z, 1.5)
         results['composite_trend_norm'] = composite_trend_norm
         
-        # 3.5 Accumulation
+        # === 3.5 Accumulation/Distribution - Vectorized ===
         typical_price = (high + low + close) / 3
         money_flow = typical_price * volume
+        
         close_up = close > close.shift(1)
         mf_positive = money_flow.where(close_up, 0)
         mf_negative = money_flow.where(~close_up, 0)
+        
         mf_pos_smooth = self.stats.sma(mf_positive, length)
         mf_neg_smooth = self.stats.sma(mf_negative, length)
         mf_total = mf_pos_smooth + mf_neg_smooth
+        
         with np.errstate(divide='ignore', invalid='ignore'):
             accum_ratio = np.where(mf_total > 0, mf_pos_smooth / mf_total, 0.5)
         accum_norm = pd.Series(2.0 * (accum_ratio - 0.5), index=df.index)
         results['accum_norm'] = accum_norm
         
-        # 3.6 Regime Counter
+        # === 3.6 Regime Counter - Vectorized ===
         pct_change = close.pct_change() * 100
         threshold_pct = 0.33
+        
+        # Vectorized regime counting using cumsum
         up_signal = (pct_change > threshold_pct).astype(int)
         down_signal = (pct_change < -threshold_pct).astype(int)
         regime_count = (up_signal - down_signal).cumsum()
+        
         regime_raw = regime_count - self.stats.sma(regime_count, length)
         regime_z = self.stats.zscore_clipped(regime_raw, length, zscore_clip)
         regime_norm = self.stats.sigmoid(regime_z, 1.5)
         results['regime_norm'] = regime_norm
         
-        # 3.7 RSI
+        # === 3.7 RSI Component - Vectorized ===
         rsi_value = self.stats.rsi(close, self.params.rsi_length)
         rsi_norm = (rsi_value - 50) / 50
         results['rsi_value'] = rsi_value
         results['rsi_norm'] = rsi_norm
         
-        # 3.8 Composite
+        # === 3.8 MSF Composite Signal - Vectorized ===
         osc_momentum = momentum_norm
         osc_structure = (microstructure_norm + composite_trend_norm) / np.sqrt(2.0)
         osc_flow = (accum_norm + regime_norm) / np.sqrt(2.0)
+        
         msf_raw = (osc_momentum + osc_structure + osc_flow) / np.sqrt(3.0)
         msf_signal = self.stats.sigmoid(msf_raw * np.sqrt(3.0), 1.0)
         results['msf_signal'] = msf_signal
@@ -559,21 +583,42 @@ class MomentumStructureFlow:
         
         return results
 
+
+# ============================================================================
+# SECTION 6: MMR - MACRO MULTIPLE REGRESSION
+# ============================================================================
+
 class MacroMultipleRegression:
+    """
+    MMR (Macro Multiple Regression) - Analyzes external macro drivers.
+    Uses stooq for data fetching with parallel batch operations.
+    """
+    
     def __init__(self, params: UMAParameters, fetcher: Optional[MarketDataFetcher] = None):
         self.params = params
         self.stats = StatisticalUtils()
         self.fetcher = fetcher or MarketDataFetcher()
     
     def fetch_macro_data(self, start_date: datetime, end_date: datetime) -> Dict[str, pd.Series]:
+        """
+        Fetch all macro data in parallel batches.
+        """
         var_names = list(self.fetcher.MACRO_MAPPINGS.keys())
         return self.fetcher.fetch_macro_data_batch(
-            var_names, start_date, end_date, max_workers=self.params.max_parallel_fetches
+            var_names, 
+            start_date, 
+            end_date,
+            max_workers=self.params.max_parallel_fetches
         )
     
     def calculate(self, df: pd.DataFrame, macro_data: Dict[str, pd.Series]) -> Dict[str, Any]:
+        """
+        Calculate MMR signal based on macro regression (vectorized).
+        """
         results = {}
+        
         if not macro_data:
+            # Return neutral signal if no macro data
             results['mmr_signal'] = pd.Series(0.0, index=df.index)
             results['mmr_clarity'] = pd.Series(0.0, index=df.index)
             results['model_r2'] = 0.0
@@ -581,8 +626,11 @@ class MacroMultipleRegression:
             return results
         
         target = df['close'] if 'close' in df.columns else df['Close']
+        
+        # Align macro data to target index (vectorized)
         aligned_macro = {}
         for name, series in macro_data.items():
+            # Align: Reindex to target's index (dates), forward fill missing values
             aligned = series.reindex(target.index).ffill()
             valid_count = aligned.notna().sum()
             if valid_count > self.params.correlation_lookback * 0.5:
@@ -595,6 +643,7 @@ class MacroMultipleRegression:
             results['top_drivers'] = []
             return results
         
+        # Calculate correlations (vectorized)
         correlations = {}
         for name, series in aligned_macro.items():
             corr = self.stats.correlation(target, series, self.params.correlation_lookback)
@@ -609,19 +658,30 @@ class MacroMultipleRegression:
             results['top_drivers'] = []
             return results
         
+        # Sort by absolute correlation and select top N
         sorted_vars = sorted(correlations.items(), key=lambda x: abs(x[1]), reverse=True)
         top_vars = sorted_vars[:self.params.num_macro_vars]
+        
         results['top_drivers'] = [
-            {'name': name, 'display': self.fetcher.DISPLAY_NAMES.get(name, name), 'correlation': corr}
+            {
+                'name': name, 
+                'display': self.fetcher.DISPLAY_NAMES.get(name, name), 
+                'correlation': corr
+            }
             for name, corr in top_vars
         ]
         
+        # Build regression predictions (vectorized)
         predictions = []
         weights = []
+        
         for name, corr in top_vars:
-            if name not in aligned_macro: continue
+            if name not in aligned_macro:
+                continue
+            
             x = aligned_macro[name]
             pred, r2 = self._regression_predict_vectorized(x, target, self.params.regression_length)
+            
             predictions.append(pred)
             weights.append(r2)
         
@@ -631,6 +691,7 @@ class MacroMultipleRegression:
             results['model_r2'] = 0.0
             return results
         
+        # Weighted average prediction (vectorized)
         total_weight = sum(weights)
         if total_weight > 0:
             y_predicted = sum(p * w for p, w in zip(predictions, weights)) / total_weight
@@ -641,37 +702,71 @@ class MacroMultipleRegression:
         
         results['model_r2'] = model_r2
         results['y_predicted'] = y_predicted
+        
+        # Deviation from fair value
         deviation = target - y_predicted
         deviation_z = self.stats.zscore_clipped(deviation, self.params.length, self.params.zscore_clip)
         mmr_signal = self.stats.sigmoid(deviation_z, 1.5)
+        
         results['mmr_signal'] = mmr_signal
         results['mmr_clarity'] = mmr_signal.abs()
+        
         return results
     
     def _regression_predict_vectorized(self, x: pd.Series, y: pd.Series, length: int) -> Tuple[pd.Series, float]:
+        """
+        Vectorized linear regression prediction.
+        """
         x_mean = self.stats.sma(x, length)
         y_mean = self.stats.sma(y, length)
         x_std = self.stats.stdev(x, length)
         y_std = self.stats.stdev(y, length)
+        
         corr = self.stats.correlation(x, y, length)
+        
+        # Vectorized slope calculation
         with np.errstate(divide='ignore', invalid='ignore'):
             slope = np.where(x_std > 0, corr * (y_std / x_std), 0.0)
         slope = pd.Series(slope, index=x.index).fillna(0)
+        
         intercept = y_mean - slope * x_mean
         prediction = x * slope + intercept
+        
+        # R² from most recent correlation
         recent_corr = corr.dropna()
         r2 = recent_corr.iloc[-1] ** 2 if len(recent_corr) > 0 else 0
+        
         return prediction, r2
 
+
+# ============================================================================
+# SECTION 7: SIGNAL INTEGRATION
+# ============================================================================
+
 class SignalIntegrator:
+    """
+    Integrates MSF and MMR signals (vectorized).
+    """
+    
     def __init__(self, params: UMAParameters):
         self.params = params
         self.stats = StatisticalUtils()
     
-    def integrate(self, msf_signal, msf_clarity, mmr_signal, mmr_clarity, mmr_quality) -> Dict[str, pd.Series]:
+    def integrate(self, 
+                  msf_signal: pd.Series, 
+                  msf_clarity: pd.Series,
+                  mmr_signal: pd.Series,
+                  mmr_clarity: pd.Series,
+                  mmr_quality: float) -> Dict[str, pd.Series]:
+        """
+        Integrate MSF and MMR signals (vectorized).
+        """
         results = {}
+        
+        # === Adaptive Weight Calculation (Vectorized) ===
         msf_clarity_scaled = np.power(msf_clarity.values, self.params.regime_sensitivity)
         mmr_clarity_scaled = np.power(mmr_clarity.values * np.sqrt(mmr_quality), self.params.regime_sensitivity)
+        
         clarity_sum = msf_clarity_scaled + mmr_clarity_scaled + 0.001
         
         msf_weight_adaptive = msf_clarity_scaled / clarity_sum
@@ -691,24 +786,32 @@ class SignalIntegrator:
         results['msf_weight'] = msf_weight_norm
         results['mmr_weight'] = mmr_weight_norm
         
+        # === Combined Signal (Vectorized) ===
         unified_signal = msf_weight_norm * msf_signal + mmr_weight_norm * mmr_signal
+        
+        # === Agreement Analysis (Vectorized) ===
         signal_agreement = msf_signal * mmr_signal
         agreement_strength = signal_agreement.abs()
+        
         results['signal_agreement'] = signal_agreement
         
+        # Agreement multiplier (vectorized)
         agreement_multiplier = np.where(
             signal_agreement > 0,
             1.0 + 0.2 * agreement_strength,
             1.0 - 0.1 * agreement_strength
         )
+        
         unified_final = pd.Series(
             np.clip(unified_signal * agreement_multiplier, -1.0, 1.0),
             index=msf_signal.index
         )
+        
         results['unified_signal'] = unified_final
         results['unified_osc'] = unified_final * 10.0
         results['msf_osc'] = msf_signal * 10.0
         results['mmr_osc'] = mmr_signal * 10.0
+        
         return results
 
 
@@ -950,7 +1053,11 @@ class UMAPortfolioBooster:
         self.fetcher = MarketDataFetcher()
         self.uma = UnifiedMarketAnalysis(self.params)
         
-        logging.info(f"UMA Booster initialized: base_boost={boost_multiplier}x, max_weight={max_boost_weight}")
+        logging.info("==================================================")
+        logging.info("   UMA BOOSTER INITIALIZED")
+        logging.info(f"   Base Boost: {boost_multiplier}x")
+        logging.info(f"   Max Weight: {max_boost_weight*100}%")
+        logging.info("==================================================")
     
     def _fetch_symbol_data(self, symbol: str) -> Optional[pd.DataFrame]:
         if not DATA_PROVIDERS_AVAILABLE: return None
@@ -968,6 +1075,8 @@ class UMAPortfolioBooster:
             return {}
         
         buy_signals = {}
+        
+        logging.info("\n--- UMA SIGNAL DETECTION START ---")
         
         # Pre-fetch macro data once
         macro_data = None
@@ -991,13 +1100,13 @@ class UMAPortfolioBooster:
                     buy_signals[clean_symbol] = tier
                     
                     tier_names = {1: "Oversold", 2: "BullishDiv", 3: "Confirmed"}
-                    logging.info(f"✅ UMA Buy signal ({tier_names.get(tier, 'Unknown')} - T{tier}): {symbol}")
+                    logging.info(f"   [T{tier}] {tier_names.get(tier, 'Unknown')} -> {symbol}")
                     
             except Exception as e:
                 logging.debug(f"Error processing {symbol}: {e}")
                 continue
         
-        logging.info(f"UMA Booster: {len(buy_signals)} buy signals from {len(symbols)} symbols")
+        logging.info(f"--- DETECTED {len(buy_signals)} SIGNALS ---")
         return buy_signals
     
     def apply_boost(self, portfolio_df: pd.DataFrame, buy_signals: Dict[str, int]) -> pd.DataFrame:
@@ -1009,6 +1118,8 @@ class UMAPortfolioBooster:
         
         boosted_df = portfolio_df.copy()
         original_total = boosted_df['weightage_pct'].sum()
+        
+        logging.info("\n--- UMA WEIGHT ADJUSTMENT START ---")
         
         # Clean symbols in dataframe for matching
         df_symbols = boosted_df['symbol'].str.replace('.NS', '', regex=False)
@@ -1050,7 +1161,7 @@ class UMAPortfolioBooster:
             new_w = boosted_weights[idx]
             if new_w > old_w:
                 boost_pct = (new_w / old_w - 1) * 100
-                logging.info(f"UMA Boosted {symbol} (T{tier}): {old_w:.2f}% → {new_w:.2f}% (+{boost_pct:.1f}%)")
+                logging.info(f"   >> {symbol} (Tier {tier}): {old_w:.2f}% -> {new_w:.2f}% (Boost: +{boost_pct:.1f}%)")
         
         # Renormalize weights
         new_total = boosted_df['weightage_pct'].sum()
@@ -1064,6 +1175,8 @@ class UMAPortfolioBooster:
                 (sip_amount * boosted_df['weightage_pct'] / 100) / boosted_df['price']
             )
             boosted_df['value'] = boosted_df['units'] * boosted_df['price']
+            
+        logging.info("--- ADJUSTMENT COMPLETE ---\n")
         
         return boosted_df
 
@@ -1100,7 +1213,7 @@ def boost_portfolio_with_uma(
         clean_symbols = [s.replace('.NS', '') for s in portfolio_df['symbol']]
         n_boosted = sum(1 for s in clean_symbols if s in buy_signals)
         
-        logging.info(f"UMA Booster: Applied to {n_boosted}/{len(portfolio_df)} positions")
+        logging.info(f"UMA Booster Summary: Applied to {n_boosted}/{len(portfolio_df)} positions")
         
         return boosted_portfolio
         
