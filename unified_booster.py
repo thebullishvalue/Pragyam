@@ -1,42 +1,68 @@
 # ============================================================================
 # Unified Market Analysis (UMA) - Complete Implementation for Pragyam System
-# BACKEND: INVESTPY (Investing.com)
 # ============================================================================
 #
 # This module implements the full Unified Market Analysis indicator logic
-# utilizing investpy for data retrieval instead of yfinance.
+# from Pine Script, providing a non-invasive weight boosting layer based on
+# buy signals (lime circle conditions).
 #
+# DATA SOURCE: investpy (investing.com data)
+# 
 # Architecture:
 # 1. MSF (Momentum Structure Flow) - Internal price dynamics
-# 2. MMR (Macro Multiple Regression) - External macro drivers
-# 3. Signal Integration
+#    - Momentum Component (ROC-based)
+#    - Market Microstructure Component
+#    - Volatility Regime (Confidence Bands)
+#    - Composite Trend
+#    - Accumulation/Distribution
+#    - Regime Counter
+#    - RSI Component
 #
-# Note on Investpy:
-# investpy retrieves data from Investing.com. Ensure you have internet access
-# and are not blocked by Cloudflare protections often used by the site.
+# 2. MMR (Macro Multiple Regression) - External macro drivers
+#    - Bond yields from major economies
+#    - Currency pairs (INR crosses)
+#    - Commodities (Gold, Silver, Oil)
+#    - DXY (Dollar Index)
+#
+# 3. Signal Integration
+#    - Adaptive weighting based on signal clarity
+#    - Agreement multiplier for confirmation
+#
+# Performance Optimizations:
+# - LRU caching for data fetches
+# - Vectorized numpy operations (no row-wise apply)
+# - Batch data fetching
+# - Pre-computed indicator cache
+# - Lazy macro data loading
+#
+# Statistical Foundation:
+# - Orthogonal information sources (endogenous vs exogenous)
+# - Proper normalization throughout (z-scores, sigmoid transforms)
+# - Variance preservation when combining signals
 # ============================================================================
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import logging
-from typing import Dict, Set, Optional, Tuple, List
-from dataclasses import dataclass
-import warnings
-import time
+from typing import Dict, Set, Optional, Tuple, List, Any
+from dataclasses import dataclass, field
 from functools import lru_cache
-import hashlib
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import time
 
 warnings.filterwarnings('ignore')
 
-# Try to import investpy for data fetching
+# --- Import investpy ---
 try:
     import investpy
     INVESTPY_AVAILABLE = True
 except ImportError:
     INVESTPY_AVAILABLE = False
-    logging.warning("investpy not available - UMA Booster will be disabled. Run: pip install investpy")
+    logging.warning("investpy not available - UMA Booster will be disabled")
+
 
 # ============================================================================
 # SECTION 1: CONFIGURATION & PARAMETERS
@@ -45,127 +71,464 @@ except ImportError:
 @dataclass
 class UMAParameters:
     """Configuration parameters matching Pine Script defaults"""
+    
     # Core Settings
-    length: int = 20
-    roc_length: int = 14
-
+    length: int = 20  # Lookback Period
+    roc_length: int = 14  # ROC Length
+    
     # Statistical Settings
-    confidence_level: float = 0.95
-    zscore_clip: float = 3.0
-
+    confidence_level: float = 0.95  # For confidence bands
+    zscore_clip: float = 3.0  # Z-Score Clipping threshold
+    
     # Signal Integration Settings
-    msf_weight_base: float = 0.5
-    use_adaptive_weights: bool = True
-    regime_sensitivity: float = 1.5
-
+    msf_weight_base: float = 0.5  # Base weight for MSF (internal dynamics)
+    use_adaptive_weights: bool = True  # Adjust weights based on signal clarity
+    regime_sensitivity: float = 1.5  # Sensitivity for adaptive weighting
+    
     # Oscillator Settings
-    bb_length: int = 20
-    bb_mult: float = 2.0
-
+    bb_length: int = 20  # Bollinger Band Length
+    bb_mult: float = 2.0  # BB Standard Deviation multiplier
+    
     # RSI Settings
     rsi_length: int = 14
-    rsi_lower: int = 40
-    rsi_upper: int = 70
-
+    rsi_lower: int = 40  # Oversold threshold
+    rsi_upper: int = 70  # Overbought threshold
+    
     # Macro Regression Settings
     regression_length: int = 20
     correlation_lookback: int = 1000
-    num_macro_vars: int = 5
-
+    num_macro_vars: int = 5  # Number of macro variables in model
+    
     # Buy Signal Thresholds
-    unified_osc_oversold: float = -5.0
-    agreement_threshold: float = 0.3
+    unified_osc_oversold: float = -5.0  # Unified oscillator oversold level
+    agreement_threshold: float = 0.3  # Strong agreement threshold
+    
+    # Performance Settings
+    cache_ttl_seconds: int = 3600  # Cache TTL (1 hour)
+    max_parallel_fetches: int = 5  # Max parallel data fetches
+    min_data_points: int = 200  # Minimum data points required
+
 
 # ============================================================================
-# SECTION 2: UTILITY FUNCTIONS (Statistical Foundations)
+# SECTION 2: DATA CACHING LAYER
+# ============================================================================
+
+class DataCache:
+    """
+    In-memory cache for fetched data with TTL support.
+    Prevents redundant API calls within the same session.
+    """
+    
+    def __init__(self, ttl_seconds: int = 3600):
+        self._cache: Dict[str, Tuple[Any, float]] = {}
+        self._ttl = ttl_seconds
+    
+    def _get_key(self, *args) -> str:
+        """Generate cache key from arguments"""
+        key_str = str(args)
+        return hashlib.md5(key_str.encode()).hexdigest()
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get cached value if not expired"""
+        if key in self._cache:
+            value, timestamp = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return value
+            else:
+                del self._cache[key]
+        return None
+    
+    def set(self, key: str, value: Any):
+        """Set cache value with current timestamp"""
+        self._cache[key] = (value, time.time())
+    
+    def clear(self):
+        """Clear all cached data"""
+        self._cache.clear()
+
+
+# Global cache instance
+_data_cache = DataCache(ttl_seconds=3600)
+
+
+# ============================================================================
+# SECTION 3: UTILITY FUNCTIONS (Vectorized Operations)
 # ============================================================================
 
 class StatisticalUtils:
     """
     Statistical utility functions matching Pine Script implementations.
-    All functions are designed for proper normalization and scale independence.
+    All functions use vectorized numpy operations for performance.
     """
-
+    
     @staticmethod
     def zscore_clipped(series: pd.Series, length: int, clip_threshold: float = 3.0) -> pd.Series:
-        mean_val = series.rolling(window=length).mean()
-        std_val = series.rolling(window=length).std()
-        std_val = std_val.replace(0, np.nan)
-        raw_z = (series - mean_val) / std_val
-        raw_z = raw_z.fillna(0)
-        return raw_z.clip(lower=-clip_threshold, upper=clip_threshold)
-
+        """
+        Robust Z-Score with clipping (vectorized).
+        """
+        mean_val = series.rolling(window=length, min_periods=1).mean()
+        std_val = series.rolling(window=length, min_periods=1).std()
+        
+        # Vectorized division with zero handling
+        with np.errstate(divide='ignore', invalid='ignore'):
+            raw_z = np.where(std_val > 0, (series - mean_val) / std_val, 0.0)
+        
+        # Vectorized clipping
+        return pd.Series(np.clip(raw_z, -clip_threshold, clip_threshold), index=series.index)
+    
     @staticmethod
     def sigmoid(z: pd.Series, scale: float = 1.5) -> pd.Series:
-        return 2.0 / (1.0 + np.exp(-z / scale)) - 1.0
-
+        """
+        Sigmoid transformation (vectorized).
+        """
+        # Use numpy for vectorized exp
+        z_arr = z.values
+        result = 2.0 / (1.0 + np.exp(-z_arr / scale)) - 1.0
+        return pd.Series(result, index=z.index)
+    
     @staticmethod
     def minmax_normalize(series: pd.Series, length: int) -> pd.Series:
-        src_max = series.rolling(window=length).max()
-        src_min = series.rolling(window=length).min()
+        """
+        Min-max normalization (vectorized).
+        """
+        src_max = series.rolling(window=length, min_periods=1).max()
+        src_min = series.rolling(window=length, min_periods=1).min()
+        
         range_val = src_max - src_min
-        range_val = range_val.replace(0, np.nan)
-        normalized = 2.0 * (series - src_min) / range_val - 1.0
-        return normalized.fillna(0)
-
+        with np.errstate(divide='ignore', invalid='ignore'):
+            normalized = np.where(range_val > 0, 2.0 * (series - src_min) / range_val - 1.0, 0.0)
+        
+        return pd.Series(normalized, index=series.index)
+    
     @staticmethod
     def ema(series: pd.Series, period: int) -> pd.Series:
-        return series.ewm(span=period, adjust=False).mean()
-
+        """Exponential Moving Average"""
+        return series.ewm(span=period, adjust=False, min_periods=1).mean()
+    
     @staticmethod
     def sma(series: pd.Series, period: int) -> pd.Series:
-        return series.rolling(window=period).mean()
-
+        """Simple Moving Average"""
+        return series.rolling(window=period, min_periods=1).mean()
+    
     @staticmethod
     def stdev(series: pd.Series, period: int) -> pd.Series:
-        return series.rolling(window=period).std()
-
+        """Standard Deviation"""
+        return series.rolling(window=period, min_periods=1).std()
+    
     @staticmethod
     def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+        """
+        RSI calculation (vectorized).
+        """
         delta = series.diff()
-        gain = delta.where(delta > 0, 0)
-        loss = (-delta).where(delta < 0, 0)
+        
+        gain = delta.clip(lower=0)
+        loss = (-delta).clip(lower=0)
         
         avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
         avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
         
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        return rsi.fillna(100)
-
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = np.where(avg_loss > 0, avg_gain / avg_loss, 100.0)
+            rsi_val = 100.0 - (100.0 / (1.0 + rs))
+        
+        return pd.Series(rsi_val, index=series.index).fillna(50.0)
+    
     @staticmethod
     def roc(series: pd.Series, period: int) -> pd.Series:
+        """
+        Rate of Change (vectorized).
+        """
         shifted = series.shift(period)
-        return ((series - shifted) / shifted.replace(0, np.nan) * 100).fillna(0)
-
+        with np.errstate(divide='ignore', invalid='ignore'):
+            roc_val = np.where(shifted > 0, (series - shifted) / shifted * 100, 0.0)
+        return pd.Series(roc_val, index=series.index).fillna(0.0)
+    
     @staticmethod
     def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """
+        Average True Range (vectorized).
+        """
         prev_close = close.shift(1)
+        
+        # True Range components (vectorized)
         tr1 = high - low
-        tr2 = (high - prev_close).abs()
-        tr3 = (low - prev_close).abs()
-        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        return true_range.ewm(span=period, adjust=False).mean()
-
+        tr2 = np.abs(high - prev_close)
+        tr3 = np.abs(low - prev_close)
+        
+        # Max of all three
+        true_range = np.maximum(np.maximum(tr1, tr2), tr3)
+        
+        return pd.Series(true_range, index=close.index).ewm(span=period, adjust=False, min_periods=1).mean()
+    
     @staticmethod
     def correlation(series1: pd.Series, series2: pd.Series, period: int) -> pd.Series:
-        return series1.rolling(window=period).corr(series2)
+        """Rolling correlation"""
+        return series1.rolling(window=period, min_periods=period//2).corr(series2)
+
 
 # ============================================================================
-# SECTION 3: MSF - MOMENTUM STRUCTURE FLOW (Internal Dynamics)
+# SECTION 4: INVESTPY DATA FETCHER
+# ============================================================================
+
+class InvestpyDataFetcher:
+    """
+    Data fetching layer using investpy with caching and error handling.
+    
+    Performance optimizations:
+    - LRU caching for repeated requests
+    - Batch fetching with parallel execution
+    - Graceful degradation on errors
+    """
+    
+    # ETF name mappings for NSE ETFs (investpy format)
+    NSE_ETF_MAPPING = {
+        'SENSEXIETF': 'Nippon India ETF Sensex',
+        'NIFTYIETF': 'Nippon India ETF Nifty BeES',
+        'MON100': 'Motilal Oswal Nasdaq 100 ETF',
+        'HEALTHIETF': 'Nippon India ETF Nifty Pharma',
+        'MAKEINDIA': 'ICICI Prudential Nifty India Manufacturing Index Fund',
+        'CONSUMIETF': 'Nippon India ETF Nifty India Consumption',
+        'SILVERIETF': 'Nippon India Silver ETF',
+        'TNIDETF': 'Nippon India ETF Nifty 50 Value 20',
+        'INFRAIETF': 'Nippon India ETF Nifty Infrastructure',
+        'GOLDIETF': 'Nippon India ETF Gold BeES',
+        'CPSEETF': 'Nippon India ETF CPSE',
+        'COMMOIETF': 'Nippon India ETF Nifty Commodities',
+        'MOREALTY': 'Motilal Oswal Nifty Realty ETF',
+        'MODEFENCE': 'Motilal Oswal Nifty India Defence Index Fund',
+        'PSUBNKIETF': 'Nippon India ETF Nifty PSU Bank BeES',
+        'MASPTOP50': 'Mirae Asset Nifty 50 ETF',
+        'FMCGIETF': 'ICICI Prudential Nifty FMCG ETF',
+        'BANKIETF': 'Nippon India ETF Bank BeES',
+        'ITIETF': 'Nippon India ETF Nifty IT',
+        'EVINDIA': 'Mirae Asset Nifty EV & New Age Automotive ETF',
+        'MNC': 'Nippon India ETF Nifty MNC',
+        'FINIETF': 'ICICI Prudential Nifty Financial Services ETF',
+        'AUTOIETF': 'Nippon India ETF Nifty Auto',
+        'PVTBANIETF': 'Nippon India ETF Nifty Private Bank',
+        'MONIFTY500': 'Motilal Oswal Nifty 500 ETF',
+        'ECAPINSURE': 'Edelweiss ETF',
+        'MIDCAPIETF': 'Nippon India ETF Nifty Midcap 150',
+        'MOSMALL250': 'Motilal Oswal Nifty Smallcap 250 ETF',
+        'OILIETF': 'Nippon India ETF Nifty Commodities',
+        'METALIETF': 'Nippon India ETF Nifty Metal',
+        # Generic fallbacks
+        'GOLDBEES': 'Nippon India ETF Gold BeES',
+        'SILVERBEES': 'Nippon India Silver ETF',
+    }
+    
+    # Macro data mappings for investpy
+    MACRO_MAPPINGS = {
+        # Bonds (using investpy bonds)
+        'US10Y': {'type': 'bond', 'name': 'U.S. 10Y', 'country': 'united states'},
+        'US02Y': {'type': 'bond', 'name': 'U.S. 2Y', 'country': 'united states'},
+        'US30Y': {'type': 'bond', 'name': 'U.S. 30Y', 'country': 'united states'},
+        'JP10Y': {'type': 'bond', 'name': 'Japan 10Y', 'country': 'japan'},
+        'JP02Y': {'type': 'bond', 'name': 'Japan 2Y', 'country': 'japan'},
+        'CN10Y': {'type': 'bond', 'name': 'China 10Y', 'country': 'china'},
+        'EU10Y': {'type': 'bond', 'name': 'Germany 10Y', 'country': 'germany'},
+        'GB10Y': {'type': 'bond', 'name': 'U.K. 10Y', 'country': 'united kingdom'},
+        'IN10Y': {'type': 'bond', 'name': 'India 10Y', 'country': 'india'},
+        
+        # Currencies (using investpy currency_crosses)
+        'USDINR': {'type': 'currency', 'name': 'USD/INR'},
+        'EURINR': {'type': 'currency', 'name': 'EUR/INR'},
+        'GBPINR': {'type': 'currency', 'name': 'GBP/INR'},
+        'JPYINR': {'type': 'currency', 'name': 'JPY/INR'},
+        
+        # Commodities (using investpy commodities)
+        'GOLD': {'type': 'commodity', 'name': 'Gold', 'country': 'united states'},
+        'SILVER': {'type': 'commodity', 'name': 'Silver', 'country': 'united states'},
+        'OIL': {'type': 'commodity', 'name': 'Crude Oil WTI', 'country': 'united states'},
+        
+        # Indices
+        'DXY': {'type': 'index', 'name': 'US Dollar Index', 'country': 'united states'},
+    }
+    
+    DISPLAY_NAMES = {
+        'US10Y': 'US 10Y', 'US02Y': 'US 2Y', 'US30Y': 'US 30Y',
+        'JP10Y': 'Japan 10Y', 'JP02Y': 'Japan 2Y',
+        'CN10Y': 'China 10Y', 'EU10Y': 'Euro 10Y', 'GB10Y': 'UK 10Y',
+        'IN10Y': 'India 10Y',
+        'USDINR': 'USD/INR', 'EURINR': 'EUR/INR', 
+        'GBPINR': 'GBP/INR', 'JPYINR': 'JPY/INR',
+        'GOLD': 'Gold', 'SILVER': 'Silver', 'OIL': 'WTI Crude',
+        'DXY': 'Dollar Index',
+    }
+    
+    def __init__(self, cache: Optional[DataCache] = None):
+        self.cache = cache or _data_cache
+    
+    def _format_date(self, dt: datetime) -> str:
+        """Format datetime for investpy (DD/MM/YYYY)"""
+        return dt.strftime('%d/%m/%Y')
+    
+    def fetch_etf_data(self, symbol: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
+        """
+        Fetch ETF data from investpy with caching.
+        """
+        if not INVESTPY_AVAILABLE:
+            return None
+        
+        # Check cache first
+        cache_key = f"etf_{symbol}_{start_date.date()}_{end_date.date()}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            logging.debug(f"Cache hit for {symbol}")
+            return cached
+        
+        # Clean symbol
+        clean_symbol = symbol.replace('.NS', '').upper()
+        
+        # Get investpy ETF name
+        etf_name = self.NSE_ETF_MAPPING.get(clean_symbol)
+        
+        if not etf_name:
+            logging.debug(f"No investpy mapping for {clean_symbol}")
+            return None
+        
+        try:
+            df = investpy.get_etf_historical_data(
+                etf=etf_name,
+                country='india',
+                from_date=self._format_date(start_date),
+                to_date=self._format_date(end_date)
+            )
+            
+            if df is None or df.empty:
+                return None
+            
+            # Standardize column names
+            df.columns = [c.lower() for c in df.columns]
+            
+            # Ensure required columns exist
+            required = ['open', 'high', 'low', 'close', 'volume']
+            if not all(col in df.columns for col in required):
+                return None
+            
+            # Cache the result
+            self.cache.set(cache_key, df)
+            
+            logging.debug(f"Fetched {len(df)} bars for {clean_symbol}")
+            return df
+            
+        except Exception as e:
+            logging.debug(f"investpy fetch failed for {clean_symbol}: {e}")
+            return None
+    
+    def fetch_macro_data(self, var_name: str, start_date: datetime, end_date: datetime) -> Optional[pd.Series]:
+        """
+        Fetch macro variable data from investpy.
+        """
+        if not INVESTPY_AVAILABLE:
+            return None
+        
+        # Check cache
+        cache_key = f"macro_{var_name}_{start_date.date()}_{end_date.date()}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        
+        mapping = self.MACRO_MAPPINGS.get(var_name)
+        if not mapping:
+            return None
+        
+        try:
+            data_type = mapping['type']
+            name = mapping['name']
+            
+            from_date = self._format_date(start_date)
+            to_date = self._format_date(end_date)
+            
+            if data_type == 'bond':
+                df = investpy.get_bond_historical_data(
+                    bond=name,
+                    from_date=from_date,
+                    to_date=to_date
+                )
+            elif data_type == 'currency':
+                df = investpy.get_currency_cross_historical_data(
+                    currency_cross=name,
+                    from_date=from_date,
+                    to_date=to_date
+                )
+            elif data_type == 'commodity':
+                df = investpy.get_commodity_historical_data(
+                    commodity=name,
+                    from_date=from_date,
+                    to_date=to_date
+                )
+            elif data_type == 'index':
+                df = investpy.get_index_historical_data(
+                    index=name,
+                    country=mapping.get('country', 'united states'),
+                    from_date=from_date,
+                    to_date=to_date
+                )
+            else:
+                return None
+            
+            if df is None or df.empty:
+                return None
+            
+            # Get close price series
+            close_col = 'Close' if 'Close' in df.columns else 'close'
+            series = df[close_col]
+            
+            # Cache result
+            self.cache.set(cache_key, series)
+            
+            return series
+            
+        except Exception as e:
+            logging.debug(f"investpy macro fetch failed for {var_name}: {e}")
+            return None
+    
+    def fetch_macro_data_batch(self, var_names: List[str], start_date: datetime, 
+                                end_date: datetime, max_workers: int = 5) -> Dict[str, pd.Series]:
+        """
+        Fetch multiple macro variables in parallel.
+        """
+        results = {}
+        
+        # Use ThreadPoolExecutor for parallel fetching
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_var = {
+                executor.submit(self.fetch_macro_data, var, start_date, end_date): var 
+                for var in var_names
+            }
+            
+            for future in as_completed(future_to_var):
+                var_name = future_to_var[future]
+                try:
+                    data = future.result()
+                    if data is not None and len(data) > 0:
+                        results[var_name] = data
+                except Exception as e:
+                    logging.debug(f"Parallel fetch failed for {var_name}: {e}")
+        
+        return results
+
+
+# ============================================================================
+# SECTION 5: MSF - MOMENTUM STRUCTURE FLOW (Vectorized)
 # ============================================================================
 
 class MomentumStructureFlow:
     """
     MSF (Momentum Structure Flow) - Analyzes internal price dynamics.
-    Calculations remain identical to original implementation.
+    Fully vectorized implementation for performance.
     """
-
+    
     def __init__(self, params: UMAParameters):
         self.params = params
         self.stats = StatisticalUtils()
-
+    
     def calculate(self, df: pd.DataFrame) -> Dict[str, pd.Series]:
+        """
+        Calculate all MSF components (vectorized).
+        """
         results = {}
         length = self.params.length
         zscore_clip = self.params.zscore_clip
@@ -174,18 +537,28 @@ class MomentumStructureFlow:
         df = df.copy()
         df.columns = [c.lower() for c in df.columns]
         
-        # === 3.1 Momentum Component (ROC-based) ===
-        roc_raw = self.stats.roc(df['close'], self.params.roc_length)
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        open_price = df['open']
+        volume = df['volume']
+        
+        # === 3.1 Momentum Component (ROC-based) - Vectorized ===
+        roc_raw = self.stats.roc(close, self.params.roc_length)
         roc_z = self.stats.zscore_clipped(roc_raw, length, zscore_clip)
         momentum_norm = self.stats.sigmoid(roc_z, 1.5)
         results['momentum_norm'] = momentum_norm
         
-        # === 3.2 Market Microstructure Component ===
-        intrabar_direction = (df['high'] + df['low']) / 2 - df['open']
-        vol_ma = self.stats.sma(df['volume'], length)
-        vol_ratio = (df['volume'] / vol_ma.replace(0, np.nan)).fillna(1.0)
+        # === 3.2 Market Microstructure Component - Vectorized ===
+        intrabar_direction = (high + low) / 2 - open_price
+        vol_ma = self.stats.sma(volume, length)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            vol_ratio = np.where(vol_ma > 0, volume / vol_ma, 1.0)
+        vol_ratio = pd.Series(vol_ratio, index=df.index)
+        
         vw_direction = self.stats.sma(intrabar_direction * vol_ratio, length)
-        price_change_impact = df['close'] - df['close'].shift(5)
+        price_change_impact = close - close.shift(5)
         vw_impact = self.stats.sma(price_change_impact * vol_ratio, length)
         
         microstructure_raw = vw_direction - vw_impact
@@ -193,44 +566,50 @@ class MomentumStructureFlow:
         microstructure_norm = self.stats.sigmoid(microstructure_z, 1.5)
         results['microstructure_norm'] = microstructure_norm
         
-        # === 3.3 Volatility Regime ===
-        price_mean = self.stats.sma(df['close'], length)
-        price_stdev = self.stats.stdev(df['close'], length)
+        # === 3.3 Volatility Regime - Vectorized ===
+        price_mean = self.stats.sma(close, length)
+        price_stdev = self.stats.stdev(close, length)
         conf_mult = 1.96 if self.params.confidence_level >= 0.95 else 1.645
         
         upper_bound = price_mean + conf_mult * price_stdev
         lower_bound = price_mean - conf_mult * price_stdev
         band_width = upper_bound - lower_bound
         
-        price_position = ((df['close'] - lower_bound) / band_width.replace(0, np.nan) * 2 - 1).fillna(0)
-        price_position_clipped = price_position.clip(lower=-1.5, upper=1.5)
-        results['price_position'] = price_position_clipped
+        with np.errstate(divide='ignore', invalid='ignore'):
+            price_position = np.where(band_width > 0, (close - lower_bound) / band_width * 2 - 1, 0.0)
+        price_position = pd.Series(np.clip(price_position, -1.5, 1.5), index=df.index)
+        
+        results['price_position'] = price_position
         results['upper_bound'] = upper_bound
         results['lower_bound'] = lower_bound
         
-        # === 3.4 Composite Trend ===
-        trend_fast = self.stats.sma(df['close'], 5)
-        trend_slow = self.stats.sma(df['close'], length)
+        # === 3.4 Composite Trend - Vectorized ===
+        trend_fast = self.stats.sma(close, 5)
+        trend_slow = self.stats.sma(close, length)
         trend_diff_z = self.stats.zscore_clipped(trend_fast - trend_slow, length, zscore_clip)
         
-        price_change_5 = df['close'].diff(5)
+        price_change_5 = close.diff(5)
         momentum_accel_raw = price_change_5.diff(5)
         momentum_accel_z = self.stats.zscore_clipped(momentum_accel_raw, length, zscore_clip)
         
-        atr_val = self.stats.atr(df['high'], df['low'], df['close'], 14)
-        vol_adj_mom_raw = (price_change_5 / atr_val.replace(0, np.nan)).fillna(0)
+        atr_val = self.stats.atr(high, low, close, 14)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            vol_adj_mom_raw = np.where(atr_val > 0, price_change_5 / atr_val, 0.0)
+        vol_adj_mom_raw = pd.Series(vol_adj_mom_raw, index=df.index)
         vol_adj_mom_z = self.stats.zscore_clipped(vol_adj_mom_raw, length, zscore_clip)
         
-        mean_reversion_z = self.stats.zscore_clipped(df['close'] - price_mean, length, zscore_clip)
+        mean_reversion_z = self.stats.zscore_clipped(close - price_mean, length, zscore_clip)
         
+        # Variance-preserving combination
         composite_trend_z = (trend_diff_z + momentum_accel_z + vol_adj_mom_z + mean_reversion_z) / np.sqrt(4.0)
         composite_trend_norm = self.stats.sigmoid(composite_trend_z, 1.5)
         results['composite_trend_norm'] = composite_trend_norm
         
-        # === 3.5 Accumulation/Distribution ===
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        money_flow = typical_price * df['volume']
-        close_up = df['close'] > df['close'].shift(1)
+        # === 3.5 Accumulation/Distribution - Vectorized ===
+        typical_price = (high + low + close) / 3
+        money_flow = typical_price * volume
+        
+        close_up = close > close.shift(1)
         mf_positive = money_flow.where(close_up, 0)
         mf_negative = money_flow.where(~close_up, 0)
         
@@ -238,35 +617,32 @@ class MomentumStructureFlow:
         mf_neg_smooth = self.stats.sma(mf_negative, length)
         mf_total = mf_pos_smooth + mf_neg_smooth
         
-        accum_ratio = (mf_pos_smooth / mf_total.replace(0, np.nan)).fillna(0.5)
-        accum_norm = 2.0 * (accum_ratio - 0.5)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            accum_ratio = np.where(mf_total > 0, mf_pos_smooth / mf_total, 0.5)
+        accum_norm = pd.Series(2.0 * (accum_ratio - 0.5), index=df.index)
         results['accum_norm'] = accum_norm
         
-        # === 3.6 Regime Counter ===
-        pct_change = df['close'].pct_change() * 100
+        # === 3.6 Regime Counter - Vectorized ===
+        pct_change = close.pct_change() * 100
         threshold_pct = 0.33
-        regime_count = pd.Series(0.0, index=df.index)
-        count = 0.0
         
-        # Optimization: Vectorize if possible, but keeping iterative for logic preservation
-        for i in range(len(pct_change)):
-            if pd.isna(pct_change.iloc[i]): continue
-            if pct_change.iloc[i] > threshold_pct: count += 1
-            elif pct_change.iloc[i] < -threshold_pct: count -= 1
-            regime_count.iloc[i] = count
+        # Vectorized regime counting using cumsum
+        up_signal = (pct_change > threshold_pct).astype(int)
+        down_signal = (pct_change < -threshold_pct).astype(int)
+        regime_count = (up_signal - down_signal).cumsum()
         
         regime_raw = regime_count - self.stats.sma(regime_count, length)
         regime_z = self.stats.zscore_clipped(regime_raw, length, zscore_clip)
         regime_norm = self.stats.sigmoid(regime_z, 1.5)
         results['regime_norm'] = regime_norm
         
-        # === 3.7 RSI Component ===
-        rsi_value = self.stats.rsi(df['close'], self.params.rsi_length)
+        # === 3.7 RSI Component - Vectorized ===
+        rsi_value = self.stats.rsi(close, self.params.rsi_length)
         rsi_norm = (rsi_value - 50) / 50
         results['rsi_value'] = rsi_value
         results['rsi_norm'] = rsi_norm
         
-        # === 3.8 MSF Composite Signal ===
+        # === 3.8 MSF Composite Signal - Vectorized ===
         osc_momentum = momentum_norm
         osc_structure = (microstructure_norm + composite_trend_norm) / np.sqrt(2.0)
         osc_flow = (accum_norm + regime_norm) / np.sqrt(2.0)
@@ -278,101 +654,42 @@ class MomentumStructureFlow:
         
         return results
 
+
 # ============================================================================
-# SECTION 4: MMR - MACRO MULTIPLE REGRESSION (External Drivers)
+# SECTION 6: MMR - MACRO MULTIPLE REGRESSION
 # ============================================================================
 
 class MacroMultipleRegression:
     """
     MMR (Macro Multiple Regression) - Analyzes external macro drivers.
-    Adapted to use investpy search parameters.
+    Uses investpy for data fetching with parallel batch operations.
     """
-
-    # Investpy requires specific Name, Country, and Type (stock, bond, commodity, etc)
-    MACRO_CONFIG = {
-        'US10Y': {'name': 'U.S. 10Y', 'country': 'united states', 'type': 'bond'},
-        'US02Y': {'name': 'U.S. 2Y', 'country': 'united states', 'type': 'bond'},
-        'US30Y': {'name': 'U.S. 30Y', 'country': 'united states', 'type': 'bond'},
-        'JP10Y': {'name': 'Japan 10Y', 'country': 'japan', 'type': 'bond'},
-        'JP02Y': {'name': 'Japan 2Y', 'country': 'japan', 'type': 'bond'},
-        'CN10Y': {'name': 'China 10Y', 'country': 'china', 'type': 'bond'},
-        'CN02Y': {'name': 'China 2Y', 'country': 'china', 'type': 'bond'},
-        'EU10Y': {'name': 'Germany 10Y', 'country': 'germany', 'type': 'bond'},
-        'EU02Y': {'name': 'Germany 2Y', 'country': 'germany', 'type': 'bond'},
-        'GB10Y': {'name': 'U.K. 10Y', 'country': 'united kingdom', 'type': 'bond'},
-        'GB02Y': {'name': 'U.K. 2Y', 'country': 'united kingdom', 'type': 'bond'},
-        'IN10Y': {'name': 'India 10Y', 'country': 'india', 'type': 'bond'},
-        'IN02Y': {'name': 'India 2Y', 'country': 'india', 'type': 'bond'},
-        'DXY': {'name': 'US Dollar Index', 'country': 'united states', 'type': 'index'},
-        'GOLD': {'name': 'Gold', 'country': None, 'type': 'commodity'},
-        'SILVER': {'name': 'Silver', 'country': None, 'type': 'commodity'},
-        'OIL': {'name': 'Crude Oil', 'country': None, 'type': 'commodity'},
-        'USDINR': {'name': 'USD/INR', 'country': None, 'type': 'currency_cross'},
-        'EURINR': {'name': 'EUR/INR', 'country': None, 'type': 'currency_cross'},
-        'GBPINR': {'name': 'GBP/INR', 'country': None, 'type': 'currency_cross'},
-        'JPYINR': {'name': 'JPY/INR', 'country': None, 'type': 'currency_cross'},
-    }
-
-    DISPLAY_NAMES = {k: k for k in MACRO_CONFIG.keys()}
-
-    def __init__(self, params: UMAParameters):
+    
+    def __init__(self, params: UMAParameters, fetcher: Optional[InvestpyDataFetcher] = None):
         self.params = params
         self.stats = StatisticalUtils()
-
+        self.fetcher = fetcher or InvestpyDataFetcher()
+    
     def fetch_macro_data(self, start_date: datetime, end_date: datetime) -> Dict[str, pd.Series]:
         """
-        Fetch macro data using investpy.
-        Dates must be converted to 'dd/mm/yyyy' string format.
+        Fetch all macro data in parallel batches.
         """
-        if not INVESTPY_AVAILABLE:
-            logging.warning("investpy not available - skipping macro data fetch")
-            return {}
-        
-        macro_data = {}
-        
-        # Convert dates to investpy format (dd/mm/yyyy)
-        from_date = start_date.strftime('%d/%m/%Y')
-        to_date = end_date.strftime('%d/%m/%Y')
-        
-        for key, config in self.MACRO_CONFIG.items():
-            try:
-                data = None
-                name = config['name']
-                country = config['country']
-                asset_type = config['type']
-                
-                # Investpy separates functions by asset class
-                if asset_type == 'bond':
-                    data = investpy.get_bond_historical_data(bond=name, country=country, from_date=from_date, to_date=to_date)
-                elif asset_type == 'index':
-                    data = investpy.get_index_historical_data(index=name, country=country, from_date=from_date, to_date=to_date)
-                elif asset_type == 'commodity':
-                    data = investpy.get_commodity_historical_data(commodity=name, from_date=from_date, to_date=to_date)
-                elif asset_type == 'currency_cross':
-                    data = investpy.get_currency_cross_historical_data(currency_cross=name, from_date=from_date, to_date=to_date)
-                
-                if data is not None and not data.empty:
-                    # Investpy returns capitalized 'Close'. We normalize to 'close' later if needed, 
-                    # but here we just need the Series.
-                    macro_data[key] = data['Close']
-                    logging.debug(f"Fetched {key}: {len(data)} bars")
-                    # Rate limit kindness
-                    time.sleep(0.5) 
-                
-            except Exception as e:
-                logging.debug(f"Failed to fetch {key} via investpy: {e}")
-                continue
-        
-        return macro_data
-
-    def calculate(self, df: pd.DataFrame, macro_data: Dict[str, pd.Series]) -> Dict[str, any]:
+        var_names = list(self.fetcher.MACRO_MAPPINGS.keys())
+        return self.fetcher.fetch_macro_data_batch(
+            var_names, 
+            start_date, 
+            end_date,
+            max_workers=self.params.max_parallel_fetches
+        )
+    
+    def calculate(self, df: pd.DataFrame, macro_data: Dict[str, pd.Series]) -> Dict[str, Any]:
         """
-        Calculate MMR signal based on macro regression.
-        (Logic remains identical to original, only data source changed)
+        Calculate MMR signal based on macro regression (vectorized).
         """
         results = {}
         
         if not macro_data:
+            # Return neutral signal if no macro data
             results['mmr_signal'] = pd.Series(0.0, index=df.index)
             results['mmr_clarity'] = pd.Series(0.0, index=df.index)
             results['model_r2'] = 0.0
@@ -381,13 +698,12 @@ class MacroMultipleRegression:
         
         target = df['close'] if 'close' in df.columns else df['Close']
         
-        # Align all data to target index
+        # Align macro data to target index (vectorized)
         aligned_macro = {}
         for name, series in macro_data.items():
-            # Reindex to target and forward fill
-            # Note: investpy index is usually datetime, but verify timezone compatibility if needed
             aligned = series.reindex(target.index).ffill()
-            if aligned.notna().sum() > self.params.correlation_lookback * 0.5:
+            valid_count = aligned.notna().sum()
+            if valid_count > self.params.correlation_lookback * 0.5:
                 aligned_macro[name] = aligned
         
         if not aligned_macro:
@@ -397,7 +713,7 @@ class MacroMultipleRegression:
             results['top_drivers'] = []
             return results
         
-        # Calculate correlations
+        # Calculate correlations (vectorized)
         correlations = {}
         for name, series in aligned_macro.items():
             corr = self.stats.correlation(target, series, self.params.correlation_lookback)
@@ -412,22 +728,30 @@ class MacroMultipleRegression:
             results['top_drivers'] = []
             return results
         
-        # Sort and select top drivers
+        # Sort by absolute correlation and select top N
         sorted_vars = sorted(correlations.items(), key=lambda x: abs(x[1]), reverse=True)
         top_vars = sorted_vars[:self.params.num_macro_vars]
         
         results['top_drivers'] = [
-            {'name': name, 'display': self.DISPLAY_NAMES.get(name, name), 'correlation': corr}
+            {
+                'name': name, 
+                'display': self.fetcher.DISPLAY_NAMES.get(name, name), 
+                'correlation': corr
+            }
             for name, corr in top_vars
         ]
         
-        # Build regression
+        # Build regression predictions (vectorized)
         predictions = []
         weights = []
         
         for name, corr in top_vars:
-            if name not in aligned_macro: continue 
-            pred, r2 = self._regression_predict(aligned_macro[name], target, self.params.regression_length)
+            if name not in aligned_macro:
+                continue
+            
+            x = aligned_macro[name]
+            pred, r2 = self._regression_predict_vectorized(x, target, self.params.regression_length)
+            
             predictions.append(pred)
             weights.append(r2)
         
@@ -437,6 +761,7 @@ class MacroMultipleRegression:
             results['model_r2'] = 0.0
             return results
         
+        # Weighted average prediction (vectorized)
         total_weight = sum(weights)
         if total_weight > 0:
             y_predicted = sum(p * w for p, w in zip(predictions, weights)) / total_weight
@@ -448,6 +773,7 @@ class MacroMultipleRegression:
         results['model_r2'] = model_r2
         results['y_predicted'] = y_predicted
         
+        # Deviation from fair value
         deviation = target - y_predicted
         deviation_z = self.stats.zscore_clipped(deviation, self.params.length, self.params.zscore_clip)
         mmr_signal = self.stats.sigmoid(deviation_z, 1.5)
@@ -456,39 +782,61 @@ class MacroMultipleRegression:
         results['mmr_clarity'] = mmr_signal.abs()
         
         return results
-
-    def _regression_predict(self, x: pd.Series, y: pd.Series, length: int) -> Tuple[pd.Series, float]:
+    
+    def _regression_predict_vectorized(self, x: pd.Series, y: pd.Series, length: int) -> Tuple[pd.Series, float]:
+        """
+        Vectorized linear regression prediction.
+        """
         x_mean = self.stats.sma(x, length)
         y_mean = self.stats.sma(y, length)
         x_std = self.stats.stdev(x, length)
         y_std = self.stats.stdev(y, length)
         
         corr = self.stats.correlation(x, y, length)
-        slope = corr * (y_std / x_std.replace(0, np.nan))
-        slope = slope.fillna(0)
+        
+        # Vectorized slope calculation
+        with np.errstate(divide='ignore', invalid='ignore'):
+            slope = np.where(x_std > 0, corr * (y_std / x_std), 0.0)
+        slope = pd.Series(slope, index=x.index).fillna(0)
+        
         intercept = y_mean - slope * x_mean
         prediction = x * slope + intercept
         
+        # R² from most recent correlation
         recent_corr = corr.dropna()
         r2 = recent_corr.iloc[-1] ** 2 if len(recent_corr) > 0 else 0
+        
         return prediction, r2
 
+
 # ============================================================================
-# SECTION 5: SIGNAL INTEGRATION
+# SECTION 7: SIGNAL INTEGRATION
 # ============================================================================
 
 class SignalIntegrator:
-    """Integrates MSF and MMR signals into unified output."""
+    """
+    Integrates MSF and MMR signals (vectorized).
+    """
     
     def __init__(self, params: UMAParameters):
         self.params = params
         self.stats = StatisticalUtils()
-
-    def integrate(self, msf_signal, msf_clarity, mmr_signal, mmr_clarity, mmr_quality):
+    
+    def integrate(self, 
+                  msf_signal: pd.Series, 
+                  msf_clarity: pd.Series,
+                  mmr_signal: pd.Series,
+                  mmr_clarity: pd.Series,
+                  mmr_quality: float) -> Dict[str, pd.Series]:
+        """
+        Integrate MSF and MMR signals (vectorized).
+        """
         results = {}
         
-        msf_clarity_scaled = msf_clarity ** self.params.regime_sensitivity
-        mmr_clarity_scaled = (mmr_clarity * np.sqrt(mmr_quality)) ** self.params.regime_sensitivity
+        # === Adaptive Weight Calculation (Vectorized) ===
+        msf_clarity_scaled = np.power(msf_clarity.values, self.params.regime_sensitivity)
+        mmr_clarity_scaled = np.power(mmr_clarity.values * np.sqrt(mmr_quality), self.params.regime_sensitivity)
+        
         clarity_sum = msf_clarity_scaled + mmr_clarity_scaled + 0.001
         
         msf_weight_adaptive = msf_clarity_scaled / clarity_sum
@@ -498,27 +846,37 @@ class SignalIntegrator:
             msf_weight_final = 0.5 * self.params.msf_weight_base + 0.5 * msf_weight_adaptive
             mmr_weight_final = 0.5 * (1.0 - self.params.msf_weight_base) + 0.5 * mmr_weight_adaptive
         else:
-            msf_weight_final = pd.Series(self.params.msf_weight_base, index=msf_signal.index)
-            mmr_weight_final = pd.Series(1.0 - self.params.msf_weight_base, index=msf_signal.index)
+            msf_weight_final = np.full(len(msf_signal), self.params.msf_weight_base)
+            mmr_weight_final = np.full(len(msf_signal), 1.0 - self.params.msf_weight_base)
         
         weight_sum = msf_weight_final + mmr_weight_final
-        msf_weight_norm = msf_weight_final / weight_sum
-        mmr_weight_norm = mmr_weight_final / weight_sum
+        msf_weight_norm = pd.Series(msf_weight_final / weight_sum, index=msf_signal.index)
+        mmr_weight_norm = pd.Series(mmr_weight_final / weight_sum, index=msf_signal.index)
         
         results['msf_weight'] = msf_weight_norm
         results['mmr_weight'] = mmr_weight_norm
         
+        # === Combined Signal (Vectorized) ===
         unified_signal = msf_weight_norm * msf_signal + mmr_weight_norm * mmr_signal
         
+        # === Agreement Analysis (Vectorized) ===
         signal_agreement = msf_signal * mmr_signal
         agreement_strength = signal_agreement.abs()
+        
         results['signal_agreement'] = signal_agreement
         
-        agreement_multiplier = pd.Series(1.0, index=msf_signal.index)
-        agreement_multiplier = agreement_multiplier.where(signal_agreement <= 0, 1.0 + 0.2 * agreement_strength)
-        agreement_multiplier = agreement_multiplier.where(signal_agreement >= 0, 1.0 - 0.1 * agreement_strength)
+        # Agreement multiplier (vectorized)
+        agreement_multiplier = np.where(
+            signal_agreement > 0,
+            1.0 + 0.2 * agreement_strength,
+            1.0 - 0.1 * agreement_strength
+        )
         
-        unified_final = (unified_signal * agreement_multiplier).clip(lower=-1.0, upper=1.0)
+        unified_final = pd.Series(
+            np.clip(unified_signal * agreement_multiplier, -1.0, 1.0),
+            index=msf_signal.index
+        )
+        
         results['unified_signal'] = unified_final
         results['unified_osc'] = unified_final * 10.0
         results['msf_osc'] = msf_signal * 10.0
@@ -526,20 +884,30 @@ class SignalIntegrator:
         
         return results
 
+
 # ============================================================================
-# SECTION 6: BUY SIGNAL DETECTION
+# SECTION 8: BUY SIGNAL DETECTION
 # ============================================================================
 
 class BuySignalDetector:
-    """Detects buy signals based on Unified Market Analysis criteria."""
-
+    """
+    Detects buy signals (vectorized).
+    """
+    
     def __init__(self, params: UMAParameters):
         self.params = params
         self.stats = StatisticalUtils()
-
-    def detect(self, unified_osc, signal_agreement, rsi_value):
+    
+    def detect(self, 
+               unified_osc: pd.Series,
+               signal_agreement: pd.Series,
+               rsi_value: pd.Series) -> Dict[str, pd.Series]:
+        """
+        Detect buy and sell signals (vectorized).
+        """
         results = {}
         
+        # Bollinger Bands on unified oscillator
         bb_basis = self.stats.sma(unified_osc, self.params.bb_length)
         bb_dev = self.stats.stdev(unified_osc, self.params.bb_length)
         bb_upper = bb_basis + self.params.bb_mult * bb_dev
@@ -547,45 +915,97 @@ class BuySignalDetector:
         
         results['bb_upper'] = bb_upper
         results['bb_lower'] = bb_lower
+        results['bb_basis'] = bb_basis
         
+        # RSI of oscillator
         rsi_osc = self.stats.rsi(unified_osc, self.params.rsi_length)
         results['rsi_osc'] = rsi_osc
         
+        # Vectorized condition checks
         is_oversold = (unified_osc < bb_lower) & (rsi_osc < self.params.rsi_lower)
         is_overbought = (unified_osc > bb_upper) & (rsi_osc > self.params.rsi_upper)
+        
         results['is_oversold'] = is_oversold
         results['is_overbought'] = is_overbought
         
+        # Strong agreement
         strong_agreement = signal_agreement > self.params.agreement_threshold
         results['strong_agreement'] = strong_agreement
         
+        # Buy signal (lime circle condition)
         buy_signal = is_oversold & strong_agreement & (unified_osc < self.params.unified_osc_oversold)
         results['buy_signal'] = buy_signal
         
+        # Sell signal
         sell_signal = is_overbought & strong_agreement & (unified_osc > -self.params.unified_osc_oversold)
         results['sell_signal'] = sell_signal
         
+        # Soft buy signal (simpler criteria for boosting)
         soft_buy_signal = strong_agreement & (unified_osc < self.params.unified_osc_oversold)
         results['soft_buy_signal'] = soft_buy_signal
         
+        # Divergence detection
+        osc_rising = unified_osc > unified_osc.shift(1)
+        rsi_falling = rsi_value < rsi_value.shift(1)
+        bullish_divergence = osc_rising & rsi_falling & (unified_osc < -5)
+        results['bullish_divergence'] = bullish_divergence
+        
         return results
 
+
 # ============================================================================
-# SECTION 7: MAIN UMA CALCULATOR
+# SECTION 9: MAIN UMA CALCULATOR
 # ============================================================================
 
 class UnifiedMarketAnalysis:
-    """Complete Unified Market Analysis calculator."""
-
+    """
+    Complete Unified Market Analysis calculator.
+    """
+    
     def __init__(self, params: Optional[UMAParameters] = None):
         self.params = params or UMAParameters()
+        self.fetcher = InvestpyDataFetcher()
         self.msf = MomentumStructureFlow(self.params)
-        self.mmr = MacroMultipleRegression(self.params)
+        self.mmr = MacroMultipleRegression(self.params, self.fetcher)
         self.integrator = SignalIntegrator(self.params)
         self.detector = BuySignalDetector(self.params)
-
-    def calculate(self, df: pd.DataFrame, macro_data: Optional[Dict[str, pd.Series]] = None) -> Dict[str, any]:
+        
+        # Cache for macro data (fetched once per session)
+        self._macro_data_cache: Optional[Dict[str, pd.Series]] = None
+        self._macro_cache_dates: Optional[Tuple[datetime, datetime]] = None
+    
+    def _get_macro_data(self, start_date: datetime, end_date: datetime) -> Dict[str, pd.Series]:
+        """
+        Get macro data with lazy loading and caching.
+        """
+        # Check if we have valid cached data
+        if (self._macro_data_cache is not None and 
+            self._macro_cache_dates is not None and
+            self._macro_cache_dates[0] <= start_date and 
+            self._macro_cache_dates[1] >= end_date):
+            return self._macro_data_cache
+        
+        # Fetch fresh data
+        self._macro_data_cache = self.mmr.fetch_macro_data(start_date, end_date)
+        self._macro_cache_dates = (start_date, end_date)
+        
+        return self._macro_data_cache
+    
+    def calculate(self, 
+                  df: pd.DataFrame, 
+                  macro_data: Optional[Dict[str, pd.Series]] = None,
+                  skip_macro: bool = False) -> Dict[str, Any]:
+        """
+        Calculate complete UMA analysis.
+        
+        Args:
+            df: OHLCV DataFrame
+            macro_data: Pre-fetched macro data (optional)
+            skip_macro: If True, skip macro regression for faster calculation
+        """
         results = {}
+        
+        # Standardize column names
         df = df.copy()
         df.columns = [c.lower() for c in df.columns]
         
@@ -593,30 +1013,42 @@ class UnifiedMarketAnalysis:
         msf_results = self.msf.calculate(df)
         results['msf'] = msf_results
         
-        # === Calculate MMR ===
-        if macro_data is None:
-            if len(df) > 0:
-                end_date = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else datetime.now()
-                # Default to 365 days history for macro
-                start_date = end_date - timedelta(days=365)
-                macro_data = self.mmr.fetch_macro_data(start_date, end_date)
-            else:
-                macro_data = {}
+        # === Calculate MMR (with optional skip for performance) ===
+        if skip_macro:
+            mmr_results = {
+                'mmr_signal': pd.Series(0.0, index=df.index),
+                'mmr_clarity': pd.Series(0.0, index=df.index),
+                'model_r2': 0.0,
+                'top_drivers': []
+            }
+        else:
+            if macro_data is None:
+                if len(df) > 0 and isinstance(df.index, pd.DatetimeIndex):
+                    start_date = df.index[0].to_pydatetime()
+                    end_date = df.index[-1].to_pydatetime()
+                    macro_data = self._get_macro_data(start_date, end_date)
+                else:
+                    macro_data = {}
+            
+            mmr_results = self.mmr.calculate(df, macro_data)
         
-        mmr_results = self.mmr.calculate(df, macro_data)
         results['mmr'] = mmr_results
         
         # === Integrate Signals ===
         integrated = self.integrator.integrate(
-            msf_results['msf_signal'], msf_results['msf_clarity'],
-            mmr_results['mmr_signal'], mmr_results['mmr_clarity'],
+            msf_results['msf_signal'],
+            msf_results['msf_clarity'],
+            mmr_results['mmr_signal'],
+            mmr_results['mmr_clarity'],
             mmr_results['model_r2']
         )
         results['integrated'] = integrated
         
         # === Detect Buy/Sell Signals ===
         signals = self.detector.detect(
-            integrated['unified_osc'], integrated['signal_agreement'], msf_results['rsi_value']
+            integrated['unified_osc'],
+            integrated['signal_agreement'],
+            msf_results['rsi_value']
         )
         results['signals'] = signals
         
@@ -627,163 +1059,152 @@ class UnifiedMarketAnalysis:
         results['sell_signal'] = signals['sell_signal']
         
         return results
-
-    def has_buy_signal(self, df: pd.DataFrame, macro_data: Optional[Dict] = None) -> bool:
+    
+    def has_buy_signal(self, df: pd.DataFrame, macro_data: Optional[Dict] = None, 
+                       use_soft_signal: bool = True) -> bool:
+        """
+        Quick check if latest bar has a buy signal.
+        """
         try:
             results = self.calculate(df, macro_data)
-            soft_signal = results.get('soft_buy_signal')
-            if soft_signal is not None and len(soft_signal) > 0:
-                return bool(soft_signal.iloc[-1])
+            
+            signal_key = 'soft_buy_signal' if use_soft_signal else 'buy_signal'
+            signal = results.get(signal_key)
+            
+            if signal is not None and len(signal) > 0:
+                return bool(signal.iloc[-1])
+            
             return False
+            
         except Exception as e:
-            logging.error(f"Error detecting buy signal: {e}")
+            logging.debug(f"Error detecting buy signal: {e}")
             return False
 
+
 # ============================================================================
-# SECTION 8: PORTFOLIO BOOSTER
+# SECTION 10: PORTFOLIO BOOSTER
 # ============================================================================
 
 class UMAPortfolioBooster:
     """
-    Portfolio weight booster based on Unified Market Analysis signals.
-    Backended by Investpy.
+    Portfolio weight booster based on UMA signals.
+    Optimized for batch processing with caching.
     """
-
-    def __init__(self, lookback_days: int = 200, boost_multiplier: float = 1.15,
-                 max_boost_weight: float = 0.15, params: Optional[UMAParameters] = None):
+    
+    def __init__(self,
+                 lookback_days: int = 200,
+                 boost_multiplier: float = 1.15,
+                 max_boost_weight: float = 0.15,
+                 params: Optional[UMAParameters] = None,
+                 skip_macro: bool = False):
+        """
+        Args:
+            lookback_days: Days of historical data to fetch
+            boost_multiplier: Weight multiplier for buy signals (1.15 = 15% boost)
+            max_boost_weight: Maximum weight after boost (0.15 = 15%)
+            params: UMA parameters
+            skip_macro: Skip macro regression for faster processing
+        """
         self.lookback_days = lookback_days
         self.boost_multiplier = boost_multiplier
         self.max_boost_weight = max_boost_weight
         self.params = params or UMAParameters()
+        self.skip_macro = skip_macro
+        
+        self.fetcher = InvestpyDataFetcher()
         self.uma = UnifiedMarketAnalysis(self.params)
         
-        logging.info(f"UMA Booster (Investpy) initialized: boost={boost_multiplier}x")
-
-    @lru_cache(maxsize=128)
-    def _investpy_fetch_cached(self, clean_symbol: str, from_str: str, to_str: str) -> Optional[pd.DataFrame]:
-        """Cached investpy fetch – separate func for cleaner lru_cache"""
-        if not INVESTPY_AVAILABLE:
-            return None
-        try:
-            df = investpy.get_stock_historical_data(
-                stock=clean_symbol,
-                country='india',
-                from_date=from_str,
-                to_date=to_str
-            )
-            if df is None or df.empty:
-                return None
-            df.columns = [c.lower() for c in df.columns]
-            if not isinstance(df.index, pd.DatetimeIndex):
-                df.index = pd.to_datetime(df.index)
-            return df
-        except Exception as e:
-            logging.debug(f"Cache-miss fetch error for {clean_symbol}: {e}")
-            return None
-
+        logging.info(f"UMA Booster initialized: boost={boost_multiplier}x, max_weight={max_boost_weight}, skip_macro={skip_macro}")
+    
     def _fetch_symbol_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """
-        Fetch historical data for a symbol using investpy.
-        Assumes NSE (India) context if suffix is .NS or implicit.
+        Fetch ETF data using investpy with caching.
         """
-        try:
-            clean_symbol = symbol.replace('.NS', '')
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=self.lookback_days)
-            from_str = start_date.strftime('%d/%m/%Y')
-            to_str = end_date.strftime('%d/%m/%Y')
-            
-            # Use the cached fetcher
-            df = self._investpy_fetch_cached(clean_symbol, from_str, to_str)
-            return df
-        except Exception as e:
-            logging.debug(f"Failed to fetch {symbol}: {e}")
+        if not INVESTPY_AVAILABLE:
             return None
-
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.lookback_days)
+        
+        return self.fetcher.fetch_etf_data(symbol, start_date, end_date)
+    
     def get_buy_signals(self, symbols: List[str]) -> Set[str]:
+        """
+        Detect buy signals for a list of symbols.
+        Uses batch processing for efficiency.
+        """
         if not INVESTPY_AVAILABLE:
             logging.warning("investpy not available - no buy signals generated")
             return set()
         
         buy_signals = set()
         
-        # Fetch macro data once
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=self.lookback_days)
-        macro_data = self.uma.mmr.fetch_macro_data(start_date, end_date)
+        # Pre-fetch macro data once (if not skipping)
+        macro_data = None
+        if not self.skip_macro:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=self.lookback_days)
+            macro_data = self.uma._get_macro_data(start_date, end_date)
         
-        # Pre-fetch all stock data in parallel
-        stock_data = {}
-        max_workers = min(5, len(symbols))  # Conservative concurrency
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all fetches
-            future_to_symbol = {
-                executor.submit(self._fetch_symbol_data, symbol): symbol 
-                for symbol in symbols
-            }
-            for future in as_completed(future_to_symbol):
-                symbol = future_to_symbol[future]
-                try:
-                    df = future.result()
-                    if df is not None and len(df) >= 100:
-                        stock_data[symbol] = df
-                        # Staggered sleep: ~0.2s effective per thread (total sleep reduced)
-                        time.sleep(0.2 / max_workers)  # Distribute delay
-                except Exception as e:
-                    logging.debug(f"Parallel fetch error for {symbol}: {e}")
-        
-        logging.info(f"Pre-fetched data for {len(stock_data)}/{len(symbols)} symbols")
-        
-        # Compute UMA in parallel on pre-fetched data
-        uma_futures = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:  # CPU cores for computations
-            for symbol, df in stock_data.items():
-                future = executor.submit(self.uma.has_buy_signal, df, macro_data)
-                uma_futures[future] = symbol
-        
-        for future in as_completed(uma_futures):
-            symbol = uma_futures[future]
+        # Process symbols
+        for symbol in symbols:
             try:
-                if future.result():
+                df = self._fetch_symbol_data(symbol)
+                
+                if df is None or len(df) < self.params.min_data_points:
+                    continue
+                
+                if self.uma.has_buy_signal(df, macro_data, use_soft_signal=True):
                     clean_symbol = symbol.replace('.NS', '')
                     buy_signals.add(clean_symbol)
                     logging.info(f"✅ UMA Buy signal: {symbol}")
+                    
             except Exception as e:
-                logging.debug(f"Parallel UMA error for {symbol}: {e}")
+                logging.debug(f"Error processing {symbol}: {e}")
+                continue
         
         logging.info(f"UMA Booster: {len(buy_signals)} buy signals from {len(symbols)} symbols")
         return buy_signals
-
+    
     def apply_boost(self, portfolio_df: pd.DataFrame, buy_signals: Set[str]) -> pd.DataFrame:
-        """Apply weight boost to symbols with buy signals."""
+        """
+        Apply weight boost to symbols with buy signals.
+        """
         if portfolio_df.empty or not buy_signals:
             return portfolio_df
         
         boosted_df = portfolio_df.copy()
         original_total = boosted_df['weightage_pct'].sum()
         
-        for idx, row in boosted_df.iterrows():
-            symbol = row['symbol']
-            
-            # Check various formats (RELIANCE, RELIANCE.NS)
-            clean_sym = symbol.replace('.NS', '')
-            has_signal = clean_sym in buy_signals
-            
-            if has_signal:
-                current_weight = row['weightage_pct']
-                boosted_weight = current_weight * self.boost_multiplier
-                boosted_weight = min(boosted_weight, self.max_boost_weight * 100)
-                boosted_df.at[idx, 'weightage_pct'] = boosted_weight
-                
-                boost_pct = (boosted_weight / current_weight - 1) * 100
-                logging.info(f"UMA Boosted {symbol}: {current_weight:.2f}% -> {boosted_weight:.2f}% (+{boost_pct:.1f}%)")
+        # Vectorized symbol matching
+        symbols = boosted_df['symbol'].str.replace('.NS', '', regex=False)
+        has_signal = symbols.isin(buy_signals) | boosted_df['symbol'].isin(buy_signals)
         
-        # Renormalize
+        # Apply boost
+        current_weights = boosted_df['weightage_pct'].values.copy()
+        boosted_weights = np.where(
+            has_signal,
+            np.minimum(current_weights * self.boost_multiplier, self.max_boost_weight * 100),
+            current_weights
+        )
+        
+        boosted_df['weightage_pct'] = boosted_weights
+        
+        # Log boosted symbols
+        for idx in np.where(has_signal)[0]:
+            symbol = boosted_df.iloc[idx]['symbol']
+            old_w = current_weights[idx]
+            new_w = boosted_weights[idx]
+            if new_w > old_w:
+                boost_pct = (new_w / old_w - 1) * 100
+                logging.info(f"UMA Boosted {symbol}: {old_w:.2f}% → {new_w:.2f}% (+{boost_pct:.1f}%)")
+        
+        # Renormalize weights
         new_total = boosted_df['weightage_pct'].sum()
         if new_total > 0:
             boosted_df['weightage_pct'] = (boosted_df['weightage_pct'] / new_total) * original_total
         
-        # Recalculate units/value if columns exist
+        # Recalculate units and values if present
         if 'price' in boosted_df.columns and 'value' in boosted_df.columns:
             sip_amount = portfolio_df['value'].sum()
             boosted_df['units'] = np.floor(
@@ -793,87 +1214,172 @@ class UMAPortfolioBooster:
         
         return boosted_df
 
+
 # ============================================================================
-# SECTION 9: CONVENIENCE & TESTING
+# SECTION 11: CONVENIENCE FUNCTIONS
 # ============================================================================
 
-def get_uma_analysis(symbol: str, lookback_days: int = 200) -> Optional[Dict]:
-    if not INVESTPY_AVAILABLE: return None
-    try:
-        clean_symbol = symbol.replace('.NS', '')
-        country = 'india'
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=lookback_days)
-        from_str, to_str = start_date.strftime('%d/%m/%Y'), end_date.strftime('%d/%m/%Y')
-        
-        df = investpy.get_stock_historical_data(stock=clean_symbol, country=country, from_date=from_str, to_date=to_str)
-        if df is None or df.empty: return None
-        
-        df.columns = [c.lower() for c in df.columns]
-        
-        uma = UnifiedMarketAnalysis()
-        results = uma.calculate(df)
-        results['symbol'] = symbol
-        results['analysis_date'] = datetime.now().strftime('%Y-%m-%d')
-        return results
-    except Exception as e:
-        logging.error(f"UMA analysis failed for {symbol}: {e}")
-        return None
-
-def boost_portfolio_with_unified_signals(
+def boost_portfolio_with_uma(
     portfolio_df: pd.DataFrame,
     symbols: List[str],
     boost_multiplier: float = 1.15,
     max_boost_weight: float = 0.15,
-    lookback_days: int = 100
+    lookback_days: int = 200,
+    skip_macro: bool = False
 ) -> pd.DataFrame:
     """
-    Unified wrapper: Detects buy signals across symbols and applies portfolio boosts.
-    Matches the exact signature expected by app.py.
+    Main integration point for Pragyam system.
+    
+    Args:
+        portfolio_df: Portfolio DataFrame
+        symbols: All symbols to check for signals
+        boost_multiplier: Weight multiplier (1.15 = 15% boost)
+        max_boost_weight: Maximum weight cap (0.15 = 15%)
+        lookback_days: Historical data lookback
+        skip_macro: Skip macro regression for faster processing
+        
+    Returns:
+        Portfolio with boosted weights
     """
-    if portfolio_df.empty:
+    try:
+        booster = UMAPortfolioBooster(
+            lookback_days=lookback_days,
+            boost_multiplier=boost_multiplier,
+            max_boost_weight=max_boost_weight,
+            skip_macro=skip_macro
+        )
+        
+        buy_signals = booster.get_buy_signals(symbols)
+        boosted_portfolio = booster.apply_boost(portfolio_df, buy_signals)
+        
+        n_boosted = len([s for s in portfolio_df['symbol'] 
+                        if s.replace('.NS', '') in buy_signals or s in buy_signals])
+        logging.info(f"UMA Booster: Applied to {n_boosted}/{len(portfolio_df)} positions")
+        
+        return boosted_portfolio
+        
+    except Exception as e:
+        logging.error(f"UMA Booster failed: {e} - returning original portfolio")
         return portfolio_df
+
+
+def get_uma_analysis(symbol: str, lookback_days: int = 200, skip_macro: bool = False) -> Optional[Dict]:
+    """
+    Get complete UMA analysis for a single symbol.
+    """
+    if not INVESTPY_AVAILABLE:
+        logging.error("investpy required for UMA analysis")
+        return None
     
-    booster = UMAPortfolioBooster(
-        lookback_days=lookback_days,
-        boost_multiplier=boost_multiplier,
-        max_boost_weight=max_boost_weight
-    )
-    
-    buy_signals = booster.get_buy_signals(symbols)
-    boosted_portfolio = booster.apply_boost(portfolio_df, buy_signals)
-    
-    return boosted_portfolio
+    try:
+        fetcher = InvestpyDataFetcher()
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=lookback_days)
+        
+        df = fetcher.fetch_etf_data(symbol, start_date, end_date)
+        
+        if df is None or df.empty:
+            logging.error(f"No data for {symbol}")
+            return None
+        
+        uma = UnifiedMarketAnalysis()
+        results = uma.calculate(df, skip_macro=skip_macro)
+        
+        results['symbol'] = symbol
+        results['analysis_date'] = datetime.now().strftime('%Y-%m-%d')
+        results['data_points'] = len(df)
+        
+        return results
+        
+    except Exception as e:
+        logging.error(f"UMA analysis failed for {symbol}: {e}")
+        return None
+
+
+def clear_uma_cache():
+    """Clear all cached UMA data."""
+    global _data_cache
+    _data_cache.clear()
+    logging.info("UMA cache cleared")
+
+
+# ============================================================================
+# SECTION 12: TESTING
+# ============================================================================
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
-    print("=== UMA (Investpy Backend) Test ===")
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    print("=" * 80)
+    print("Unified Market Analysis (UMA) - investpy Implementation Test")
+    print("=" * 80)
     
     if not INVESTPY_AVAILABLE:
-        print("investpy not installed.")
+        print("❌ investpy not installed. Install with: pip install investpy")
         exit(1)
-
-    # Test symbols (Names must match Investing.com names, usually standard tickers work for India)
-    # Note: investpy is case/name sensitive. ETF names on Investing.com often differ from tickers.
-    # We use standard stocks here for reliability of the test.
-    test_symbols = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'SBIN.NS']
     
-    booster = UMAPortfolioBooster(lookback_days=300)
+    print("✅ investpy available")
+    print()
     
-    print("Fetching signals (this may take time due to web scraping)...")
-    signals = booster.get_buy_signals(test_symbols)
+    # Test symbols
+    test_symbols = [
+        'SENSEXIETF',
+        'NIFTYIETF', 
+        'BANKIETF',
+        'GOLDIETF',
+    ]
     
-    print("\nBuy Signals Detected:")
-    print(signals if signals else "None")
+    print(f"Testing with {len(test_symbols)} symbols:")
+    for s in test_symbols:
+        print(f"  - {s}")
+    print()
     
-    # Simple Portfolio Mockup
-    pf = pd.DataFrame({
-        'symbol': ['RELIANCE.NS', 'TCS.NS'],
-        'weightage_pct': [50.0, 50.0],
-        'price': [2500, 3500],
-        'value': [50000, 50000]
+    # Initialize booster (skip macro for faster testing)
+    booster = UMAPortfolioBooster(
+        lookback_days=200,
+        boost_multiplier=1.15,
+        max_boost_weight=0.15,
+        skip_macro=True  # Skip macro for speed in testing
+    )
+    
+    # Get buy signals
+    print("Detecting UMA buy signals...")
+    start_time = time.time()
+    buy_signals = booster.get_buy_signals(test_symbols)
+    elapsed = time.time() - start_time
+    
+    print()
+    print(f"Buy signals detected: {len(buy_signals)} (in {elapsed:.2f}s)")
+    for signal in buy_signals:
+        print(f"  🟢 {signal}")
+    
+    # Test portfolio boosting
+    print()
+    print("-" * 40)
+    print("Testing Portfolio Boost")
+    print("-" * 40)
+    
+    test_portfolio = pd.DataFrame({
+        'symbol': ['SENSEXIETF', 'NIFTYIETF', 'BANKIETF', 'GOLDIETF'],
+        'price': [100.0, 150.0, 200.0, 50.0],
+        'weightage_pct': [25.0, 25.0, 25.0, 25.0],
+        'units': [250, 166, 125, 500],
+        'value': [25000, 24900, 25000, 25000]
     })
     
-    boosted = booster.apply_boost(pf, signals)
+    print("\nOriginal Portfolio:")
+    print(test_portfolio[['symbol', 'weightage_pct']].to_string(index=False))
+    
+    boosted = booster.apply_boost(test_portfolio, buy_signals)
+    
     print("\nBoosted Portfolio:")
-    print(boosted[['symbol', 'weightage_pct']])
+    print(boosted[['symbol', 'weightage_pct']].to_string(index=False))
+    
+    print()
+    print("=" * 80)
+    print("UMA Test Complete!")
+    print("=" * 80)
