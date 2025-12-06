@@ -30,9 +30,9 @@ MACRO_SYMBOLS = {
     "Singapore 10Y": "10YSGY.B",
 }
 
-# Global cache to prevent re-fetching macro data for every symbol in the portfolio
+# Global cache to prevent re-fetching macro data
 _MACRO_DATA_CACHE = None
-_MACRO_CACHE_DATE = None
+_MACRO_CACHE_KEY = None
 
 # --- UTILITY FUNCTIONS ---
 
@@ -57,19 +57,18 @@ def calculate_atr(df, length=14):
 # --- DATA FETCHING ---
 
 def fetch_macro_data_cached(start_date, end_date):
-    """Fetches macro data once and caches it for the session/run."""
-    global _MACRO_DATA_CACHE, _MACRO_CACHE_DATE
+    """Fetches macro data once and caches it."""
+    global _MACRO_DATA_CACHE, _MACRO_CACHE_KEY
     
-    # Simple cache validity check (same day)
-    today_str = datetime.date.today().isoformat()
-    if _MACRO_DATA_CACHE is not None and _MACRO_CACHE_DATE == today_str:
+    # Cache key based on date range
+    cache_key = f"{start_date}_{end_date}"
+    
+    if _MACRO_DATA_CACHE is not None and _MACRO_CACHE_KEY == cache_key:
         return _MACRO_DATA_CACHE
 
-    logging.info("Fetching Macro Data from Stooq...")
+    logging.info(f"Fetching Macro Data from Stooq ({start_date} to {end_date})...")
     try:
         macro_tickers = list(MACRO_SYMBOLS.values())
-        # Stooq often fails if we request too many at once or too frequently, 
-        # so we fetch carefully.
         macro_df = web.DataReader(macro_tickers, "stooq", start=start_date, end=end_date)
         
         if isinstance(macro_df.columns, pd.MultiIndex):
@@ -78,58 +77,63 @@ def fetch_macro_data_cached(start_date, end_date):
             elif 'Value' in macro_df.columns.get_level_values(0):
                 macro_df = macro_df['Value']
         
-        # Ensure it's sorted by date ascending
         macro_df = macro_df.sort_index()
         
+        if macro_df.empty:
+            logging.warning("⚠️ Stooq returned EMPTY macro data. MMR will be 0.")
+        else:
+            logging.info(f"✅ Macro Data Fetched: {macro_df.shape[0]} rows, {macro_df.shape[1]} cols")
+
         _MACRO_DATA_CACHE = macro_df
-        _MACRO_CACHE_DATE = today_str
+        _MACRO_CACHE_KEY = cache_key
         return macro_df
     except Exception as e:
-        logging.error(f"Error fetching macro data: {e}")
+        logging.error(f"❌ Error fetching macro data: {e}")
         return pd.DataFrame()
 
-def fetch_data_for_booster(target_ticker, days_back=200):
+def fetch_data_for_booster(target_ticker, analysis_date, days_back=200):
     """Fetches Target + Cached Macro Data and joins them."""
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=days_back + 150) # Buffer for rolling windows
+    # Convert analysis_date to date object if it's datetime
+    if isinstance(analysis_date, datetime.datetime):
+        end_date_date = analysis_date.date()
+    else:
+        end_date_date = analysis_date
+
+    start_date = end_date_date - datetime.timedelta(days=days_back + 150)
     
     try:
         # 1. Fetch Target (yfinance)
-        # We need to handle potential .NS suffix issues
-        if not target_ticker.endswith('.NS') and not target_ticker.endswith('.BO'):
-             # Try appending .NS if not present, assuming NSE for this system context
-             ticker_to_fetch = f"{target_ticker}.NS"
-        else:
-             ticker_to_fetch = target_ticker
-
-        target_df = yf.download(ticker_to_fetch, start=start_date, end=end_date, progress=False, auto_adjust=False)
+        ticker_to_fetch = f"{target_ticker}.NS" if not (target_ticker.endswith('.NS') or target_ticker.endswith('.BO')) else target_ticker
+        
+        # Note: yf.download end date is exclusive, so add 1 day to include analysis_date
+        yf_end = end_date_date + datetime.timedelta(days=1)
+        
+        target_df = yf.download(ticker_to_fetch, start=start_date, end=yf_end, progress=False, auto_adjust=False)
         
         if target_df.empty:
-            # Fallback: try without .NS if it failed
-            target_df = yf.download(target_ticker, start=start_date, end=end_date, progress=False, auto_adjust=False)
+            # Fallback
+            target_df = yf.download(target_ticker, start=start_date, end=yf_end, progress=False, auto_adjust=False)
         
         if target_df.empty:
+            logging.debug(f"No data found for {target_ticker}")
             return None
 
-        # Flatten columns if multi-index
         if isinstance(target_df.columns, pd.MultiIndex):
             target_df.columns = target_df.columns.get_level_values(0)
             
-        # Standardize columns
         target_df = target_df[['Open', 'High', 'Low', 'Close', 'Volume']].sort_index()
         
-        # 2. Get Macro Data (Cached)
-        macro_df = fetch_macro_data_cached(start_date, end_date)
+        # 2. Get Macro Data
+        macro_df = fetch_macro_data_cached(start_date, end_date_date)
         
-        if macro_df.empty:
-             return target_df # Return just target if macro fails
-
         # 3. Join
-        # Ensure timezone naive
         if target_df.index.tz is not None:
             target_df.index = target_df.index.tz_localize(None)
-        if macro_df.index.tz is not None:
+        if not macro_df.empty and macro_df.index.tz is not None:
              macro_df.index = macro_df.index.tz_localize(None)
+
+        if macro_df.empty:
+             return target_df # Proceed without macro (MMR will be 0)
 
         combined = target_df.join(macro_df, how='left').ffill()
         return combined
@@ -138,7 +142,7 @@ def fetch_data_for_booster(target_ticker, days_back=200):
         logging.error(f"Booster Data Fetch Error for {target_ticker}: {e}")
         return None
 
-# --- INDICATOR CALCULATIONS (From indicator.py) ---
+# --- INDICATOR CALCULATIONS ---
 
 def calculate_msf(df, length=20, roc_len=14, clip=3.0):
     close = df['Close']
@@ -216,7 +220,6 @@ def calculate_mmr(df, length=20, num_vars=5):
     target = df['Close']
     
     if not macro_cols:
-        # If no macro data available, return neutral
         return pd.Series(0, index=df.index), 0
     
     correlations = df[macro_cols].corrwith(target).abs().sort_values(ascending=False)
@@ -227,7 +230,6 @@ def calculate_mmr(df, length=20, num_vars=5):
     y_mean = target.rolling(length).mean()
     y_std = target.rolling(length).std()
     
-    # Vectorized loop over drivers
     for ticker in top_drivers:
         x = df[ticker]
         x_mean = x.rolling(length).mean()
@@ -312,28 +314,31 @@ def boost_portfolio_with_unified_signals(
     symbols: List[str],
     boost_multiplier: float = 1.15,
     max_boost_weight: float = 0.15,
-    lookback_days: int = 200
+    lookback_days: int = 200,
+    analysis_date: Optional[datetime.datetime] = None
 ) -> pd.DataFrame:
     """
     Analyzes each symbol in the portfolio using the Unified Market Analysis indicator.
-    If a symbol has a 'Lime Circle' (Confirmed Buy) on the analysis date, its weight is boosted.
-    
-    Note: This fetch logic is separate from the backtest engine because it requires 
-    historical context (rolling windows) and external macro data which isn't present 
-    in the daily snapshots passed to the main strategies.
     """
     
     if portfolio_df.empty:
         return portfolio_df
 
-    logging.info("--- Starting Unified Booster Analysis ---")
+    # Default to today if no date provided
+    if analysis_date is None:
+        analysis_date = datetime.datetime.now()
+    
+    # Ensure analysis_date is a datetime object
+    if isinstance(analysis_date, datetime.date) and not isinstance(analysis_date, datetime.datetime):
+        analysis_date = datetime.datetime.combine(analysis_date, datetime.datetime.min.time())
+
+    logging.info(f"--- Unified Booster: Analysis for {analysis_date.date()} ---")
     
     boosted_df = portfolio_df.copy()
     boost_indices = []
 
-    # Prepare cache
-    # We fetch macro data once here to cover the required range for all symbols
-    end_date = datetime.date.today()
+    # Prefetch macro
+    end_date = analysis_date.date()
     start_date = end_date - datetime.timedelta(days=lookback_days + 150)
     fetch_macro_data_cached(start_date, end_date)
 
@@ -341,7 +346,7 @@ def boost_portfolio_with_unified_signals(
         symbol = row['symbol']
         
         # 1. Fetch Data
-        df = fetch_data_for_booster(symbol, days_back=lookback_days)
+        df = fetch_data_for_booster(symbol, analysis_date, days_back=lookback_days)
         
         if df is None or df.empty or len(df) < 50:
             continue
@@ -350,14 +355,39 @@ def boost_portfolio_with_unified_signals(
         try:
             df_analyzed = calculate_unified_signal(df)
             
-            # 3. Check Signal on Latest Date
-            # We look at the very last available row (Analysis Date)
-            latest_signal = df_analyzed['Buy_Signal'].iloc[-1]
-            latest_unified = df_analyzed['Unified_Osc'].iloc[-1]
+            # Check the specific analysis date
+            # We locate the index nearest to analysis_date
+            try:
+                # Use get_indexer to find the nearest date on or before analysis_date
+                target_idx = df_analyzed.index.get_indexer([analysis_date], method='pad')[0]
+                latest_row = df_analyzed.iloc[target_idx]
+                latest_date_in_df = df_analyzed.index[target_idx]
+            except:
+                # Fallback to last row if exact match fails
+                latest_row = df_analyzed.iloc[-1]
+                latest_date_in_df = df_analyzed.index[-1]
+
+            # Date sanity check: Is the data too old?
+            days_diff = (analysis_date - latest_date_in_df).days
+            if days_diff > 5:
+                logging.warning(f"   [{symbol}] Data outdated by {days_diff} days (Last: {latest_date_in_df.date()}). Skipping.")
+                continue
+
+            latest_signal = latest_row['Buy_Signal']
+            latest_unified = latest_row['Unified_Osc']
+            latest_agreement = latest_row['MSF'] * latest_row['MMR']
+            
+            # --- DEBUG LOGGING ---
+            # If Unified Osc is in oversold zone, print why it didn't trigger
+            if latest_unified < -2.0:
+                status = "🟢 BUY" if latest_signal else "⚪ NO TRIGGER"
+                logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agreement: {latest_agreement:.2f} | {status}")
+                if not latest_signal and latest_unified < -5.0:
+                    logging.info(f"      -> Failed due to weak agreement (Req > 0.3, Got {latest_agreement:.2f})")
             
             if latest_signal:
                 boost_indices.append(idx)
-                logging.info(f"🟢 BOOST TRIGGER: {symbol} | Unified Osc: {latest_unified:.2f} | Condition: Lime Circle")
+                logging.info(f"🚀 BOOST CONFIRMED: {symbol} on {latest_date_in_df.date()}")
             
         except Exception as e:
             logging.error(f"Error calculating booster for {symbol}: {e}")
@@ -378,10 +408,10 @@ def boost_portfolio_with_unified_signals(
                 
             boosted_df.at[idx, 'weightage_pct'] = new_weight
             
-        # 5. Re-normalize to original total weight (usually 100%)
-        # This ensures we don't end up with >100% allocation
+        # 5. Re-normalize to original total weight
         new_total_weight = boosted_df['weightage_pct'].sum()
-        boosted_df['weightage_pct'] = (boosted_df['weightage_pct'] / new_total_weight) * original_total_weight
+        if new_total_weight > 0:
+            boosted_df['weightage_pct'] = (boosted_df['weightage_pct'] / new_total_weight) * original_total_weight
         
         # Recalculate units and value
         if 'price' in boosted_df.columns and 'value' in boosted_df.columns:
