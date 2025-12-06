@@ -304,7 +304,7 @@ def calculate_unified_signal(df):
     
     # 3. Lime Circle Logic (Confirmed Buy)
     # Strong Agreement (> 0.3) + Oversold (< -5) + Micro Structure > 0
-    strong_agreement = agreement > 0.25
+    strong_agreement = agreement > 0.3
     # --- MODIFIED: Added Micro Condition ---
     df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5) & (df['Micro'] > 0)
     
