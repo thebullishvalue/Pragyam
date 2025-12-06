@@ -509,8 +509,6 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
 
         try:
             logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
-            
-            # --- MODIFIED: apply_booster=False for OOS loop as requested ---
             curated_port, strategy_weights, subset_weights = curate_final_portfolio(
                 _strategies, 
                 in_sample_perf, 
@@ -519,7 +517,7 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
                 30, 
                 1.0, 
                 10.0, 
-                apply_booster=False
+                apply_booster=False  # Do not apply booster during OOS backtest
             )
             
             strategy_weights_history.append({'date': test_date, **strategy_weights})
@@ -564,7 +562,6 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
         'subset_weights_history': subset_weights_history
     }
 
-# --- MODIFIED: Added apply_booster flag ---
 def curate_final_portfolio(
     strategies: Dict[str, BaseStrategy], 
     performance: Dict, 
@@ -573,7 +570,8 @@ def curate_final_portfolio(
     num_positions: int, 
     min_pos_pct: float, 
     max_pos_pct: float,
-    apply_booster: bool = False
+    apply_booster: bool = False,
+    analysis_date: datetime = None
 ) -> Tuple[pd.DataFrame, Dict, Dict]:
     
     strategy_weights = calculate_strategy_weights(performance)
@@ -633,7 +631,7 @@ def curate_final_portfolio(
     final_port_df = final_port.sort_values('weightage_pct', ascending=False).reset_index(drop=True)
 
     # --- UNIFIED MARKET ANALYSIS BOOSTER LAYER ---
-    # Only runs if apply_booster is True and enabled in config
+    # Apply weight boost for symbols with buy signals (non-invasive layer)
     booster_config = st.session_state.get('booster_config', {'enabled': False})
 
     if UNIFIED_BOOSTER_AVAILABLE and apply_booster and booster_config.get('enabled', False) and not final_port_df.empty:
@@ -649,7 +647,8 @@ def curate_final_portfolio(
                 symbols=all_symbols,
                 boost_multiplier=booster_config.get('boost_multiplier', 1.15),
                 max_boost_weight=booster_config.get('max_boost_weight', 0.15),
-                lookback_days=booster_config.get('lookback_days', 100)
+                lookback_days=booster_config.get('lookback_days', 100),
+                analysis_date=analysis_date # Pass the specific analysis date
             )
             
             logging.info("Unified booster applied successfully")
@@ -1343,7 +1342,6 @@ def main():
             st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
             
             if st.session_state.performance:
-                # --- MODIFIED: apply_booster=True for Final Analysis ---
                 st.session_state.portfolio, _, _ = curate_final_portfolio(
                     strategies_to_run,
                     st.session_state.performance,
@@ -1352,7 +1350,8 @@ def main():
                     num_positions,
                     st.session_state.min_pos_pct,
                     st.session_state.max_pos_pct,
-                    apply_booster=True 
+                    apply_booster=True, # Apply booster only for final analysis
+                    analysis_date=selected_date_dt 
                 )
                 st.success("✅ Analysis Complete!")
         
