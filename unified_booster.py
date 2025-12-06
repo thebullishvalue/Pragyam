@@ -887,17 +887,19 @@ class BuySignalDetector:
         strong_agreement = signal_agreement > self.params.agreement_threshold
         results['strong_agreement'] = strong_agreement
         
-        # Buy signal (lime circle condition)
-        buy_signal = is_oversold & strong_agreement & (unified_osc < self.params.unified_osc_oversold)
+        # Buy signal (Lime Circle condition from Pine Script: plotshape(strong_agreement and unified_osc < -5))
+        # This matches the user's explicit request for the "Confirmed Bullish" visualization logic
+        buy_signal = strong_agreement & (unified_osc < self.params.unified_osc_oversold)
         results['buy_signal'] = buy_signal
         
-        # Sell signal
-        sell_signal = is_overbought & strong_agreement & (unified_osc > -self.params.unified_osc_oversold)
-        results['sell_signal'] = sell_signal
+        # Strong Buy Signal (Pine Alert Condition: is_oversold and strong_agreement)
+        # This is the stricter check corresponding to the "Strong Buy Signal" alert in Pine
+        strong_buy_signal = is_oversold & strong_agreement & (unified_osc < self.params.unified_osc_oversold)
+        results['strong_buy_signal'] = strong_buy_signal
         
-        # Soft buy signal (simpler criteria for boosting)
-        soft_buy_signal = strong_agreement & (unified_osc < self.params.unified_osc_oversold)
-        results['soft_buy_signal'] = soft_buy_signal
+        # Sell signal (Corresponding to Confirmed Bearish circle)
+        sell_signal = strong_agreement & (unified_osc > -self.params.unified_osc_oversold)
+        results['sell_signal'] = sell_signal
         
         # Divergence detection
         osc_rising = unified_osc > unified_osc.shift(1)
@@ -1010,20 +1012,23 @@ class UnifiedMarketAnalysis:
         # === Summary ===
         results['unified_osc'] = integrated['unified_osc']
         results['buy_signal'] = signals['buy_signal']
-        results['soft_buy_signal'] = signals['soft_buy_signal']
+        results['strong_buy_signal'] = signals['strong_buy_signal']
         results['sell_signal'] = signals['sell_signal']
         
         return results
     
     def has_buy_signal(self, df: pd.DataFrame, macro_data: Optional[Dict] = None, 
-                       use_soft_signal: bool = True) -> bool:
+                       use_strong_signal: bool = False) -> bool:
         """
         Quick check if latest bar has a buy signal.
+        Args:
+            use_strong_signal: If True, use strict 'Strong Buy Signal' (alert condition).
+                               If False (default), use 'Confirmed Bullish' (lime circle) condition.
         """
         try:
             results = self.calculate(df, macro_data)
             
-            signal_key = 'soft_buy_signal' if use_soft_signal else 'buy_signal'
+            signal_key = 'strong_buy_signal' if use_strong_signal else 'buy_signal'
             signal = results.get(signal_key)
             
             if signal is not None and len(signal) > 0:
@@ -1109,7 +1114,8 @@ class UMAPortfolioBooster:
                 if df is None or len(df) < self.params.min_data_points:
                     continue
                 
-                if self.uma.has_buy_signal(df, macro_data, use_soft_signal=True):
+                # Check for standard buy signal (lime circle)
+                if self.uma.has_buy_signal(df, macro_data, use_strong_signal=False):
                     # Clean symbol for result set (remove .NS if present)
                     clean_symbol = symbol.replace('.NS', '')
                     buy_signals.add(clean_symbol)
