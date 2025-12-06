@@ -6,9 +6,9 @@
 # from Pine Script, providing a non-invasive weight boosting layer based on
 # buy signals (lime circle conditions).
 #
-# DATA SOURCE: 
+# DATA SOURCES: 
 # 1. ETFs: yfinance (Yahoo Finance)
-# 2. Macros: Stooq.com (via pandas_datareader)
+# 2. Macro Data: stooq (via pandas_datareader)
 # 
 # Architecture:
 # 1. MSF (Momentum Structure Flow) - Internal price dynamics
@@ -57,13 +57,13 @@ import time
 
 warnings.filterwarnings('ignore')
 
-# --- Import Data Libraries ---
+# --- Import Data Providers ---
 try:
     import yfinance as yf
     import pandas_datareader.data as web
-    DATA_LIBS_AVAILABLE = True
+    DATA_PROVIDERS_AVAILABLE = True
 except ImportError:
-    DATA_LIBS_AVAILABLE = False
+    DATA_PROVIDERS_AVAILABLE = False
     logging.warning("yfinance or pandas_datareader not available - UMA Booster will be disabled")
 
 
@@ -271,46 +271,43 @@ class StatisticalUtils:
 
 
 # ============================================================================
-# SECTION 4: MARKET DATA FETCHER (YFinance + Stooq)
+# SECTION 4: MARKET DATA FETCHER (yfinance + stooq)
 # ============================================================================
 
 class MarketDataFetcher:
     """
-    Data fetching layer using yfinance for ETFs and Stooq (via pandas_datareader) for Macros.
+    Data fetching layer using yfinance for ETFs and stooq for macro data.
     
-    Performance optimizations:
-    - LRU caching for repeated requests
-    - Batch fetching with parallel execution
-    - Graceful degradation on errors
+    Sources:
+    - ETFs: yfinance (Yahoo Finance)
+    - Macro: stooq (via pandas_datareader)
     """
     
-    # Macro data mappings for Stooq
-    # Format: 'KEY': {'ticker': 'STOOQ_SYMBOL', 'name': 'Display Name'}
-    # Note: Stooq yield tickers usually follow the format 10YUSY.B (10 Year US Yield Bond)
+    # Macro data mappings for Stooq tickers
+    # Stooq tickers typically follow specific formats (e.g., 10USY.B for 10Y Bond)
     MACRO_MAPPINGS = {
         # Bonds
-        'US10YT=X': {'ticker': '10YUSY.B', 'name': 'United States 10-Year'},
-        'US2YT=X':  {'ticker': '2YUSY.B', 'name': 'United States 2-Year'},
-        'US30YT=X': {'ticker': '30YUSY.B', 'name': 'United States 30-Year'},
-        'JP10Y':    {'ticker': '10YJPY.B', 'name': 'Japan 10Y'},
-        'CN10Y':    {'ticker': '10YCNY.B', 'name': 'China 10Y'},
-        'EU10Y':    {'ticker': '10YDEY.B', 'name': 'Germany 10Y (EU Proxy)'},
-        'GB10Y':    {'ticker': '10YUKY.B', 'name': 'U.K. 10Y'},
-        'IN10Y':    {'ticker': '10YINY.B', 'name': 'India 10Y'},
+        'US10Y': {'ticker': '10USY.B', 'name': 'U.S. 10Y Yield'},
+        'US02Y': {'ticker': '2USY.B', 'name': 'U.S. 2Y Yield'},
+        'US30Y': {'ticker': '30USY.B', 'name': 'U.S. 30Y Yield'},
+        'JP10Y': {'ticker': '10JPY.B', 'name': 'Japan 10Y'},
+        'EU10Y': {'ticker': '10DEM.B', 'name': 'Germany 10Y (EU Proxy)'}, # German Bund as EU proxy
+        'GB10Y': {'ticker': '10UKY.B', 'name': 'U.K. 10Y'},
+        'IN10Y': {'ticker': '10INY.B', 'name': 'India 10Y'},
         
-        # Currencies (Stooq tickers usually standard pairs)
-        'USDINR':   {'ticker': 'USDINR', 'name': 'USD/INR'},
-        'EURINR':   {'ticker': 'EURINR', 'name': 'EUR/INR'},
-        'GBPINR':   {'ticker': 'GBPINR', 'name': 'GBP/INR'},
-        'JPYINR':   {'ticker': 'JPYINR', 'name': 'JPY/INR'},
+        # Currencies (Stooq tickers usually just the pair)
+        'USDINR': {'ticker': 'USDINR', 'name': 'USD/INR'},
+        'EURINR': {'ticker': 'EURINR', 'name': 'EUR/INR'},
+        'GBPINR': {'ticker': 'GBPINR', 'name': 'GBP/INR'},
+        'JPYINR': {'ticker': 'JPYINR', 'name': 'JPY/INR'},
         
         # Commodities
-        'GOLD':     {'ticker': 'XAUUSD', 'name': 'Gold Spot'},
-        'SILVER':   {'ticker': 'XAGUSD', 'name': 'Silver Spot'},
-        'OIL':      {'ticker': 'CL.F',   'name': 'WTI Crude Oil Futures'},
+        'GOLD': {'ticker': 'XAUUSD', 'name': 'Gold Spot'},
+        'SILVER': {'ticker': 'XAGUSD', 'name': 'Silver Spot'},
+        'OIL': {'ticker': 'CL.F', 'name': 'Crude Oil WTI Futures'},
         
         # Indices
-        'DXY':      {'ticker': 'USD_I',  'name': 'US Dollar Index (Stooq)'},
+        'DXY': {'ticker': '^IC', 'name': 'US Dollar Index'}, # ^IC is ICE US Dollar Index on Stooq
     }
     
     DISPLAY_NAMES = {k: v['name'] for k, v in MACRO_MAPPINGS.items()}
@@ -321,19 +318,19 @@ class MarketDataFetcher:
     def fetch_etf_data(self, symbol: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
         """
         Fetch ETF data from yfinance with caching.
-        Appends .NS for NSE symbols if not present.
+        Automatically handles .NS suffix for Indian ETFs.
         """
-        if not DATA_LIBS_AVAILABLE:
+        if not DATA_PROVIDERS_AVAILABLE:
             return None
         
-        # Clean and format symbol for Yahoo Finance
-        clean_symbol = symbol.strip().upper().replace(' ', '')
-        if not clean_symbol.endswith('.NS') and not clean_symbol.endswith('.BO'):
-            # Default to NSE
+        # Normalize symbol for yfinance (needs .NS for NSE)
+        # Check if it already has an exchange suffix, if not assume NSE (.NS)
+        clean_symbol = symbol.strip().upper()
+        if '.' not in clean_symbol:
             yf_symbol = f"{clean_symbol}.NS"
         else:
             yf_symbol = clean_symbol
-            
+
         # Check cache first
         cache_key = f"etf_{yf_symbol}_{start_date.date()}_{end_date.date()}"
         cached = self.cache.get(cache_key)
@@ -342,40 +339,46 @@ class MarketDataFetcher:
             return cached
         
         try:
-            # Fetch data using yfinance
-            # auto_adjust=True gives us adjusted close as 'Close'
-            df = yf.download(yf_symbol, start=start_date, end=end_date, progress=False, auto_adjust=True)
+            # Download data from yfinance
+            df = yf.download(
+                yf_symbol, 
+                start=start_date, 
+                end=end_date, 
+                progress=False,
+                auto_adjust=False, # We want standard OHLC
+                threads=False
+            )
             
             if df is None or df.empty:
-                # Try without suffix just in case it's a global ticker
-                if yf_symbol != clean_symbol:
-                    logging.debug(f"Retrying {clean_symbol} without .NS suffix")
-                    df = yf.download(clean_symbol, start=start_date, end=end_date, progress=False, auto_adjust=True)
-                    if df is None or df.empty:
-                        return None
-                else:
-                    return None
+                # Try without suffix if it failed (fallback)
+                if '.NS' in yf_symbol:
+                    fallback_symbol = yf_symbol.replace('.NS', '')
+                    df = yf.download(
+                        fallback_symbol, 
+                        start=start_date, 
+                        end=end_date, 
+                        progress=False,
+                        auto_adjust=False,
+                        threads=False
+                    )
             
-            # Standardize column names (lowercase)
-            # yfinance might return MultiIndex columns if multiple tickers (not the case here)
-            # but we should be safe.
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1) # Drop Ticker level if present
+            if df is None or df.empty:
+                return None
             
+            # Standardize column names
+            # yfinance returns 'Open', 'High', 'Low', 'Close', 'Volume'
             df.columns = [c.lower() for c in df.columns]
             
             # Ensure required columns exist
             required = ['open', 'high', 'low', 'close', 'volume']
             if not all(col in df.columns for col in required):
-                # Fallback: if 'adj close' is present but 'close' isn't (due to auto_adjust=False), rename it
-                if 'adj close' in df.columns and 'close' not in df.columns:
-                    df.rename(columns={'adj close': 'close'}, inplace=True)
-                
-                # If still missing
-                if not all(col in df.columns for col in required):
-                    logging.warning(f"Missing columns for {yf_symbol}. Found: {df.columns}")
-                    return None
+                # Handle MultiIndex columns if yfinance returns them
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0).str.lower()
             
+            if not all(col in df.columns for col in required):
+                return None
+
             # Cache the result
             self.cache.set(cache_key, df)
             
@@ -388,9 +391,9 @@ class MarketDataFetcher:
     
     def fetch_macro_data(self, var_name: str, start_date: datetime, end_date: datetime) -> Optional[pd.Series]:
         """
-        Fetch macro variable data from Stooq via pandas_datareader.
+        Fetch macro variable data from stooq via pandas_datareader.
         """
-        if not DATA_LIBS_AVAILABLE:
+        if not DATA_PROVIDERS_AVAILABLE:
             return None
         
         # Check cache
@@ -403,31 +406,29 @@ class MarketDataFetcher:
         if not mapping:
             return None
         
-        stooq_ticker = mapping['ticker']
-        
         try:
-            # Stooq fetch using pandas_datareader
-            df = web.DataReader(stooq_ticker, 'stooq', start=start_date, end=end_date)
+            ticker = mapping['ticker']
+            
+            # Fetch from Stooq
+            df = web.DataReader(ticker, 'stooq', start=start_date, end=end_date)
             
             if df is None or df.empty:
                 return None
             
-            # Stooq returns data with Date index, newest first usually.
-            # We need to sort index ascending
+            # Stooq returns data descending (newest first). Sort it!
             df = df.sort_index()
             
             # Get close price series
-            # Stooq columns are usually Capitalized (Open, High, Low, Close)
-            close_col = 'Close' if 'Close' in df.columns else 'close'
-            if close_col not in df.columns:
-                # Some stooq data might just have a value column?
-                # Usually it's OHLC
-                return None
-                
-            series = df[close_col]
+            # Stooq columns are usually 'Open', 'High', 'Low', 'Close', 'Volume'
+            # Convert to lower case to be safe
+            df.columns = [c.lower() for c in df.columns]
             
-            # Fill NaNs (forward fill then backward fill)
-            series = series.fillna(method='ffill').fillna(method='bfill')
+            if 'close' in df.columns:
+                series = df['close']
+            elif 'value' in df.columns: # Sometimes just 'value'
+                series = df['value']
+            else:
+                series = df.iloc[:, 0] # Fallback to first column
             
             # Cache result
             self.cache.set(cache_key, series)
@@ -435,7 +436,7 @@ class MarketDataFetcher:
             return series
             
         except Exception as e:
-            logging.debug(f"Stooq fetch failed for {var_name} ({stooq_ticker}): {e}")
+            logging.debug(f"Stooq fetch failed for {var_name}: {e}")
             return None
     
     def fetch_macro_data_batch(self, var_names: List[str], start_date: datetime, 
@@ -615,7 +616,7 @@ class MomentumStructureFlow:
 class MacroMultipleRegression:
     """
     MMR (Macro Multiple Regression) - Analyzes external macro drivers.
-    Uses MarketDataFetcher (Stooq) for data fetching.
+    Uses stooq for data fetching with parallel batch operations.
     """
     
     def __init__(self, params: UMAParameters, fetcher: Optional[MarketDataFetcher] = None):
@@ -654,7 +655,7 @@ class MacroMultipleRegression:
         # Align macro data to target index (vectorized)
         aligned_macro = {}
         for name, series in macro_data.items():
-            # Reindex aligned with target, filling missing values
+            # Align: Reindex to target's index (dates), forward fill missing values
             aligned = series.reindex(target.index).ffill()
             valid_count = aligned.notna().sum()
             if valid_count > self.params.correlation_lookback * 0.5:
@@ -1072,9 +1073,9 @@ class UMAPortfolioBooster:
     
     def _fetch_symbol_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """
-        Fetch ETF data using MarketDataFetcher (yfinance).
+        Fetch ETF data using yfinance with caching.
         """
-        if not DATA_LIBS_AVAILABLE:
+        if not DATA_PROVIDERS_AVAILABLE:
             return None
         
         end_date = datetime.now()
@@ -1087,8 +1088,8 @@ class UMAPortfolioBooster:
         Detect buy signals for a list of symbols.
         Uses batch processing for efficiency.
         """
-        if not DATA_LIBS_AVAILABLE:
-            logging.warning("yfinance/pandas_datareader not available - no buy signals generated")
+        if not DATA_PROVIDERS_AVAILABLE:
+            logging.warning("yfinance/stooq not available - no buy signals generated")
             return set()
         
         buy_signals = set()
@@ -1098,12 +1099,7 @@ class UMAPortfolioBooster:
         if not self.skip_macro:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=self.lookback_days)
-            # Use threading to ensure macro fetch doesn't block if slow
-            try:
-                macro_data = self.uma._get_macro_data(start_date, end_date)
-            except Exception as e:
-                logging.error(f"Failed to fetch macro data: {e}. Proceeding without macro component.")
-                macro_data = {}
+            macro_data = self.uma._get_macro_data(start_date, end_date)
         
         # Process symbols
         for symbol in symbols:
@@ -1111,11 +1107,11 @@ class UMAPortfolioBooster:
                 df = self._fetch_symbol_data(symbol)
                 
                 if df is None or len(df) < self.params.min_data_points:
-                    logging.debug(f"Insufficient data for {symbol}")
                     continue
                 
                 if self.uma.has_buy_signal(df, macro_data, use_soft_signal=True):
-                    clean_symbol = symbol.replace('.NS', '').replace('.BO', '')
+                    # Clean symbol for result set (remove .NS if present)
+                    clean_symbol = symbol.replace('.NS', '')
                     buy_signals.add(clean_symbol)
                     logging.info(f"✅ UMA Buy signal: {symbol}")
                     
@@ -1136,8 +1132,7 @@ class UMAPortfolioBooster:
         boosted_df = portfolio_df.copy()
         original_total = boosted_df['weightage_pct'].sum()
         
-        # Vectorized symbol matching
-        # Handle variations like "ICII", "ICII.NS"
+        # Vectorized symbol matching (handle both "INFY" and "INFY.NS" styles)
         symbols = boosted_df['symbol'].str.replace('.NS', '', regex=False)
         has_signal = symbols.isin(buy_signals) | boosted_df['symbol'].isin(buy_signals)
         
@@ -1228,8 +1223,8 @@ def get_uma_analysis(symbol: str, lookback_days: int = 200, skip_macro: bool = F
     """
     Get complete UMA analysis for a single symbol.
     """
-    if not DATA_LIBS_AVAILABLE:
-        logging.error("yfinance required for UMA analysis")
+    if not DATA_PROVIDERS_AVAILABLE:
+        logging.error("yfinance/stooq required for UMA analysis")
         return None
     
     try:
@@ -1276,37 +1271,39 @@ if __name__ == "__main__":
     )
     
     print("=" * 80)
-    print("Unified Market Analysis (UMA) - YFinance + Stooq Implementation Test")
+    print("Unified Market Analysis (UMA) - yfinance/stooq Implementation Test")
     print("=" * 80)
     
-    if not DATA_LIBS_AVAILABLE:
-        print("❌ Libraries not installed. Install with: pip install yfinance pandas_datareader")
+    if not DATA_PROVIDERS_AVAILABLE:
+        print("❌ Libraries not installed. Install with: pip install yfinance pandas-datareader")
         exit(1)
     
-    print("✅ Libraries available")
+    print("✅ yfinance and pandas_datareader available")
     print()
     
-    # Test symbols
+    # Test symbols (yfinance format)
     test_symbols = [
-        'ICII',        # Should resolve to ICII.NS
-        'GOLDIETF',    # Should resolve to GOLDIETF.NS
-        'NIFTYBEES.NS' # Already has suffix
+        'SENSEXIETF.NS',
+        'NIFTYBEES.NS', 
+        'BANKBEES.NS',
+        'GOLDBEES.NS',
     ]
     
-    print(f"Testing with symbols: {test_symbols}")
+    print(f"Testing with {len(test_symbols)} symbols:")
+    for s in test_symbols:
+        print(f"  - {s}")
     print()
     
-    # Initialize booster
-    # We set skip_macro=False to test Stooq connectivity
+    # Initialize booster (skip macro for faster testing if desired, or set to False to test full stack)
     booster = UMAPortfolioBooster(
-        lookback_days=300,
+        lookback_days=200,
         boost_multiplier=1.15,
         max_boost_weight=0.15,
-        skip_macro=False 
+        skip_macro=True  # Set to False to test stooq connection
     )
     
     # Get buy signals
-    print("Detecting UMA buy signals (fetching Macros from Stooq + ETFs from YF)...")
+    print("Detecting UMA buy signals...")
     start_time = time.time()
     buy_signals = booster.get_buy_signals(test_symbols)
     elapsed = time.time() - start_time
@@ -1323,7 +1320,7 @@ if __name__ == "__main__":
     print("-" * 40)
     
     test_portfolio = pd.DataFrame({
-        'symbol': ['ICII', 'ICNI', 'BANKIETF', 'GOLDIETF'],
+        'symbol': ['SENSEXIETF', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES'],
         'price': [100.0, 150.0, 200.0, 50.0],
         'weightage_pct': [25.0, 25.0, 25.0, 25.0],
         'units': [250, 166, 125, 500],
@@ -1364,5 +1361,5 @@ def boost_portfolio_with_unified_signals(
         boost_multiplier=boost_multiplier,
         max_boost_weight=max_boost_weight,
         lookback_days=lookback_days,
-        skip_macro=False
+        skip_macro=False  # USE FULL MMR BY DEFAULT
     )
