@@ -213,7 +213,8 @@ def calculate_msf(df, length=20, roc_len=14, clip=3.0):
     msf_raw = (osc_momentum + osc_structure + osc_flow) / np.sqrt(3.0)
     msf_signal = sigmoid(msf_raw * np.sqrt(3.0), 1.0)
     
-    return msf_signal
+    # --- MODIFIED: Return micro_norm as well ---
+    return msf_signal, micro_norm
 
 def calculate_mmr(df, length=20, num_vars=5):
     macro_cols = [c for c in df.columns if c in MACRO_SYMBOLS.values()]
@@ -272,7 +273,8 @@ def calculate_unified_signal(df):
     base_weight = 0.5
     
     # 1. Component Calculation
-    df['MSF'] = calculate_msf(df, length, roc_len)
+    # --- MODIFIED: Capture Micro Norm ---
+    df['MSF'], df['Micro'] = calculate_msf(df, length, roc_len)
     df['MMR'], df['MMR_Quality'] = calculate_mmr(df, length)
     
     # 2. Adaptive Weighting
@@ -301,9 +303,10 @@ def calculate_unified_signal(df):
     df['Unified_Osc'] = df['Unified'] * 10
     
     # 3. Lime Circle Logic (Confirmed Buy)
-    # Strong Agreement (> 0.3) + Oversold (< -5)
+    # Strong Agreement (> 0.3) + Oversold (< -5) + Micro Structure > 0
     strong_agreement = agreement > 0.3
-    df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5)
+    # --- MODIFIED: Added Micro Condition ---
+    df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5) & (df['Micro'] > 0)
     
     return df
 
@@ -356,7 +359,6 @@ def boost_portfolio_with_unified_signals(
             df_analyzed = calculate_unified_signal(df)
             
             # Check the specific analysis date
-            # We locate the index nearest to analysis_date
             try:
                 # Use get_indexer to find the nearest date on or before analysis_date
                 target_idx = df_analyzed.index.get_indexer([analysis_date], method='pad')[0]
@@ -375,15 +377,19 @@ def boost_portfolio_with_unified_signals(
 
             latest_signal = latest_row['Buy_Signal']
             latest_unified = latest_row['Unified_Osc']
+            latest_micro = latest_row['Micro']
             latest_agreement = latest_row['MSF'] * latest_row['MMR']
             
             # --- DEBUG LOGGING ---
             # If Unified Osc is in oversold zone, print why it didn't trigger
             if latest_unified < -2.0:
                 status = "🟢 BUY" if latest_signal else "⚪ NO TRIGGER"
-                logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agreement: {latest_agreement:.2f} | {status}")
+                logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agree: {latest_agreement:.2f} | Micro: {latest_micro:.2f} | {status}")
                 if not latest_signal and latest_unified < -5.0:
-                    logging.info(f"      -> Failed due to weak agreement (Req > 0.3, Got {latest_agreement:.2f})")
+                    if latest_agreement <= 0.3:
+                        logging.info(f"      -> Failed: Weak Agreement (Req > 0.3, Got {latest_agreement:.2f})")
+                    if latest_micro <= 0:
+                        logging.info(f"      -> Failed: Micro Norm not positive (Got {latest_micro:.2f})")
             
             if latest_signal:
                 boost_indices.append(idx)
