@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_datareader.data as web
 import numpy as np
 from datetime import datetime, timedelta
 import warnings
@@ -12,31 +11,14 @@ from typing import List, Tuple, Dict, Any
 import logging
 
 # --- Setup Logging ---
+# Note: This basicConfig will also apply when imported by pragati.py
+# This is fine, as pragati.py sets its own handlers.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Suppress yfinance warnings ---
+# --- Suppress yfinance warnings for cleaner output ---
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# --- Configuration: Macro Symbols (Unified Oscillator) ---
-MACRO_SYMBOLS_STOOQ = {
-    "India 10Y": "10YINY.B", "India 02Y": "2YINY.B",
-    "US 30Y": "30YUSY.B", "US 10Y": "10YUSY.B", "US 05Y": "5YUSY.B", "US 02Y": "2YUSY.B",
-    "UK 30Y": "30YUKY.B", "UK 10Y": "10YUKY.B", "UK 05Y": "5YUKY.B", "UK 02Y": "2YUKY.B",
-    "EU (DE) 30Y": "30YDEY.B", "EU (DE) 10Y": "10YDEY.B", "EU (DE) 05Y": "5YDEY.B", "EU (DE) 02Y": "2YDEY.B",
-    "China 10Y": "10YCNY.B", "China 02Y": "2YCNY.B",
-    "Japan 30Y": "30YJPY.B", "Japan 10Y": "10YJPY.B", "Japan 02Y": "2YJPY.B",
-    "Singapore 10Y": "10YSGY.B",
-}
-
-MACRO_SYMBOLS_YF = {
-    "SGDINR": "SGDINR=X", "USDINR": "USDINR=X", "GBPINR": "GBPINR=X",
-    "EURINR": "EURINR=X", "JPYINR": "JPYINR=X",
-    "GOLD": "GC=F", "SILVER": "SI=F", "USOIL": "CL=F", "UKOIL": "BZ=F", "DXY": "DX-Y.NYB"
-}
-
-ALL_MACRO_SYMBOLS = {**MACRO_SYMBOLS_STOOQ, **MACRO_SYMBOLS_YF}
-
-# --- Helper Math Functions (Unified Oscillator) ---
+# --- UTILITY FUNCTIONS FOR UNIFIED OSCILLATOR ---
 def sigmoid(x, scale=1.0):
     """Sigmoid transformation bounded [-1, 1]"""
     return 2.0 / (1.0 + np.exp(-x / scale)) - 1.0
@@ -49,83 +31,34 @@ def zscore_clipped(series, window, clip=3.0):
     return z.clip(-clip, clip).fillna(0)
 
 def calculate_atr(df, length=14):
+    """Calculate Average True Range"""
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift()).abs()
     low_close = (df['low'] - df['close'].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(window=length).mean()
 
-# --- Macro Data Fetching (Optimized) ---
-def fetch_macro_data(start_date, end_date):
-    """Fetches and merges macro data once for the session."""
-    logging.info(f"Fetching Macro Data ({start_date} to {end_date})...")
-    combined_macro_df = pd.DataFrame()
-    
-    try:
-        # 1. Stooq
-        stooq_tickers = list(MACRO_SYMBOLS_STOOQ.values())
-        if stooq_tickers:
-            try:
-                stooq_df = web.DataReader(stooq_tickers, "stooq", start=start_date, end=end_date)
-                if isinstance(stooq_df.columns, pd.MultiIndex):
-                    if 'Close' in stooq_df.columns.get_level_values(0):
-                        stooq_df = stooq_df['Close']
-                    elif 'Value' in stooq_df.columns.get_level_values(0):
-                        stooq_df = stooq_df['Value']
-                # Ensure timezone-naive
-                if stooq_df.index.tz is not None:
-                    stooq_df.index = stooq_df.index.tz_localize(None)
-                combined_macro_df = stooq_df.sort_index()
-            except Exception as e:
-                logging.warning(f"Stooq fetch failed: {e}")
-
-        # 2. Yahoo Finance
-        yf_tickers = list(MACRO_SYMBOLS_YF.values())
-        if yf_tickers:
-            yf_end = end_date + timedelta(days=1)
-            try:
-                yf_data = yf.download(yf_tickers, start=start_date, end=yf_end, progress=False, auto_adjust=False)
-                if not yf_data.empty:
-                    yf_close = yf_data['Close'] if 'Close' in yf_data.columns else yf_data
-                    if yf_close.index.tz is not None:
-                        yf_close.index = yf_close.index.tz_localize(None)
-                    yf_close = yf_close.sort_index()
-                    
-                    if combined_macro_df.empty:
-                        combined_macro_df = yf_close
-                    else:
-                        combined_macro_df = combined_macro_df.join(yf_close, how='outer')
-            except Exception as e:
-                logging.warning(f"YF Macro fetch failed: {e}")
-
-        # Forward fill and clean
-        combined_macro_df = combined_macro_df.sort_index().ffill()
-        return combined_macro_df
-
-    except Exception as e:
-        logging.error(f"Critical error fetching macro data: {e}")
-        return pd.DataFrame()
-
-# --- REPLACEMENT: Unified Oscillator Class ---
+# --- UnifiedOscillator Class (Replaces LiquidityOscillator) ---
 class UnifiedOscillator:
     """
-    Calculates the 'Unified Oscillator' (MSF + MMR) optimized for backdata.
-    Replaces the legacy LiquidityOscillator.
+    Calculates the 'Unified Oscillator' combining Market Structure, Flow, 
+    Momentum (MSF) and Macro Risk (MMR).
+    
+    NOTE: Outputs values scaled to [-100, 100] to maintain compatibility 
+    with existing strategies that expect this range.
     """
-    def __init__(self, macro_df: pd.DataFrame = None, length: int = 20):
+    def __init__(self, length: int = 20, roc_len: int = 14):
         self.length = length
-        self.macro_df = macro_df
-        # If macro_df is provided, ensure index is timezone naive for joining
-        if self.macro_df is not None and not self.macro_df.empty:
-            if self.macro_df.index.tz is not None:
-                self.macro_df.index = self.macro_df.index.tz_localize(None)
+        self.roc_len = roc_len
 
-    def calculate_msf(self, df: pd.DataFrame, length=20, roc_len=14, clip=3.0):
-        # Expects lower case columns from backdata pipeline
+    def _calculate_msf(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """Calculates Market Structure Flow (MSF) signal."""
         close = df['close']
+        length = self.length
+        clip = 3.0
         
         # 1. Momentum
-        roc_raw = close.pct_change(roc_len)
+        roc_raw = close.pct_change(self.roc_len)
         roc_z = zscore_clipped(roc_raw, length, clip)
         momentum_norm = sigmoid(roc_z, 1.5)
         
@@ -151,7 +84,7 @@ class UnifiedOscillator:
         mom_accel_z = zscore_clipped(mom_accel_raw, length, clip)
         
         atr = calculate_atr(df, 14)
-        vol_adj_mom_raw = close.diff(5) / atr
+        vol_adj_mom_raw = close.diff(5) / atr.replace(0, np.nan)
         vol_adj_mom_z = zscore_clipped(vol_adj_mom_raw, length, clip)
         
         mean_rev_z = zscore_clipped(close - trend_slow, length, clip)
@@ -188,65 +121,20 @@ class UnifiedOscillator:
         osc_flow = (accum_norm + regime_norm) / np.sqrt(2.0)
         
         msf_raw = (osc_momentum + osc_structure + osc_flow) / np.sqrt(3.0)
-        return sigmoid(msf_raw * np.sqrt(3.0), 1.0)
+        msf_signal = sigmoid(msf_raw * np.sqrt(3.0), 1.0)
+        
+        return msf_signal, micro_norm
 
-    def calculate_mmr(self, df: pd.DataFrame, length=20, num_vars=5):
-        # Uses columns joined from macro_df
-        if self.macro_df is None or self.macro_df.empty:
-            return pd.Series(0, index=df.index), 0.0
-
-        target = df['close']
-        # Identify macro columns present in the joined df
-        macro_cols = [c for c in df.columns if c in ALL_MACRO_SYMBOLS.values()]
-        
-        if not macro_cols:
-            return pd.Series(0, index=df.index), 0.0
-        
-        # Performance Opt: Calculate correlation on the whole series at once to find top drivers
-        correlations = df[macro_cols].corrwith(target).abs().sort_values(ascending=False)
-        top_drivers = correlations.head(num_vars).index.tolist()
-        
-        preds = []
-        r2_sum = 0
-        y_mean = target.rolling(length).mean()
-        y_std = target.rolling(length).std()
-        
-        # Vectorized rolling regression prediction
-        for ticker in top_drivers:
-            x = df[ticker]
-            x_mean = x.rolling(length).mean()
-            x_std = x.rolling(length).std()
-            roll_corr = x.rolling(length).corr(target)
-            
-            slope = roll_corr * (y_std / x_std)
-            intercept = y_mean - (slope * x_mean)
-            
-            pred = (slope * x) + intercept
-            r2 = roll_corr ** 2
-            
-            preds.append(pred * r2)
-            r2_sum += r2
-
-        if r2_sum is 0 or len(preds) == 0:
-             return pd.Series(0, index=df.index), 0.0
-             
-        r2_sum = r2_sum.replace(0, np.nan)
-        y_predicted = sum(preds) / r2_sum
-        
-        deviation = target - y_predicted
-        mmr_z = zscore_clipped(deviation, length, 3.0)
-        mmr_signal = sigmoid(mmr_z, 1.5)
-        
-        # Avg R2 for quality
-        avg_r2 = sum([r**2 for r in [df[t].rolling(length).corr(target) for t in top_drivers]]) / r2_sum
-        mmr_quality = np.sqrt(avg_r2.fillna(0))
-        
-        return mmr_signal, mmr_quality
+    def _calculate_mmr(self, df: pd.DataFrame) -> Tuple[pd.Series, float]:
+        """Calculates Macro Market Risk (MMR). Defaults to 0 if macro cols missing."""
+        # Note: In backdata.py context, we usually don't have macro columns.
+        # This function is kept for logic completeness but is optimized to return 0 fast.
+        return pd.Series(0.0, index=df.index), 0.0
 
     def calculate(self, data: pd.DataFrame) -> pd.Series:
         """
-        Main calculation method.
-        Joins macro data -> Calculates MSF & MMR -> Returns Unified Oscillator Series.
+        Main calculation entry point.
+        Expects lower-case columns: 'open', 'high', 'low', 'close', 'volume'
         """
         required_columns = {'open', 'high', 'low', 'close', 'volume'}
         if not required_columns.issubset(data.columns):
@@ -254,41 +142,42 @@ class UnifiedOscillator:
 
         df = data.copy()
         
-        # Ensure TZ-naive index
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-
-        # Join with pre-fetched macro data if available
-        if self.macro_df is not None and not self.macro_df.empty:
-            df = df.join(self.macro_df, how='left').ffill()
-
-        # 1. MSF
-        msf = self.calculate_msf(df, self.length)
+        # 1. Component Calculation
+        msf_signal, _ = self._calculate_msf(df)
+        mmr_signal, mmr_quality = self._calculate_mmr(df)
         
-        # 2. MMR
-        mmr, mmr_quality = self.calculate_mmr(df, self.length)
-        
-        # 3. Unified Combination
+        # 2. Adaptive Weighting Logic
         regime_sensitivity = 1.5
         base_weight = 0.5
         
-        msf_clarity = msf.abs().pow(regime_sensitivity)
-        mmr_clarity = (mmr.abs() * mmr_quality).pow(regime_sensitivity)
-        clarity_sum = msf_clarity + mmr_clarity + 0.001
+        msf_clarity = msf_signal.abs()
+        mmr_clarity = mmr_signal.abs()
         
-        msf_w = (0.5 * base_weight) + (0.5 * (msf_clarity / clarity_sum))
-        mmr_w = (0.5 * (1.0 - base_weight)) + (0.5 * (mmr_clarity / clarity_sum))
+        msf_clarity_scaled = msf_clarity.pow(regime_sensitivity)
+        mmr_clarity_scaled = (mmr_clarity * mmr_quality).pow(regime_sensitivity)
+        clarity_sum = msf_clarity_scaled + mmr_clarity_scaled + 0.001
         
-        w_sum = msf_w + mmr_w
-        unified_signal = (msf_w / w_sum * msf) + (mmr_w / w_sum * mmr)
+        msf_w_adaptive = msf_clarity_scaled / clarity_sum
+        mmr_w_adaptive = mmr_clarity_scaled / clarity_sum
         
-        agreement = msf * mmr
-        multiplier = np.where(agreement > 0, 1.0 + 0.2 * agreement.abs(), 1.0 - 0.1 * agreement.abs())
+        msf_w_final = 0.5 * base_weight + 0.5 * msf_w_adaptive
+        mmr_w_final = 0.5 * (1.0 - base_weight) + 0.5 * mmr_w_adaptive
+        w_sum = msf_w_final + mmr_w_final
         
-        # 4. Final Output (Scaled to -10 to 10 range as per booster)
-        unified_osc = (unified_signal * multiplier).clip(-1.0, 1.0) * 10
+        msf_w_norm = msf_w_final / w_sum
+        mmr_w_norm = mmr_w_final / w_sum
         
-        return unified_osc.rename('unified_oscillator')
+        unified_signal = (msf_w_norm * msf_signal) + (mmr_w_norm * mmr_signal)
+        
+        agreement = msf_signal * mmr_signal 
+        agree_strength = agreement.abs()
+        multiplier = np.where(agreement > 0, 1.0 + 0.2 * agree_strength, 1.0 - 0.1 * agree_strength)
+        
+        final_signal = (unified_signal * multiplier).clip(-1.0, 1.0)
+        
+        # SCALING: Multiply by 100 to map [-1, 1] to [-100, 100]
+        # This ensures compatibility with strategies expecting 'LiquidityOscillator' ranges.
+        return final_signal * 100.0
 
 # --- Helper & Data Fetching Functions (Unchanged) ---
 def resample_data(df, rule='W-FRI'):
@@ -336,7 +225,7 @@ def calculate_all_indicators(symbol_data, oscillator_calculator):
         if len(df) < 2:
             continue
         
-        # Use the passed UnifiedOscillator
+        # Using the new Unified Oscillator logic here
         osc = oscillator_calculator.calculate(df)
         
         if not osc.dropna().empty:
@@ -367,9 +256,14 @@ def calculate_all_indicators(symbol_data, oscillator_calculator):
     
     return all_results_df
 
+
+# --- *** NEW: Refactored Core Generation Logic *** ---
+
 # --- Load symbols from file ---
 def load_symbols_from_file(filepath: str = "symbols.txt") -> List[str]:
-    """Loads a list of symbols from a text file."""
+    """
+    Loads a list of symbols from a text file.
+    """
     if not os.path.exists(filepath):
         logging.error(f"Symbol file not found at: {filepath}")
         try:
@@ -394,6 +288,7 @@ def load_symbols_from_file(filepath: str = "symbols.txt") -> List[str]:
 # Load the fixed universe
 SYMBOLS_UNIVERSE = load_symbols_from_file()
 
+# Define the column order here so it can be used by the generator
 COLUMN_ORDER = [
     'date', 'symbol', 'price', 'rsi latest', 'rsi weekly',
     '% change', 'osc latest', 'osc weekly',
@@ -405,6 +300,7 @@ COLUMN_ORDER = [
     'dev20 latest', 'dev20 weekly'
 ]
 
+# --- NEW: Export max indicator period ---
 INDICATOR_PERIODS = [20, 90, 200]
 MAX_INDICATOR_PERIOD = max(INDICATOR_PERIODS)
 
@@ -415,7 +311,16 @@ def generate_historical_data(
     end_date: datetime
 ) -> List[Tuple[datetime, pd.DataFrame]]:
     """
-    Generates historical indicator snapshots with the Unified Oscillator.
+    Generates historical indicator snapshots for a list of symbols
+    and returns them in the format required by Pragati.
+    
+    Args:
+        symbols_to_process: List of stock ticker symbols.
+        start_date: The beginning of the date range for data download.
+        end_date: The end of the date range for snapshot generation.
+        
+    Returns:
+        A list of tuples: [(date, DataFrame), (date, DataFrame), ...]
     """
     
     if not symbols_to_process:
@@ -426,19 +331,21 @@ def generate_historical_data(
         return []
         
     # 1. --- Download Data ---
+    
     try:
+        # Spinner is now handled in pragati.py
         logging.info(f"--- yfinance: Attempting to download {len(symbols_to_process)} symbols...")
         all_data = yf.download(
             symbols_to_process, 
             start=start_date, 
-            end=end_date + timedelta(days=1), 
+            end=end_date + timedelta(days=1), # yf is end-exclusive
             progress=False
         )
     except Exception as e:
          logging.error(f"yf.download failed: {e}")
-         all_data = pd.DataFrame()
+         all_data = pd.DataFrame() # Ensure all_data is a DataFrame
 
-    if all_data.empty or 'Close' not in all_data or all_data['Close'].dropna(how='all').empty:
+    if all_data.empty or all_data['Close'].dropna(how='all').empty:
         logging.error("yf.download returned an empty dataframe or all-NaN Close data.")
         try:
             st.error("Could not download any data. Check symbols or date range.")
@@ -457,7 +364,7 @@ def generate_historical_data(
             try:
                 st.warning(warning_msg)
             except Exception:
-                pass
+                print(warning_msg)
                 
             all_data = all_data.loc[:, (slice(None), valid_tickers)]
             symbols_to_process = list(valid_tickers)
@@ -467,32 +374,16 @@ def generate_historical_data(
                 return []
     
     logging.info(f"yf.download successful. Data shape: {all_data.shape}. Valid tickers: {len(symbols_to_process)}")
+
     all_data.columns.names = ['Indicator', 'Symbol']
-
-    # 2. --- PRE-FETCH MACRO DATA (Optimization) ---
-    # We fetch macro data once here and pass it to the oscillator logic.
-    # We need a slightly larger buffer for macro data to ensure rolling windows can calculate at start_date
-    macro_start = start_date - timedelta(days=365) 
-    macro_df = fetch_macro_data(macro_start, end_date)
     
-    # Instantiate the Unified Oscillator with the cached macro data
-    oscillator_calculator = UnifiedOscillator(macro_df=macro_df, length=20)
+    # --- REPLACED: Use UnifiedOscillator instead of LiquidityOscillator ---
+    oscillator_calculator = UnifiedOscillator(length=20, roc_len=14)
     
-    # 3. --- Pre-calculate all indicators for all symbols ---
+    # 2. --- Pre-calculate all indicators for all symbols ---
     ticker_indicator_cache = {}
-    
-    # Progress bar if running in Streamlit
-    try:
-        progress = st.progress(0, text="Calculating Unified Oscillators...")
-    except:
-        progress = None
-
-    total_sym = len(symbols_to_process)
-    
     for i, ticker in enumerate(symbols_to_process):
         try:
-            if progress: progress.progress((i+1)/total_sym, text=f"Processing {ticker}...")
-
             if len(symbols_to_process) > 1:
                 symbol_df = all_data.xs(ticker, level='Symbol', axis=1).copy()
             else:
@@ -511,17 +402,21 @@ def generate_historical_data(
                 indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator)
                 ticker_indicator_cache[ticker] = indicators_df
                 
-        except (pd.errors.DataError, KeyError, IndexError) as e:
-            logging.warning(f"Skipping {ticker} due to calculation error: {e}")
+        except (pd.errors.DataError, KeyError, IndexError):
+            try:
+                st.warning(f"⚠️ Skipping {ticker} due to a data quality error during indicator calculation.")
+            except Exception:
+                print(f"⚠️ Skipping {ticker} due to a data quality error during indicator calculation.")
             continue
 
-    if progress: progress.empty()
-
-    # 4. --- Generate Daily Snapshots in Memory ---
+    # 3. --- Generate Daily Snapshots in Memory ---
     pragati_data_list: List[Tuple[datetime, pd.DataFrame]] = []
+    # Use the index of the downloaded data as the authoritative date range
     date_range = all_data.index.normalize().unique()
 
     for snapshot_date in date_range:
+        # --- NEW: Only start generating snapshots *after* the indicator period
+        # We also only care about dates *within* the requested range (end_date)
         if snapshot_date < (start_date + timedelta(days=MAX_INDICATOR_PERIOD)) or snapshot_date > end_date:
             continue
 
@@ -538,7 +433,7 @@ def generate_historical_data(
             try:
                 indicator_row = full_indicator_df.loc[snapshot_date]
                 if indicator_row.isnull().all() or pd.isna(indicator_row.get('price')):
-                    continue 
+                    continue # Skip if all data is NaN or price is NaN
 
                 indicators = indicator_row.to_dict()
                 indicators['symbol'] = ticker.replace('.NS', '')
@@ -562,19 +457,21 @@ def generate_historical_data(
 
 
 # --- Main Application UI and Logic ---
+# This remains so the app can be run standalone
 def main():
+    # --- PAGE CONFIG MOVED HERE ---
     st.set_page_config(
-        page_title="Unified Snapshot Generator",
+        page_title="Indicator Snapshot Generator (Optimized)",
         page_icon="⚡",
         layout="wide"
     )
     
-    st.title("📊 Unified Oscillator Snapshot Generator")
-    st.markdown("Replaced Liquidity Oscillator with **Unified Oscillator** (MSF + MMR).")
+    st.title("📊 Daily Indicator Snapshot Generator (Optimized)")
 
     with st.sidebar:
         st.header("1. Select Date Range")
         today = datetime.now()
+        # --- UPDATED: Default start date to be far enough back for indicators
         default_start = today - timedelta(days=MAX_INDICATOR_PERIOD + 90)
         start_date = st.date_input("Start Date", default_start)
         end_date = st.date_input("End Date", today)
@@ -598,12 +495,13 @@ def main():
         else:
             symbols_to_process = SYMBOLS_UNIVERSE
             
+            # --- UPDATED: Calculate fetch_start_date for standalone run ---
             fetch_start_date = start_date - timedelta(days=int(MAX_INDICATOR_PERIOD * 1.5) + 30)
             
-            with st.spinner(f"Generating unified data from {fetch_start_date.date()} to {end_date.date()}..."):
+            with st.spinner(f"Generating historical data from {fetch_start_date.date()} to {end_date.date()}..."):
                 all_generated_data = generate_historical_data(
                     symbols_to_process, 
-                    fetch_start_date, 
+                    fetch_start_date, # Pass the earlier date for indicator warmup
                     end_date
                 )
             
@@ -611,14 +509,14 @@ def main():
                 st.error("Failed to generate any data.")
                 return
 
-            # Filter final range
+            # --- Filter the generated data to *only* the user's requested date range
             all_generated_data = [
                 (date, df) for date, df in all_generated_data 
                 if date.date() >= start_date and date.date() <= end_date
             ]
             
             if not all_generated_data:
-                st.warning("Data was fetched, but no valid trading days found in the selected range.")
+                st.warning("Data was fetched, but no valid trading days found in the selected Start/End range.")
                 return
 
             base_dir = "data"
@@ -651,7 +549,7 @@ def main():
                         for file in files:
                             zipf.write(os.path.join(root, file), os.path.join(os.path.basename(root), file))
 
-                st.success("✅ Snapshots and Zip file generated successfully!")
+                st.success("✅ Snapshots and Zip file generated successfully in the 'data' folder!")
                 
                 st.subheader(f"Data for {end_date.strftime('%Y-%m-%d')} (Last Day)")
                 if not last_day_df.empty:
