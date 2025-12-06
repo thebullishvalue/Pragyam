@@ -1890,121 +1890,194 @@ class VolatilitySurfer(BaseStrategy):
         return self._allocate_portfolio(eligible_stocks, sip_amount)
 
 # =====================================
-# MAX ALPHA: HyperVelocity Strategy (Revised)
+# NEW: AdaptiveVolBreakout Strategy
 # =====================================
-class HyperVelocity(BaseStrategy):
+# Enhances VolatilitySurfer by incorporating multi-timeframe alignment,
+# momentum confirmation via EMA crossovers, and adaptive volatility thresholds
+# to capture stronger, more sustainable breakouts while reducing false signals.
+class AdaptiveVolBreakout(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        HyperVelocity: Maximum Momentum Acceleration (Inclusive Scoring).
-        - Philosophy: Captures the 'Vertical Phase' of a trend.
-        - Mechanism: Scores ALL stocks based on momentum spread and acceleration.
-        - Fix: Removed hard filters that clipped results. Uses continuous scoring.
+        Adaptive Volatility Breakout: Multi-Timeframe Enhanced Breakout Strategy.
+        - Builds on VolatilitySurfer but adds weekly confirmation, EMA acceleration,
+          and dynamic vol thresholds to filter for higher-conviction breakouts.
+        - Aims to outperform by reducing whipsaws in choppy markets.
         """
         required_columns = [
-            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest', '21ema osc latest', 
-            'ma20 latest', 'ma90 latest'
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma20 latest', 'ma20 weekly',
+            'dev20 latest', 'dev20 weekly', 'ma90 weekly'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Acceleration Score (Velocity)
-        # Difference between Fast and Slow EMA of Oscillator.
-        # Positive = Accelerating Up, Negative = Decelerating.
-        velocity = df['9ema osc latest'] - df['21ema osc latest']
-        
-        # Normalize velocity to a score (add constant to handle negatives without zeroing out)
-        # We want even slight negative velocity stocks to be considered if other factors are good, 
-        # but heavily penalized.
-        velocity_score = np.clip(velocity, -50, 100) + 50 
+        # 1. Multi-Timeframe Trend Conviction (Enhanced)
+        conditions = [
+            (df['price'] > df['ma90 weekly']) & (df['price'] > df['ma20 weekly']),  # Strong weekly uptrend
+            (df['price'] > df['ma90 weekly']) | (df['price'] > df['ma20 weekly']),   # Moderate weekly alignment
+        ]
+        multipliers = [1.3, 0.8]
+        df['trend_conviction'] = np.select(conditions, multipliers, default=0.3)
 
-        # 2. RSI Power Score
-        # We want RSI > 50. Higher is better up to 80.
-        # RSI 30 = Score 0, RSI 80 = Score 50.
-        rsi_score = np.clip(df['rsi latest'] - 30, 0, 50)
+        # 2. Adaptive Bollinger Breakout Score
+        # Daily Upper Band
+        upper_daily = df['ma20 latest'] + 2 * df['dev20 latest']
+        dist_daily = (df['price'] - upper_daily) / (df['ma20 latest'] + 1e-6)
+        breakout_daily = np.clip(1 + (dist_daily * 8), 0.2, 2.5)  # Softer penalty for below
 
-        # 3. Trend Alignment Score
-        # Is price above MA20?
-        trend_bonus = np.where(df['price'] > df['ma20 latest'], 1.2, 0.8)
+        # Weekly Upper Band for confirmation
+        upper_weekly = df['ma20 weekly'] + 2 * df['dev20 weekly']
+        dist_weekly = (df['price'] - upper_weekly) / (df['ma20 weekly'] + 1e-6)
+        breakout_weekly = np.clip(1 + (dist_weekly * 6), 0.3, 2.0)
 
-        # 4. Oscillator Magnitude
-        # High raw oscillator confirms volume backing.
-        # Map -100 to 100 range to 0 to 20 score
-        osc_score = np.clip((df['osc latest'] + 100) / 10, 0, 20)
+        # Combined Breakout Score (requires some weekly alignment)
+        df['breakout_score'] = breakout_daily * (breakout_weekly ** 0.5)  # Geometric mean for balance
 
-        # 5. Composite Velocity Score
-        df['velocity_final'] = (velocity_score + rsi_score + osc_score) * trend_bonus
+        # 3. Dynamic Volatility Squeeze Multiplier
+        # Adaptive threshold based on market avg vol
+        avg_vol = (df['dev20 latest'] / df['price']).mean()
+        daily_bbw = (4 * df['dev20 latest']) / (df['ma20 latest'] + 1e-6)
+        weekly_bbw = (4 * df['dev20 weekly']) / (df['ma20 weekly'] + 1e-6)
+        combined_bbw = (daily_bbw * 0.6 + weekly_bbw * 0.4)
 
-        # 6. Sort and Rank (No hard filtering)
-        eligible_stocks = df.sort_values('velocity_final', ascending=False).copy()
+        vol_threshold = max(0.04, avg_vol * 1.2)  # Adaptive
+        squeeze_multiplier = np.select(
+            [combined_bbw < vol_threshold * 0.8, combined_bbw < vol_threshold],
+            [1.6, 1.3],  # Higher reward for tighter squeezes
+            default=0.9
+        )
 
-        # 7. Allocation
-        # Apply exponential weighting to favor top ranks, but allow tail participation
-        # Softmax-like approach but simpler: relative score
-        total_score = eligible_stocks['velocity_final'].sum()
-        
-        if total_score > 0:
-            eligible_stocks['weightage'] = eligible_stocks['velocity_final'] / total_score
-        else:
-            # Fallback
-            eligible_stocks['weightage'] = 1.0 / len(eligible_stocks)
+        # 4. Momentum Confirmation Score (EMA Acceleration + Oscillator)
+        ema_acceleration = np.where(
+            (df['9ema osc latest'] > df['21ema osc latest']) &
+            (df['9ema osc weekly'] > df['21ema osc weekly']),
+            1.6,
+            np.where(
+                (df['9ema osc latest'] > df['21ema osc latest']) |
+                (df['9ema osc weekly'] > df['21ema osc weekly']),
+                1.2,
+                0.7
+            )
+        )
+        osc_confirm = np.clip((df['osc latest'] + df['osc weekly']) / 100, 0, 2.0)
+        df['momentum_confirm'] = ema_acceleration * osc_confirm
+
+        # 5. Overbought Filter (RSI Cap)
+        rsi_filter = np.where(df['rsi latest'] < 75, 1.0, np.clip(100 - df['rsi latest'], 0.4, 1.0))
+
+        # 6. Z-Score Statistical Boost
+        z_boost = np.clip(df['zscore latest'] + 1, 0.5, 2.5)  # Shift to positive
+
+        # 7. Composite Score
+        df['composite_score'] = (
+            df['breakout_score'] * squeeze_multiplier * df['momentum_confirm'] *
+            df['trend_conviction'] * rsi_filter * z_boost
+        )
+
+        # Ensure inclusivity with minimum score
+        df['composite_score'] = np.maximum(df['composite_score'], 0.01)
+
+        # Sort and weight
+        eligible_stocks = df.sort_values('composite_score', ascending=False).copy()
+        total_score = eligible_stocks['composite_score'].sum()
+        eligible_stocks['weightage'] = (
+            eligible_stocks['composite_score'] / total_score
+            if total_score > 0 else 1 / len(eligible_stocks)
+        )
 
         return self._allocate_portfolio(eligible_stocks, sip_amount)
 
-
 # =====================================
-# MAX ALPHA: OrbitalStrike Strategy (Revised)
+# NEW: VolReversalHarvester Strategy
 # =====================================
-class OrbitalStrike(BaseStrategy):
+# Complements VolatilitySurfer by focusing on mean-reversion in volatility expansions,
+# harvesting dips in high-vol environments with oversold confirmations.
+# Outperforms in ranging/choppy markets where breakouts fail.
+class VolReversalHarvester(BaseStrategy):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         """
-        OrbitalStrike: Statistical Breakout (Continuous Scoring).
-        - Philosophy: Buys 'Escape Velocity'.
-        - Mechanism: Scores 'Breakout Intensity' instead of using binary filters.
-        - Fix: Removed hard 'price > band' filter. Uses proximity scoring to ensure full portfolio.
+        Volatility Reversal Harvester: Mean-Reversion in High-Vol Regimes.
+        - Targets oversold stocks during vol expansions (inverse of breakouts).
+        - Uses multi-timeframe oversold alignment, z-score extremes, and vol decay signals.
+        - Switches dynamically based on individual stock vol regime to capture reversals.
         """
         required_columns = [
-            'symbol', 'price', 'osc latest', 'zscore latest', 'rsi latest',
-            'ma20 latest', 'dev20 latest'
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            'zscore latest', 'zscore weekly', 'ma20 latest', 'ma20 weekly',
+            'dev20 latest', 'dev20 weekly', 'ma200 latest', 'ma200 weekly'
         ]
         df = self._clean_data(df, required_columns)
 
-        # 1. Bollinger Band Proximity Score
-        # Upper Band
-        upper_band = df['ma20 latest'] + (2 * df['dev20 latest'])
-        
-        # Calculate how close price is to the upper band (or how far above)
-        # Normalized by volatility (dev20)
-        # Score 0.0 = At MA20
-        # Score 1.0 = At Upper Band
-        # Score 1.5 = Blasting through Upper Band
-        # We use a safe division
-        dist_from_mean = df['price'] - df['ma20 latest']
-        volatility_unit = df['dev20 latest'] + 1e-6
-        bb_position_score = dist_from_mean / (2 * volatility_unit)
-        
-        # We focus on the upper end. Clip negative values (below mean) to small number.
-        bb_score = np.clip(bb_position_score, 0.1, 3.0)
+        # 1. Individual Stock Vol Regime Detection
+        # High vol if dev20/price > median + std
+        vol_norm_daily = df['dev20 latest'] / (df['price'] + 1e-6)
+        vol_norm_weekly = df['dev20 weekly'] / (df['price'] + 1e-6)
+        avg_vol_stock = (vol_norm_daily * 0.6 + vol_norm_weekly * 0.4)
+        market_vol_median = avg_vol_stock.median()
+        market_vol_std = avg_vol_stock.std()
+        df['high_vol_regime'] = (avg_vol_stock > market_vol_median + market_vol_std).astype(int)
 
-        # 2. Z-Score Energy
-        # Higher Z-score = More statistical significance to the move.
-        # We map Z-score -1 to +4 into a positive multiplier.
-        z_score_energy = np.clip(df['zscore latest'] + 1.0, 0.5, 5.0)
+        # 2. Mean-Reversion Conviction (Oversold Multiplier)
+        conditions = [
+            (df['rsi latest'] < 30) & (df['rsi weekly'] < 35),  # Deep oversold alignment
+            (df['rsi latest'] < 40) | (df['rsi weekly'] < 45),   # Moderate oversold
+        ]
+        multipliers = [1.8, 1.2]
+        df['oversold_conviction'] = np.select(conditions, multipliers, default=0.4)
 
-        # 3. Oscillator Conviction
-        # If Oscillator is positive, we are good. If negative, penalize.
-        osc_conviction = np.where(df['osc latest'] > 0, 1.5, 0.5)
+        # 3. Lower Bollinger Reversion Score
+        # Focus on lower band proximity for buys
+        lower_daily = df['ma20 latest'] - 2 * df['dev20 latest']
+        dist_lower_daily = (lower_daily - df['price']) / (df['ma20 latest'] + 1e-6)
+        reversion_daily = np.clip(1 + (dist_lower_daily * 8), 0.2, 2.5)
 
-        # 4. Trajectory Score (Composite)
-        df['strike_score'] = bb_score * z_score_energy * osc_conviction
+        lower_weekly = df['ma20 weekly'] - 2 * df['dev20 weekly']
+        dist_lower_weekly = (lower_weekly - df['price']) / (df['ma20 weekly'] + 1e-6)
+        reversion_weekly = np.clip(1 + (dist_lower_weekly * 6), 0.3, 2.0)
 
-        # 5. Sort by highest Strike Score
-        eligible_stocks = df.sort_values('strike_score', ascending=False).copy()
+        df['reversion_score'] = reversion_daily * (reversion_weekly ** 0.5)
 
-        # 6. Allocation
-        total_score = eligible_stocks['strike_score'].sum()
-        
-        if total_score > 0:
-            eligible_stocks['weightage'] = eligible_stocks['strike_score'] / total_score
-        else:
-             eligible_stocks['weightage'] = 1.0 / len(eligible_stocks)
+        # 4. Oscillator Oversold Confirmation
+        # Reward extreme negatives with signs of stabilization
+        osc_stabilization = np.where(
+            (df['osc latest'] < -60) & (df['9ema osc latest'] > df['osc latest'] * 0.9),  # Bouncing
+            1.7,
+            np.where(df['osc latest'] < -40, 1.3, 0.8)
+        )
+        df['osc_confirm'] = osc_stabilization * np.clip((df['osc weekly'] / -100), 0, 1.5)
+
+        # 5. Z-Score Extremity Boost (Deep Oversold)
+        z_extreme = np.clip(-df['zscore latest'], 0, 3.0) * np.clip(-df['zscore weekly'], 0, 2.0)
+        df['z_boost'] = np.sqrt(z_extreme) + 0.5  # Concave to reward extremes moderately
+
+        # 6. Vol Expansion Decay Multiplier
+        # In high vol, reward if vol is peaking (but we approximate with dev20 ratio)
+        vol_decay = np.where(
+            df['high_vol_regime'] == 1,
+            np.clip(1 + (vol_norm_daily - vol_norm_weekly), 0.8, 1.5),  # Daily vol > weekly = expansion
+            1.0
+        )
+
+        # 7. Trend Safety (Avoid Deep Bear Markets)
+        # Penalize if far below MA200
+        ma200_dist = (df['price'] / df['ma200 latest'] - 1)
+        trend_safety = np.clip(ma200_dist + 0.5, 0.3, 1.5)  # -50% = 0.3, flat=0.5, +50%=1.5
+
+        # 8. Composite Score (Activate in High Vol)
+        df['composite_score'] = (
+            df['oversold_conviction'] * df['reversion_score'] * df['osc_confirm'] *
+            df['z_boost'] * vol_decay * trend_safety * (1 + df['high_vol_regime'] * 0.5)
+        )
+
+        # Ensure inclusivity
+        df['composite_score'] = np.maximum(df['composite_score'], 0.01)
+
+        # Sort and weight
+        eligible_stocks = df.sort_values('composite_score', ascending=False).copy()
+        total_score = eligible_stocks['composite_score'].sum()
+        eligible_stocks['weightage'] = (
+            eligible_stocks['composite_score'] / total_score
+            if total_score > 0 else 1 / len(eligible_stocks)
+        )
 
         return self._allocate_portfolio(eligible_stocks, sip_amount)
