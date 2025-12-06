@@ -307,7 +307,7 @@ class MarketDataFetcher:
         'OIL': {'ticker': 'CL.F', 'name': 'Crude Oil WTI Futures'},
         
         # Indices
-        'DXY': {'ticker': '^IC', 'name': 'US Dollar Index'},
+        'DXY': {'ticker': 'DX.F', 'name': 'US Dollar Index'},
     }
     
     DISPLAY_NAMES = {k: v['name'] for k, v in MACRO_MAPPINGS.items()}
