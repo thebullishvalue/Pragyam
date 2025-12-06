@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 try:
     from strategies import (
         BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy,
-        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer, QuantumVelocity, AlphaPrime
+        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer, QuantumFlow, ApexAlpha
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it’s in the same directory.")
@@ -1114,8 +1114,8 @@ def main():
         'VolatilitySurfer': VolatilitySurfer(),
         'MOM_v1': MOM1Strategy(),
         'MOM_v2': MOM2Strategy(),
-        'QV': QuantumVelocity(),
-        'AP': AlphaPrime(),
+        'QV': QuantumFlow(),
+        'AP': ApexAlpha(),
     }
 
     PORTFOLIO_STYLES = {
