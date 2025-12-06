@@ -365,9 +365,9 @@ def calculate_unified_signal(df):
     df['Unified_Osc'] = df['Unified'] * 10
     
     # 3. Lime Circle Logic (Confirmed Buy)
-    # Strong Agreement (> 0.3) + Oversold (< -5) + Micro Structure > 0
+    # Strong Agreement (> 0.25) + Oversold (< -5)
     strong_agreement = agreement > 0.25
-    df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5) & (df['Micro'] > 0)
+    df['Buy_Signal'] = strong_agreement & (df['Unified_Osc'] < -5)
     
     return df
 
@@ -446,10 +446,8 @@ def boost_portfolio_with_unified_signals(
                 status = "🟢 BUY" if latest_signal else "⚪ NO TRIGGER"
                 logging.info(f"   [{symbol}] Date: {latest_date_in_df.date()} | Osc: {latest_unified:.2f} | Agree: {latest_agreement:.2f} | Micro: {latest_micro:.2f} | {status}")
                 if not latest_signal and latest_unified < -5.0:
-                    if latest_agreement <= 0.3:
-                        logging.info(f"      -> Failed: Weak Agreement (Req > 0.3, Got {latest_agreement:.2f})")
-                    if latest_micro <= 0:
-                        logging.info(f"      -> Failed: Micro Norm not positive (Got {latest_micro:.2f})")
+                    if latest_agreement <= 0.25:
+                        logging.info(f"      -> Failed: Weak Agreement (Req > 0.25, Got {latest_agreement:.2f})")
             
             if latest_signal:
                 boost_indices.append(idx)
