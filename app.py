@@ -1135,7 +1135,7 @@ def main():
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['QV', 'VS', 'PR_v1'],
+                    "strategies": ['VolatilitySurfer', 'VS', 'MomentumMasters'],
                     "rationale": "Range masters with breakout validation. VolatilitySurfer dominates chop swings (12.53% vs 7.96% for worst) with exceptional Calmar (20.42). MomentumMasters surprisingly effective in chop (11.60%, #2) - volatility enables quick pivots. MOM_v1 stabilizes with consistent middle performance (10.59%). CL strategies completely excluded - fail in choppy conditions (bottom 4 positions consistently)."
                 }
             }
@@ -1155,7 +1155,7 @@ def main():
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1', 'QV', 'AP', 'RP', 'VS', 'PR_v1', 'CL_v1', 'CL2', 'CL3', 'MOM_v2'],
+                    "strategies": ['VS'],
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
