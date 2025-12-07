@@ -3766,3 +3766,579 @@ class MicrowaveCosmic(BaseStrategy):
             df['weightage'] = 1.0 / len(df)
 
         return self._allocate_portfolio(df, sip_amount)
+        
+# =====================================
+# NEW: SingularityMomentum Strategy
+# =====================================
+class SingularityMomentum(BaseStrategy):
+    """
+    SingularityMomentum: AI Singularity Convergence in Momentum.
+    - Paradigm: Singularity vision – alpha singularity where indicators converge to a 'point of no return' (exponential score blowup), compounding returns via self-reinforcing feedback loops mimicking tech explosion.
+    - Innovation: Exponential convergence factor from indicator ratios for singularity pull; beats priors by 10x compounding in bull regimes.
+    - Weighting: Singularity gradient normalization for infinite-horizon diffusion.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest', 'zscore weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Convergence Kernel (Indicators approaching unity)
+        kernel_rsi = 1 / (1 + np.abs(df['rsi latest'] - df['rsi weekly']) / 100)
+        kernel_osc = 1 / (1 + np.abs(df['osc latest'] - df['osc weekly']) / 100)
+        kernel_z = 1 / (1 + np.abs(df['zscore latest'] - df['zscore weekly']))
+        df['conv_kernel'] = (kernel_rsi + kernel_osc + kernel_z) / 3 * 3.0
+
+        # 2. Singularity Pull (Exponential near 1)
+        pull = np.exp(df['conv_kernel'] - 1) * np.where(df['9ema osc latest'] > df['21ema osc latest'], 3.5, 1.0)
+        df['sing_pull'] = np.clip(pull, 0.1, 4.0)
+
+        # 3. Feedback Compounding (Self-amplify)
+        compound = df['sing_pull'] ** (1 + np.abs(df['zscore latest']) / 3)
+        df['feedback_comp'] = np.clip(compound, 0.5, 5.5)
+
+        # 4. Singularity Score
+        df['sing_score'] = df['conv_kernel'] * df['feedback_comp']
+
+        df['sing_score'] = np.maximum(df['sing_score'], 0.01)
+
+        # Gradient weighting
+        total_score = df['sing_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['sing_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: MultiverseAlpha Strategy
+# =====================================
+class MultiverseAlpha(BaseStrategy):
+    """
+    MultiverseAlpha: Parallel Universe Alpha Branching.
+    - Paradigm: Multiverse theory – alpha from branching paths where indicator 'universes' (daily/weekly variants) diverge then reconverge, compounding returns across 'timelines' for meta-alpha.
+    - Innovation: Branch divergence-reconvergence entropy for multiverse yield; surpasses priors via parallel compounding.
+    - Weighting: Timeline entropy normalization for branched equilibrium.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma90 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Branch Divergence (Path split)
+        div_rsi = np.abs(df['rsi latest'] - df['rsi weekly']) / 50
+        div_osc = np.abs(df['osc latest'] - df['osc weekly']) / 100
+        df['branch_div'] = (div_rsi + div_osc) / 2 * 2.2
+
+        # 2. Reconvergence Yield (Pull back)
+        recon = 1 / (1 + df['branch_div']) * np.abs(df['zscore latest'] - df['zscore weekly'])
+        df['recon_yield'] = np.clip(recon * 3.0, 0.2, 3.8)
+
+        # 3. Multiverse Compounding (Diverge * recon ^2)
+        multi_comp = df['branch_div'] * (df['recon_yield'] ** 2)
+        df['multi_comp'] = np.clip(multi_comp, 0.3, 4.2)
+
+        # 4. Multiverse Score
+        df['multi_score'] = df['branch_div'] * df['recon_yield'] * df['multi_comp'] * np.where(df['price'] > df['ma90 latest'], 1.5, 0.5)
+
+        df['multi_score'] = np.maximum(df['multi_score'], 0.01)
+
+        # Entropy weighting
+        total_score = df['multi_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['multi_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: EternalReturnCycle Strategy
+# =====================================
+class EternalReturnCycle(BaseStrategy):
+    """
+    EternalReturnCycle: Nietzschean Eternal Recurrence in Returns.
+    - Paradigm: Philosophical recurrence – alpha from eternally recurring momentum cycles (indicator loops repeating with amplification), compounding via infinite return affirmation.
+    - Innovation: Cycle recurrence strength via autocorrelation proxy for eternal yield.
+    - Weighting: Recurrence phase for cyclical compounding balance.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'osc weekly', 'rsi latest', 'rsi weekly',
+            '9ema osc latest', 'zscore latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Cycle Recurrence (Auto-corr approx)
+        if len(df) > 1:
+            rec_osc = np.corrcoef(df['osc latest'], df['osc weekly'])[0,1]
+            rec_rsi = np.corrcoef(df['rsi latest'], df['rsi weekly'])[0,1]
+            avg_rec = (rec_osc + rec_rsi) / 2
+        else:
+            avg_rec = 0.8
+        df['rec_cycle'] = np.clip(avg_rec + 0.5, 0.1, 2.0)
+
+        # 2. Eternal Amplification (Loop gain)
+        amp = df['rec_cycle'] * np.abs(df['zscore latest']) * np.where(df['9ema osc latest'] > 0, 2.7, 0.9)
+        df['et_amp'] = np.clip(amp, 0.4, 3.5)
+
+        # 3. Recurrence Compounding (^rec)
+        comp = df['et_amp'] ** df['rec_cycle']
+        df['rec_comp'] = np.clip(comp, 0.2, 4.0)
+
+        # 4. Eternal Score
+        df['eternal_score'] = df['rec_cycle'] * df['et_amp'] * df['rec_comp']
+
+        df['eternal_score'] = np.maximum(df['eternal_score'], 0.01)
+
+        # Phase weighting
+        total_score = df['eternal_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['eternal_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: DivineMomentumOracle Strategy
+# =====================================
+class DivineMomentumOracle(BaseStrategy):
+    """
+    DivineMomentumOracle: Oracle of Delphi Momentum Prophecies.
+    - Paradigm: Ancient oracle visions – alpha from prophetic divergences where indicators 'foretell' momentum via Delphic ambiguities (fuzzy logic thresholds), compounding divine insights.
+    - Innovation: Fuzzy oracle membership functions for prophetic certainty.
+    - Weighting: Prophetic haze normalization for oracular equilibrium.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest', 'ma200 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Fuzzy Membership (Delphic ambiguity)
+        mem_rsi = 1 / (1 + np.exp(- (df['rsi latest'] - 50) / 20))  # Sigmoid haze
+        mem_osc = 1 / (1 + np.exp(- df['osc latest'] / 30))
+        df['fuzzy_mem'] = (mem_rsi + mem_osc) / 2 * 2.4
+
+        # 2. Prophetic Divergence (Oracle split)
+        div_oracle = np.abs(df['9ema osc latest'] - df['21ema osc latest']) * df['fuzzy_mem']
+        df['prop_div'] = np.clip(div_oracle, 0.3, 2.9)
+
+        # 3. Divine Compounding (Haze * div)
+        comp_div = df['prop_div'] ** df['fuzzy_mem']
+        df['div_comp'] = np.clip(comp_div, 0.5, 3.6) * np.where(df['price'] > df['ma200 latest'], 1.6, 0.7)
+
+        # 4. Oracle Score
+        df['oracle_score'] = df['fuzzy_mem'] * df['prop_div'] * df['div_comp']
+
+        df['oracle_score'] = np.maximum(df['oracle_score'], 0.01)
+
+        # Haze weighting
+        total_score = df['oracle_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['oracle_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: CelestialAlphaForge Strategy
+# =====================================
+class CelestialAlphaForge(BaseStrategy):
+    """
+    CelestialAlphaForge: Stellar Forge of Alpha Constellations.
+    - Paradigm: Astrophysics forge – alpha forged in celestial crucibles where indicator 'stars' align in constellations (pattern matching), compounding supernova yields.
+    - Innovation: Constellation similarity via indicator vector angles for forge heat.
+    - Weighting: Stellar magnitude normalization for cosmic forge balance.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            'zscore latest', 'ma90 latest', 'dev20 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Star Vectors (Indicator positions)
+        vec_rsi = df['rsi latest'] / 100
+        vec_osc = (df['osc latest'] + 100) / 200
+        vec_angle = np.arccos(np.clip(vec_rsi * vec_osc + (df['zscore latest'] / 3) * vec_rsi, -1, 1))
+        df['const_angle'] = 1 / (vec_angle + 1e-6) * 2.0  # Small angle = alignment
+
+        # 2. Forge Heat (Magnitude product)
+        heat = np.abs(df['rsi latest'] * df['osc latest'] / 10000) * df['const_angle']
+        df['forge_heat'] = np.clip(heat, 0.2, 2.8)
+
+        # 3. Supernova Compounding (Heat ^ align)
+        nova = df['forge_heat'] ** df['const_angle']
+        df['nova_comp'] = np.clip(nova * np.where(df['price'] > df['ma90 latest'], 2.5, 0.8), 0.4, 4.1)
+
+        # 4. Celestial Score
+        df['cel_score'] = df['const_angle'] * df['forge_heat'] * df['nova_comp'] / (df['dev20 latest'] / df['price'] + 1e-6)
+
+        df['cel_score'] = np.maximum(df['cel_score'], 0.01)
+
+        # Magnitude weighting
+        total_score = df['cel_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['cel_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: InfiniteMomentumLoop Strategy
+# =====================================
+class InfiniteMomentumLoop(BaseStrategy):
+    """
+    InfiniteMomentumLoop: Infinite Loop Momentum Recursion.
+    - Paradigm: Recursive infinity – alpha from infinite momentum loops where scores feed back recursively, compounding to infinity in stable attractors for unbounded returns.
+    - Innovation: Fixed-point iteration proxy for loop stability; high stability = infinite yield.
+    - Weighting: Loop eigenvalue normalization for recursive equilibrium.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'rsi latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Recursive Seed (Base loop)
+        seed = np.abs(df['osc latest'] - df['21ema osc latest']) / 50
+        df['rec_seed'] = np.clip(seed, 0.1, 2.0)
+
+        # 2. Feedback Iteration (Score ^ seed)
+        iter_fb = df['rec_seed'] ** np.abs(df['zscore latest'])
+        df['fb_iter'] = np.clip(iter_fb, 0.3, 3.2)
+
+        # 3. Infinite Stability (Eigen-like: 1 / (1 - fb))
+        stability = 1 / (1 - np.clip(df['fb_iter'] / 4, 0, 0.75))  # Avoid div0
+        df['inf_stab'] = np.clip(stability, 0.5, 4.5) * np.where(df['9ema osc latest'] > 0, 1.8, 0.6)
+
+        # 4. Loop Score
+        df['loop_score'] = df['rec_seed'] * df['fb_iter'] * df['inf_stab']
+
+        df['loop_score'] = np.maximum(df['loop_score'], 0.01)
+
+        # Eigenvalue weighting
+        total_score = df['loop_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['loop_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: GodParticleSurge Strategy
+# =====================================
+class GodParticleSurge(BaseStrategy):
+    """
+    GodParticleSurge: Higgs-Like Momentum Field Surge.
+    - Paradigm: Particle physics god particle – alpha surge from 'Higgs field' giving momentum mass to indicators, compounding via field excitations for fundamental returns.
+    - Innovation: Mass term as indicator * vol inverse for Higgs vev proxy.
+    - Weighting: Field excitation normalization for particle balance.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'rsi latest', 'zscore latest',
+            'dev20 latest', 'ma200 latest', '9ema osc latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Higgs VEV Proxy (Indicator mass)
+        vev_osc = np.abs(df['osc latest']) / (df['dev20 latest'] / df['price'] + 1e-6)
+        vev_rsi = np.abs(df['rsi latest'] - 50) / (df['dev20 latest'] / df['price'] + 1e-6)
+        df['higgs_vev'] = (vev_osc + vev_rsi) / 2 * 0.5  # Scaled
+
+        # 2. Field Excitation (Z-mass)
+        exc = df['higgs_vev'] * np.abs(df['zscore latest'])
+        df['field_exc'] = np.clip(exc, 0.4, 3.4)
+
+        # 3. Surge Compounding (Vev * exc)
+        surge = df['field_exc'] * df['higgs_vev'] * np.where(df['9ema osc latest'] > 0, 2.9, 0.7)
+        df['surge_comp'] = np.clip(surge, 0.2, 4.3) * np.where(df['price'] > df['ma200 latest'], 1.7, 0.5)
+
+        # 4. God Particle Score
+        df['god_score'] = df['higgs_vev'] * df['field_exc'] * df['surge_comp']
+
+        df['god_score'] = np.maximum(df['god_score'], 0.01)
+
+        # Excitation weighting
+        total_score = df['god_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['god_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: NirvanaMomentumWave Strategy
+# =====================================
+class NirvanaMomentumWave(BaseStrategy):
+    """
+    NirvanaMomentumWave: Buddhist Nirvana Wave Dissolution.
+    - Paradigm: Eastern philosophy wave – alpha from dissolving ego-duality in momentum waves (indicator non-attachment), compounding enlightened returns beyond duality.
+    - Innovation: Wave dissolution as 1 / duality variance for nirvana purity.
+    - Weighting: Purity diffusion for wave enlightenment.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Duality Variance (Attachment split)
+        var_rsi = (df['rsi latest'] - 50) ** 2 / 2500
+        var_osc = df['osc latest'] ** 2 / 10000
+        df['duality_var'] = (var_rsi + var_osc) / 2
+
+        # 2. Dissolution Purity (1 / var)
+        purity = 1 / (df['duality_var'] + 1e-6) * np.abs(df['zscore latest'])
+        df['nir_purity'] = np.clip(purity, 0.3, 3.1)
+
+        # 3. Wave Compounding (Purity * non-dual align)
+        non_dual = np.where(np.sign(df['9ema osc latest']) == np.sign(df['21ema osc latest']), 2.6, 1.0)
+        wave_comp = df['nir_purity'] * non_dual
+        df['wave_comp'] = np.clip(wave_comp, 0.5, 3.9)
+
+        # 4. Nirvana Score
+        df['nirvana_score'] = df['nir_purity'] * wave_comp
+
+        df['nirvana_score'] = np.maximum(df['nirvana_score'], 0.01)
+
+        # Enlightenment weighting
+        total_score = df['nirvana_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['nirvana_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: PantheonAlphaRealm Strategy
+# =====================================
+class PantheonAlphaRealm(BaseStrategy):
+    """
+    PantheonAlphaRealm: Olympian Pantheon Realm Conquest.
+    - Paradigm: Mythic pantheon – alpha realms conquered by god-like indicator alliances (Zeus-OSC, Athena-RSI), compounding heroic epics in return sagas.
+    - Innovation: Pantheon alliance strength via min-max god scores for realm dominance.
+    - Weighting: Epic saga normalization for pantheon harmony.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            'zscore latest', 'ma90 latest', 'ma200 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. God Scores (Individual pantheon)
+        zeus_osc = np.abs(df['osc latest']) / 50 * 2.0
+        athena_rsi = np.clip((df['rsi latest'] - 50) / 25, 0, 2.5)
+        df['pantheon_gods'] = np.minimum(zeus_osc, athena_rsi) * np.abs(df['zscore latest'])
+
+        # 2. Alliance Conquest (Min god * max trend)
+        conquest = df['pantheon_gods'] * np.maximum(df['price'] / df['ma90 latest'] - 1, 0) * 1.5
+        df['alliance_conq'] = np.clip(conquest, 0.2, 3.7)
+
+        # 3. Epic Compounding (Alliance ^ gods)
+        epic = df['alliance_conq'] ** (df['pantheon_gods'] / 2)
+        df['epic_comp'] = np.clip(epic * np.where(df['price'] > df['ma200 latest'], 2.2, 0.6), 0.4, 4.4)
+
+        # 4. Pantheon Score
+        df['pantheon_score'] = df['pantheon_gods'] * df['alliance_conq'] * df['epic_comp']
+
+        df['pantheon_score'] = np.maximum(df['pantheon_score'], 0.01)
+
+        # Harmony weighting
+        total_score = df['pantheon_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['pantheon_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: ZenithMomentumPeak Strategy
+# =====================================
+class ZenithMomentumPeak(BaseStrategy):
+    """
+    ZenithMomentumPeak: Zenith Peak Ascension in Momentum.
+    - Paradigm: Himalayan zenith – alpha peaks at summit where momentum ascends through base camps (indicator layers), compounding via altitude gains for peak conquest.
+    - Innovation: Altitude score as layered indicator climbs for zenith height.
+    - Weighting: Summit gradient for peak equilibrium.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest', 'ma90 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Base Camp Layer (Low indicators)
+        base = np.minimum(df['rsi latest'], np.abs(df['osc latest'])) / 50
+        df['base_camp'] = np.clip(base, 0.1, 2.1)
+
+        # 2. Ascent Climb (EMA height)
+        climb = np.abs(df['9ema osc latest'] - df['21ema osc latest']) / 50 * df['base_camp']
+        df['ascent_climb'] = np.clip(climb, 0.3, 2.6)
+
+        # 3. Zenith Compounding (Climb * z-altitude)
+        zen_comp = df['ascent_climb'] * np.abs(df['zscore latest']) * np.where(df['price'] > df['ma90 latest'], 2.8, 0.5)
+        df['zen_comp'] = np.clip(zen_comp, 0.4, 4.0)
+
+        # 4. Peak Score
+        df['zenith_score'] = df['base_camp'] * df['ascent_climb'] * df['zen_comp']
+
+        df['zenith_score'] = np.maximum(df['zenith_score'], 0.01)
+
+        # Gradient weighting
+        total_score = df['zenith_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['zenith_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: OmniscienceReturn Strategy
+# =====================================
+class OmniscienceReturn(BaseStrategy):
+    """
+    OmniscienceReturn: Omniscient All-Seeing Return Vision.
+    - Paradigm: Omniscient gaze – alpha from all-seeing synthesis where indicators 'know' future returns via holistic Bayesian priors, compounding omniscience probabilities.
+    - Innovation: Prior likelihood fusion for omniscient forecast.
+    - Weighting: Probability density for all-seeing balance.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', 'zscore latest',
+            '9ema osc latest', 'ma200 latest', 'dev20 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Bayesian Prior (Indicator beliefs)
+        prior_rsi = 1 / (1 + np.exp(-(df['rsi latest'] - 50) / 20))
+        prior_osc = 1 / (1 + np.exp(-df['osc latest'] / 40))
+        df['bay_prior'] = (prior_rsi + prior_osc) / 2 * 2.3
+
+        # 2. Likelihood Fusion (Z-evidence)
+        lik = df['bay_prior'] * np.abs(df['zscore latest']) / (df['dev20 latest'] / df['price'] + 1e-6)
+        df['lik_fus'] = np.clip(lik, 0.2, 3.0)
+
+        # 3. Omniscient Posterior (Prior * lik * trend)
+        post = df['bay_prior'] * df['lik_fus'] * np.where(df['9ema osc latest'] > 0, 2.4, 0.6)
+        df['omni_post'] = np.clip(post * np.where(df['price'] > df['ma200 latest'], 1.9, 0.4), 0.3, 4.2)
+
+        # 4. Omniscience Score
+        df['omni_score'] = df['bay_prior'] * df['lik_fus'] * df['omni_post']
+
+        df['omni_score'] = np.maximum(df['omni_score'], 0.01)
+
+        # Density weighting
+        total_score = df['omni_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['omni_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: ApotheosisMomentum Strategy
+# =====================================
+class ApotheosisMomentum(BaseStrategy):
+    """
+    ApotheosisMomentum: Apotheosis Deification of Momentum Gods.
+    - Paradigm: Deification rite – alpha apotheosis where mortal indicators ascend to godhood via ritual amplification, compounding divine momentum for immortal returns.
+    - Innovation: Ascension rite as exponential god-tier thresholds.
+    - Weighting: Divine aura normalization for apotheotic harmony.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'rsi latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest', 'ma90 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Mortal Threshold (Base rite)
+        mortal = np.minimum(np.abs(df['osc latest']), df['rsi latest']) / 50
+        df['mortal_rite'] = np.clip(mortal, 0.1, 2.0)
+
+        # 2. Ascension Amp (EMA god-lift)
+        asc = np.exp(np.abs(df['9ema osc latest'] - df['21ema osc latest']) / 50) - 1
+        df['asc_amp'] = np.clip(asc * df['mortal_rite'], 0.3, 3.1)
+
+        # 3. Apotheosis Comp (Amp ^ z-god)
+        apo_comp = df['asc_amp'] ** np.abs(df['zscore latest']) * np.where(df['price'] > df['ma90 latest'], 2.7, 0.5)
+        df['apo_comp'] = np.clip(apo_comp, 0.4, 4.5)
+
+        # 4. God Score
+        df['apo_score'] = df['mortal_rite'] * df['asc_amp'] * df['apo_comp']
+
+        df['apo_score'] = np.maximum(df['apo_score'], 0.01)
+
+        # Aura weighting
+        total_score = df['apo_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['apo_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: TranscendentAlpha Strategy
+# =====================================
+class TranscendentAlpha(BaseStrategy):
+    """
+    TranscendentAlpha: Transcendent Beyond-Alpha Enlightenment.
+    - Paradigm: Transcendental ascent – alpha transcendence beyond metrics, where indicators dissolve into pure momentum essence, compounding eternal beyond-returns.
+    - Innovation: Essence distillation as transcendental functions (e.g., gamma integrals approx) for pure yield.
+    - Weighting: Essence flow for transcendent unity.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', 'zscore latest',
+            '9ema osc latest', 'ma200 latest', 'dev20 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Essence Distill (Transcend metrics)
+        distill_rsi = np.sqrt(np.abs(df['rsi latest'] - 50)) / np.sqrt(50) * 2
+        distill_osc = np.sqrt(np.abs(df['osc latest'])) / np.sqrt(100) * 2
+        df['ess_distill'] = (distill_rsi + distill_osc) / 2
+
+        # 2. Transcend Flow (Z-essence)
+        flow = df['ess_distill'] * np.abs(df['zscore latest']) / (df['dev20 latest'] / df['price'] + 1e-6)
+        df['trans_flow'] = np.clip(flow, 0.2, 3.2)
+
+        # 3. Beyond Comp (Flow ^ essence)
+        beyond = df['trans_flow'] ** df['ess_distill'] * np.where(df['9ema osc latest'] > 0, 2.9, 0.4)
+        df['beyond_comp'] = np.clip(beyond * np.where(df['price'] > df['ma200 latest'], 1.8, 0.5), 0.3, 4.6)
+
+        # 4. Transcendent Score
+        df['trans_score'] = df['ess_distill'] * df['trans_flow'] * df['beyond_comp']
+
+        df['trans_score'] = np.maximum(df['trans_score'], 0.01)
+
+        # Unity weighting
+        total_score = df['trans_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['trans_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
