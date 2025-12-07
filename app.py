@@ -1101,17 +1101,17 @@ def main():
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap'],
+                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
                     "rationale": "Counter-intuitive smooth-trend specialists. CL2/CL3 dominate bull swings (14.4-14.6% returns) by avoiding momentum whipsaw in strong trends. VolatilitySurfer provides superior risk management (Calmar 141.93). PR_v1 captures pullbacks within uptrend. MomentumMasters deliberately EXCLUDED - performs worst in bull swings (9.24% vs 14.55% for CL2) due to premature stop-outs."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout'],
+                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
                     "rationale": "Volatility-first defense with measured aggression. VolatilitySurfer dominates bear swings (-1.21% loss vs -4.71% average) through superior drawdown control (-4.61% vs -5.54% average). MOM_v1 provides 38% win rate (best in bears) through adaptive positioning. MomentumMasters limited to 20% - surprisingly resilient in bears (-2.53%) despite failing in bulls."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout'],
+                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
                 }
             }
         },
@@ -1120,17 +1120,17 @@ def main():
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap'],
+                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
                     "rationale": "Regime-specific reversion: CL strategies excel. CL_v1/CL2 deliver highest returns in bull SIPs (13.12% vs 11.57% for MomentumMasters) through low-volatility trend capture. VolatilitySurfer provides best risk-adjusted returns (Calmar 13.19) despite lower absolute performance. MOM_v1 stabilizes with adaptive allocation. MomentumMasters deliberately EXCLUDED despite 65% win rate - absolute returns lag (11.57%, dead last)."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer'],
+                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
                     "rationale": "Damage control with VolatilitySurfer anchor. VolatilitySurfer loses least in bear SIPs (-4.12% vs -5.86% average) with shallowest drawdown (-6.07% vs -8.97% average). MomentumMasters at 25% for measured participation (-4.80%, #2 overall). MOM_v1 provides adaptive defense (37% win rate, highest in bears). All CL strategies excluded - catastrophic bear SIP performance (bottom 4 positions, losses -5.54% to -5.86%)."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer'],
+                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
