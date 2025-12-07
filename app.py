@@ -334,7 +334,7 @@ if 'selected_date' not in st.session_state: st.session_state.selected_date = Non
 if 'suggested_mix' not in st.session_state: st.session_state.suggested_mix = None
 if 'regime_display' not in st.session_state: st.session_state.regime_display = None # For sidebar display
 if 'min_pos_pct' not in st.session_state: st.session_state.min_pos_pct = 1.0
-if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 15.0
+if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 10.0
 
 # --- Base Classes and Utilities ---
 def fix_csv_export(df: pd.DataFrame) -> bytes:
