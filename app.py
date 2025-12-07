@@ -1093,7 +1093,7 @@ def main():
         'ReturnPyramid': ReturnPyramid(),
         'HyperAlphaIgniter': HyperAlphaIgniter(),
         'AlphaSurge': AlphaSurge(),
-        'ExtremeMomentumBlitz': ExtremeMomentumBlitz()
+        'ExtremeMomentumBlitz': ExtremeMomentumBlitz(),
         'MultiverseAlpha': MultiverseAlpha(),
         'InfiniteMomentumLoop': InfiniteMomentumLoop(),
         'DivineMomentumOracle': DivineMomentumOracle(),
