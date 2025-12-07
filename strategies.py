@@ -2294,3 +2294,388 @@ class ReturnPyramid(BaseStrategy):
             df_sorted['weightage'] = 1.0 / n
 
         return self._allocate_portfolio(df_sorted, sip_amount)
+        
+# =====================================
+# NEW: MomentumCascade Strategy
+# =====================================
+class MomentumCascade(BaseStrategy):
+    """
+    MomentumCascade: Cascading Momentum Amplifier.
+    - Thesis: Alpha emerges from cascading momentum where short-term signals (daily EMA/OSC) lead and amplify longer-term trends (weekly), creating explosive upside.
+    - Focus: Heavy weighting to stocks showing daily surge pulling weekly into alignment.
+    - Allocation: 60% to top 8, 25% to next 12, 15% to rest for concentrated alpha capture.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Daily Surge Score (Short-term lead)
+        daily_surge = np.where(
+            (df['9ema osc latest'] > df['21ema osc latest']) & (df['osc latest'] > df['osc weekly']),
+            2.5,  # Strong daily lead
+            np.where(df['9ema osc latest'] > df['21ema osc latest'], 1.8, 1.0)
+        )
+        df['daily_surge'] = daily_surge * np.clip((df['rsi latest'] - 50) / 20, 0, 2)
+
+        # 2. Weekly Alignment Pull (Long-term catch-up)
+        weekly_pull = np.where(
+            (df['osc weekly'] > -20) & (df['9ema osc weekly'] > df['21ema osc weekly'] * 0.95),
+            2.0,  # Weekly starting to align
+            np.where(df['osc weekly'] > -40, 1.4, 0.7)
+        )
+        df['weekly_pull'] = weekly_pull * (1 - np.clip(df['zscore weekly'], -2, 0))  # Reward undervalued weekly
+
+        # 3. Cascade Multiplier (Daily pulling weekly)
+        cascade_mult = np.where(
+            (df['daily_surge'] > 1.5) & (df['weekly_pull'] > 1.2),
+            2.2,  # Full cascade
+            1.0
+        )
+
+        # 4. Trend Anchor (Sustained uptrend)
+        trend_anchor = np.where(
+            (df['price'] > df['ma90 latest']) & (df['ma90 latest'] > df['ma200 weekly']),
+            1.6,
+            np.where(df['price'] > df['ma200 latest'], 1.1, 0.6)
+        )
+
+        # 5. Composite Cascade Score
+        df['cascade_score'] = df['daily_surge'] * df['weekly_pull'] * cascade_mult * trend_anchor
+
+        # Minimum score
+        df['cascade_score'] = np.maximum(df['cascade_score'], 0.01)
+
+        # 6. Concentrated Allocation
+        df_sorted = df.sort_values('cascade_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        # Top 8: 60%
+        top8_end = min(8, n)
+        df_sorted.loc[:top8_end-1, 'weightage'] = 0.6 / top8_end
+
+        # Next 12: 25%
+        next12_end = min(n, top8_end + 12)
+        if next12_end > top8_end:
+            count = next12_end - top8_end
+            df_sorted.loc[top8_end:next12_end-1, 'weightage'] = 0.25 / count
+
+        # Rest: 15%
+        remaining_start = next12_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.15 / count
+        else:
+            # Adjust if fewer stocks
+            if top8_end < n:
+                remaining_count = n - top8_end
+                df_sorted.loc[top8_end:, 'weightage'] = 0.4 / remaining_count  # 25% + 15%
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: AlphaVortex Strategy
+# =====================================
+class AlphaVortex(BaseStrategy):
+    """
+    AlphaVortex: Converging Indicator Vortex for Alpha.
+    - Thesis: Alpha vortex forms when momentum indicators converge (RSI rising, OSC turning positive, Z-score normalizing) in a low-vol uptrend, sucking in capital for rapid gains.
+    - Focus: Detect convergence strength for high-conviction entries.
+    - Allocation: 70% to top 7, 20% to next 13, 10% to rest.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest', 'zscore weekly',
+            'ma90 latest', 'ma200 latest', 'dev20 latest', 'dev20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. RSI Convergence (Rising from neutral)
+        rsi_conv = np.clip((df['rsi latest'] - df['rsi weekly']) / 10 + 1, 0.5, 2.5) if len(df) > 1 else 1.0
+        df['rsi_conv'] = np.where(df['rsi latest'] > 50, rsi_conv, rsi_conv * 0.7)
+
+        # 2. OSC Turning Score (From negative to positive trajectory)
+        osc_turn = np.where(
+            (df['osc latest'] > 0) & (df['osc weekly'] > -30),
+            2.3,
+            np.where(df['9ema osc latest'] > df['21ema osc latest'], 1.6, 0.9)
+        )
+        df['osc_turn'] = osc_turn * np.clip(df['osc latest'] / 50, 0, 1.5)
+
+        # 3. Z-Score Normalization (Pulling toward mean from extremes)
+        z_norm = np.clip(1 - np.abs(df['zscore latest']), 0.3, 2.0) * np.clip(1 - np.abs(df['zscore weekly']), 0.3, 1.5)
+        df['z_norm'] = z_norm if np.isscalar(z_norm) else z_norm.values  # Handle scalar
+
+        # 4. Low-Vol Uptrend Anchor
+        vol_adjust = np.where(
+            ((df['dev20 latest'] / df['price']) + (df['dev20 weekly'] / df['price'])) / 2 < 0.025,
+            1.4,
+            0.8
+        )
+        trend_anchor = np.where(df['price'] > df['ma90 latest'], vol_adjust * 1.3, vol_adjust)
+
+        # 5. Vortex Convergence Score
+        df['vortex_score'] = df['rsi_conv'] * df['osc_turn'] * df['z_norm'] * trend_anchor
+
+        df['vortex_score'] = np.maximum(df['vortex_score'], 0.01)
+
+        # 6. Concentrated Allocation
+        df_sorted = df.sort_values('vortex_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top7_end = min(7, n)
+        df_sorted.loc[:top7_end-1, 'weightage'] = 0.7 / top7_end
+
+        next13_end = min(n, top7_end + 13)
+        if next13_end > top7_end:
+            count = next13_end - top7_end
+            df_sorted.loc[top7_end:next13_end-1, 'weightage'] = 0.2 / count
+
+        remaining_start = next13_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.1 / count
+        else:
+            if top7_end < n:
+                remaining_count = n - top7_end
+                df_sorted.loc[top7_end:, 'weightage'] = 0.3 / remaining_count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: SurgeSentinel Strategy
+# =====================================
+class SurgeSentinel(BaseStrategy):
+    """
+    SurgeSentinel: Post-Consolidation Momentum Sentinel.
+    - Thesis: Alpha surges post-consolidation (low vol contraction followed by momentum breakout), guarded by sentinel confirmations (EMA alignment, RSI build).
+    - Focus: Time the release from compression for max alpha.
+    - Allocation: 65% to top 6, 25% to next 14, 10% to rest.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest',
+            'ma20 latest', 'ma20 weekly', 'dev20 latest', 'dev20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Consolidation Detection (Low Vol Contraction)
+        bb_width_daily = (4 * df['dev20 latest']) / df['ma20 latest']
+        bb_width_weekly = (4 * df['dev20 weekly']) / df['ma20 weekly']
+        contraction = np.where(
+            (bb_width_daily < bb_width_weekly * 0.8) & (bb_width_daily < 0.06),
+            2.4,  # Tight daily after weekly
+            np.where(bb_width_daily < 0.08, 1.5, 0.6)
+        )
+        df['contraction'] = contraction
+
+        # 2. Momentum Release Score (Breakout from consolidation)
+        release = np.where(
+            (df['price'] > df['ma20 latest']) & (df['osc latest'] > 10),
+            2.1,
+            np.where(df['9ema osc latest'] > df['21ema osc latest'], 1.4, 0.8)
+        )
+        df['release'] = release * np.clip(df['zscore latest'], -1, 2)  # Penalize deep oversold
+
+        # 3. Sentinel Confirmation (RSI Building)
+        rsi_build = np.where(
+            (df['rsi latest'] > df['rsi weekly']) & (df['rsi latest'] > 55),
+            1.8,
+            np.where(df['rsi latest'] > 45, 1.2, 0.7)
+        )
+        df['rsi_sentinel'] = rsi_build
+
+        # 4. Surge Multiplier (Contraction + Release)
+        surge_mult = df['contraction'] * df['release'] * df['rsi_sentinel']
+
+        # 5. Composite Surge Score
+        df['surge_score'] = surge_mult
+
+        df['surge_score'] = np.maximum(df['surge_score'], 0.01)
+
+        # 6. Allocation
+        df_sorted = df.sort_values('surge_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top6_end = min(6, n)
+        df_sorted.loc[:top6_end-1, 'weightage'] = 0.65 / top6_end
+
+        next14_end = min(n, top6_end + 14)
+        if next14_end > top6_end:
+            count = next14_end - top6_end
+            df_sorted.loc[top6_end:next14_end-1, 'weightage'] = 0.25 / count
+
+        remaining_start = next14_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.1 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: VelocityVortex Strategy
+# =====================================
+class VelocityVortex(BaseStrategy):
+    """
+    VelocityVortex: High-Velocity Momentum with Alpha Edge.
+    - Thesis: Alpha from high-velocity moves (rapid EMA/price acceleration) in low-risk (high Sharpe-like) setups, vortex pulls in sustained momentum.
+    - Focus: Velocity as ROC in indicators, edged by vol-adjusted returns.
+    - Allocation: 75% to top 4, 15% to next 6, 10% to rest for velocity concentration.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'osc weekly', '9ema osc latest', '21ema osc latest',
+            'zscore latest', 'ma90 latest', 'ma200 latest', 'dev20 latest', 'dev20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Price Velocity (ROC vs MA)
+        price_roc = (df['price'] / df['ma90 latest'] - 1) * 100
+        df['price_vel'] = np.clip(price_roc / 10, 0, 3)  # Normalize
+
+        # 2. Oscillator Velocity (EMA diff rate)
+        osc_vel_daily = (df['9ema osc latest'] - df['21ema osc latest']) / (df['21ema osc latest'] + 1e-6)
+        osc_vel_weekly = (df['osc weekly'] - df['osc latest']) / (df['osc latest'] + 1e-6) * -1  # Weekly lag
+        df['osc_vel'] = np.tanh(osc_vel_daily * 0.7 + osc_vel_weekly * 0.3) * 2 + 1
+
+        # 3. Alpha Edge (Vol-Adjusted Velocity ~ Sharpe)
+        avg_vol = (df['dev20 latest'] / df['price'] * 0.6 + df['dev20 weekly'] / df['price'] * 0.4)
+        edge = np.where(avg_vol > 0, (df['price_vel'] + df['osc_vel']) / avg_vol, df['price_vel'] + df['osc_vel'])
+        df['alpha_edge'] = np.clip(edge / edge.mean(), 0.5, 2.5) if len(df) > 1 else edge
+
+        # 4. Z-Score Velocity Boost (Accelerating normalization)
+        z_vel_boost = np.clip(-np.abs(df['zscore latest']), 0, 1.5) * df['osc_vel']
+        df['z_vel'] = 1 + z_vel_boost
+
+        # 5. Composite Velocity Score
+        df['velocity_score'] = df['price_vel'] * df['osc_vel'] * df['alpha_edge'] * df['z_vel']
+
+        df['velocity_score'] = np.maximum(df['velocity_score'], 0.01)
+
+        # 6. Allocation
+        df_sorted = df.sort_values('velocity_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top4_end = min(4, n)
+        df_sorted.loc[:top4_end-1, 'weightage'] = 0.75 / top4_end
+
+        next6_end = min(n, top4_end + 6)
+        if next6_end > top4_end:
+            count = next6_end - top4_end
+            df_sorted.loc[top4_end:next6_end-1, 'weightage'] = 0.15 / count
+
+        remaining_start = next6_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.1 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: BreakoutAlphaHunter Strategy
+# =====================================
+class BreakoutAlphaHunter(BaseStrategy):
+    """
+    BreakoutAlphaHunter: Multi-Layer Momentum Breakout Hunter.
+    - Thesis: Hunt alpha in breakouts layered with momentum confirmations (OSC surge, RSI momentum, Z-score breakout) for high-probability captures.
+    - Focus: Layered signals to filter true alpha-generating breakouts.
+    - Allocation: 68% to top 9, 22% to next 11, 10% to rest.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest', 'zscore weekly',
+            'ma20 latest', 'dev20 latest', 'ma90 latest', 'ma200 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Breakout Layer (Price > Upper BB + MA)
+        upper_bb = df['ma20 latest'] + 2 * df['dev20 latest']
+        breakout_layer = np.where(
+            (df['price'] > upper_bb) & (df['price'] > df['ma90 latest']),
+            2.6,
+            np.where(df['price'] > df['ma20 latest'], 1.7, 0.5)
+        )
+        df['breakout_layer'] = breakout_layer
+
+        # 2. OSC Surge Layer
+        osc_surge_layer = np.where(
+            (df['osc latest'] > 20) & (df['9ema osc latest'] > df['21ema osc latest'] + 5),
+            2.4,
+            np.where(df['osc latest'] > 0, 1.5, 0.8)
+        )
+        df['osc_layer'] = osc_surge_layer * np.where(df['osc weekly'] > -10, 1.3, 0.9)
+
+        # 3. RSI Momentum Layer
+        rsi_mom_layer = np.clip((df['rsi latest'] - df['rsi weekly']) / 15 + 1, 0.6, 2.2)
+        df['rsi_layer'] = np.where(df['rsi latest'] > 55, rsi_mom_layer * 1.4, rsi_mom_layer)
+
+        # 4. Z-Score Breakout Layer (Extreme to breakout)
+        z_break_layer = np.where(
+            (df['zscore latest'] > 1.2) | ((df['zscore latest'] < -1.2) & (df['osc latest'] > 0)),
+            2.0,
+            1.0
+        )
+        df['z_layer'] = z_break_layer * np.clip(1 - np.abs(df['zscore weekly']), 0.5, 1.5)
+
+        # 5. Composite Hunter Score
+        df['hunter_score'] = (
+            df['breakout_layer'] * df['osc_layer'] * df['rsi_layer'] * df['z_layer']
+        ) * np.where(df['price'] > df['ma200 weekly'], 1.2, 0.8)
+
+        df['hunter_score'] = np.maximum(df['hunter_score'], 0.01)
+
+        # 6. Allocation
+        df_sorted = df.sort_values('hunter_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top9_end = min(9, n)
+        df_sorted.loc[:top9_end-1, 'weightage'] = 0.68 / top9_end
+
+        next11_end = min(n, top9_end + 11)
+        if next11_end > top9_end:
+            count = next11_end - top9_end
+            df_sorted.loc[top9_end:next11_end-1, 'weightage'] = 0.22 / count
+
+        remaining_start = next11_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.1 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
