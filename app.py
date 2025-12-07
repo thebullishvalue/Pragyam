@@ -25,8 +25,14 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 # --- Import Strategies from strategies.py ---
 try:
     from strategies import (
-        BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy, 
-        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer
+        BaseStrategy, QuantumMomentumLeap, VolatilitySurfer, ButterflyChaos, SynapseFiring,
+        ShadowPuppet, NebulaMomentumStorm, WormholeTemporal, AdaptiveVolBreakout, ResonanceEcho,
+        VolReversalHarvester, EscherLoop, MomentumCascade, AlphaVortex, MomentumMasters,
+        MOM1Strategy, MOM2Strategy, BreakoutAlphaHunter, VelocityApocalypse, SymbioticAlpha,
+        InterferenceWave, PhononVibe, PRStrategy, EntangledMomentum, CL3Strategy,
+        DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
+        SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
+        HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -1051,33 +1057,61 @@ def create_conviction_heatmap(strategies, current_df):
 # --- Main Application ---
 def main():
     strategies = {
-        'PR_v1': PRStrategy(), 
-        'CL_v1': CL1Strategy(), 
-        'CL2': CL2Strategy(), 
-        'CL3': CL3Strategy(),
-        'MomentumMasters': MomentumMasters(),
+        'QuantumMomentumLeap': QuantumMomentumLeap(),
         'VolatilitySurfer': VolatilitySurfer(),
-        'MOM_v1': MOM1Strategy(),
-        'MOM_v2': MOM2Strategy() 
+        'ButterflyChaos': ButterflyChaos(),
+        'SynapseFiring': SynapseFiring(),
+        'ShadowPuppet': ShadowPuppet(),
+        'NebulaMomentumStorm': NebulaMomentumStorm(),
+        'WormholeTemporal': WormholeTemporal(),
+        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
+        'ResonanceEcho': ResonanceEcho(),
+        'VolReversalHarvester': VolReversalHarvester(),
+        'EscherLoop': EscherLoop(),
+        'MomentumCascade': MomentumCascade(),
+        'AlphaVortex': AlphaVortex(),
+        'MomentumMasters': MomentumMasters(),
+        'MOM1Strategy': MOM1Strategy(),
+        'MOM2Strategy': MOM2Strategy(),
+        'BreakoutAlphaHunter': BreakoutAlphaHunter(),
+        'VelocityApocalypse': VelocityApocalypse(),
+        'SymbioticAlpha': SymbioticAlpha(),
+        'InterferenceWave': InterferenceWave(),
+        'PhononVibe': PhononVibe(),
+        'PRStrategy': PRStrategy(),
+        'EntangledMomentum': EntangledMomentum(),
+        'CL3Strategy': CL3Strategy(),
+        'DivergenceMirage': DivergenceMirage(),
+        'CL2Strategy': CL2Strategy(),
+        'CL1Strategy': CL1Strategy(),
+        'VelocityVortex': VelocityVortex(),
+        'HorizonEvent': HorizonEvent(),
+        'SurgeSentinel': SurgeSentinel(),
+        'MicrowaveCosmic': MicrowaveCosmic(),
+        'FractalWhisper': FractalWhisper(),
+        'HolographicMomentum': HolographicMomentum(),
+        'ReturnPyramid': ReturnPyramid(),
+        'HyperAlphaIgniter': HyperAlphaIgniter(),
+        'AlphaSurge': AlphaSurge(),
+        'ExtremeMomentumBlitz': ExtremeMomentumBlitz()
     }
-    
+
     PORTFOLIO_STYLES = {
         "Swing Trading": {
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['CL2', 'CL3', 'VolatilitySurfer', 'PR_v1'],
+                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
                     "rationale": "Counter-intuitive smooth-trend specialists. CL2/CL3 dominate bull swings (14.4-14.6% returns) by avoiding momentum whipsaw in strong trends. VolatilitySurfer provides superior risk management (Calmar 141.93). PR_v1 captures pullbacks within uptrend. MomentumMasters deliberately EXCLUDED - performs worst in bull swings (9.24% vs 14.55% for CL2) due to premature stop-outs."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'MOM_v1', 'MomentumMasters'],
+                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
                     "rationale": "Volatility-first defense with measured aggression. VolatilitySurfer dominates bear swings (-1.21% loss vs -4.71% average) through superior drawdown control (-4.61% vs -5.54% average). MOM_v1 provides 38% win rate (best in bears) through adaptive positioning. MomentumMasters limited to 20% - surprisingly resilient in bears (-2.53%) despite failing in bulls."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
-                    "rationale": "Range masters with breakout validation. VolatilitySurfer dominates chop swings (12.53% vs 7.96% for worst) with exceptional Calmar (20.42). MomentumMasters surprisingly effective in chop (11.60%, #2) - volatility enables quick pivots. MOM_v1 stabilizes with consistent middle performance (10.59%). CL strategies completely excluded - fail in choppy conditions (bottom 4 positions consistently)."
+                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
                 }
             }
         },
@@ -1086,17 +1120,17 @@ def main():
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['CL_v1', 'CL2', 'VolatilitySurfer', 'MOM_v1'],
+                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
                     "rationale": "Regime-specific reversion: CL strategies excel. CL_v1/CL2 deliver highest returns in bull SIPs (13.12% vs 11.57% for MomentumMasters) through low-volatility trend capture. VolatilitySurfer provides best risk-adjusted returns (Calmar 13.19) despite lower absolute performance. MOM_v1 stabilizes with adaptive allocation. MomentumMasters deliberately EXCLUDED despite 65% win rate - absolute returns lag (11.57%, dead last)."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
+                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
                     "rationale": "Damage control with VolatilitySurfer anchor. VolatilitySurfer loses least in bear SIPs (-4.12% vs -5.86% average) with shallowest drawdown (-6.07% vs -8.97% average). MomentumMasters at 25% for measured participation (-4.80%, #2 overall). MOM_v1 provides adaptive defense (37% win rate, highest in bears). All CL strategies excluded - catastrophic bear SIP performance (bottom 4 positions, losses -5.54% to -5.86%)."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
+                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
