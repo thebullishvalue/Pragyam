@@ -32,7 +32,8 @@ try:
         InterferenceWave, PhononVibe, PRStrategy, EntangledMomentum, CL3Strategy,
         DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
         SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
-        HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, PantheonAlphaRealm
+        HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, 
+        PantheonAlphaRealm, InfiniteMomentumLoop
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
