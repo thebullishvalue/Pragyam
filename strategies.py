@@ -2294,7 +2294,7 @@ class ReturnPyramid(BaseStrategy):
             df_sorted['weightage'] = 1.0 / n
 
         return self._allocate_portfolio(df_sorted, sip_amount)
-        
+
 # =====================================
 # NEW: MomentumCascade Strategy
 # =====================================
@@ -2679,7 +2679,7 @@ class BreakoutAlphaHunter(BaseStrategy):
             df_sorted['weightage'] /= total_w
 
         return self._allocate_portfolio(df_sorted, sip_amount)
-        
+
 # =====================================
 # NEW: ExtremeMomentumBlitz Strategy
 # =====================================
@@ -2769,7 +2769,9 @@ class HyperAlphaIgniter(BaseStrategy):
             'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
             '9ema osc latest', 'zscore latest', 'dev20 latest', 'ma200 latest'
         ]
-        df = self._clean_data(df, required_columns)
+        
+        # FIX 1: Add .copy() to ensure we are working on a standalone DataFrame
+        df = self._clean_data(df, required_columns).copy()
 
         # 1. RSI Ignition (Rapid rise from oversold)
         rsi_ignite = np.where(
@@ -2800,7 +2802,11 @@ class HyperAlphaIgniter(BaseStrategy):
         df['keg'] = keg * np.where(df['price'] > df['ma200 latest'], 1.5, 0.7)
 
         # 5. Fuse Convergence (All igniting)
-        convergence = np.minimum(df['rsi_ignite'], df['osc_spark'], df['z_fire'])
+        # FIX 2: Correcting np.minimum for 3 arguments by nesting
+        convergence = np.minimum(
+            df['rsi_ignite'], 
+            np.minimum(df['osc_spark'], df['z_fire'])
+        )
         df['ignite_score'] = convergence * df['keg']
 
         df['ignite_score'] = np.maximum(df['ignite_score'], 0.01)
@@ -2810,6 +2816,9 @@ class HyperAlphaIgniter(BaseStrategy):
         n = len(df_sorted)
         if n == 0:
             return pd.DataFrame()
+
+        # Initialize weightage column
+        df_sorted['weightage'] = 0.0
 
         top2_end = min(2, n)
         df_sorted.loc[:top2_end-1, 'weightage'] = 0.82 / top2_end
@@ -2917,7 +2926,9 @@ class QuantumMomentumLeap(BaseStrategy):
             'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest', '21ema osc latest',
             'zscore latest', 'zscore weekly', 'ma200 latest', 'dev20 latest', 'ma20 weekly'
         ]
-        df = self._clean_data(df, required_columns)
+        
+        # FIX 1: Add .copy() to ensure we are working on a standalone DataFrame
+        df = self._clean_data(df, required_columns).copy()
 
         # 1. RSI Quantum Phase (Synchronized rise)
         phase_rsi = np.sin(np.pi * (df['rsi latest'] - 50) / 50) * 2 + 1  # Wave-like alignment
@@ -2940,7 +2951,12 @@ class QuantumMomentumLeap(BaseStrategy):
         df['barrier'] = barrier
 
         # 5. Leap Alignment Score
-        alignment = np.minimum(df['phase_rsi'], df['tunnel_vel'], df['super_z'])
+        # FIX 2: Correcting np.minimum for 3 arguments by nesting
+        alignment = np.minimum(
+            df['phase_rsi'], 
+            np.minimum(df['tunnel_vel'], df['super_z'])
+        )
+        
         df['leap_score'] = alignment * df['barrier'] * np.where(df['price'] > df['ma200 latest'], 1.8, 0.6)
 
         df['leap_score'] = np.maximum(df['leap_score'], 0.01)
@@ -2950,6 +2966,9 @@ class QuantumMomentumLeap(BaseStrategy):
         n = len(df_sorted)
         if n == 0:
             return pd.DataFrame()
+
+        # Initialize weightage column
+        df_sorted['weightage'] = 0.0
 
         top4_end = min(4, n)
         df_sorted.loc[:top4_end-1, 'weightage'] = 0.78 / top4_end
@@ -2970,9 +2989,6 @@ class QuantumMomentumLeap(BaseStrategy):
 
         return self._allocate_portfolio(df_sorted, sip_amount)
 
-# =====================================
-# NEW: NebulaMomentumStorm Strategy
-# =====================================
 class NebulaMomentumStorm(BaseStrategy):
     """
     NebulaMomentumStorm: Storm of Nebula-Scale Momentum.
@@ -2985,7 +3001,10 @@ class NebulaMomentumStorm(BaseStrategy):
             'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
             '9ema osc latest', 'zscore latest', 'ma90 latest', 'dev20 weekly'
         ]
-        df = self._clean_data(df, required_columns)
+        
+        # FIX 1: Add .copy() to ensure we are working on a standalone DataFrame,
+        # preventing the SettingWithCopyWarning.
+        df = self._clean_data(df, required_columns).copy()
 
         # 1. Storm Cell Density (Indicator clustering)
         cell_rsi = np.where(np.abs(df['rsi latest'] - df['rsi weekly']) < 5, 3.6, 1.4)
@@ -3000,12 +3019,18 @@ class NebulaMomentumStorm(BaseStrategy):
 
         # 3. Hyper-Acceleration Pull
         pull = (df['price'] / df['ma90 latest'] - 1) * 100
+        # Added safety check for division by zero
         df['pull'] = np.clip(pull / 5, 0, 3.8) * (1 / (df['dev20 weekly'] / df['price'] + 1e-6))
 
         # 4. Storm Intensity (Density * Pull)
-        intensity = np.minimum(df['cell_rsi'], df['cell_osc'], df['nebula_core'])
+        # FIX 2: np.minimum takes 2 arguments. To compare 3, we nest them 
+        # or use element-wise min across columns.
+        intensity = np.minimum(
+            df['cell_rsi'], 
+            np.minimum(df['cell_osc'], df['nebula_core'])
+        )
+        
         df['storm_score'] = intensity * df['pull']
-
         df['storm_score'] = np.maximum(df['storm_score'], 0.01)
 
         # 5. Nebula Alloc
@@ -3013,6 +3038,9 @@ class NebulaMomentumStorm(BaseStrategy):
         n = len(df_sorted)
         if n == 0:
             return pd.DataFrame()
+
+        # Initialize weightage to float
+        df_sorted['weightage'] = 0.0
 
         top1_end = min(1, n)
         df_sorted.loc[:top1_end-1, 'weightage'] = 0.88 / top1_end
@@ -3032,7 +3060,7 @@ class NebulaMomentumStorm(BaseStrategy):
             df_sorted['weightage'] /= total_w
 
         return self._allocate_portfolio(df_sorted, sip_amount)
-        
+
 # =====================================
 # NEW: ResonanceEcho Strategy
 # =====================================
@@ -3287,7 +3315,7 @@ class ShadowPuppet(BaseStrategy):
             df['weightage'] = 1.0 / len(df)
 
         return self._allocate_portfolio(df, sip_amount)
-        
+
 # =====================================
 # NEW: EntangledMomentum Strategy
 # =====================================
