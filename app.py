@@ -16,53 +16,41 @@ from sklearn.preprocessing import StandardScaler
 import time
 import warnings
 
-# — Suppress known NumPy warnings during backtest warm-up —
+# --- Suppress known NumPy warnings during backtest warm-up ---
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='Mean of empty slice')
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered in divide')
-# — End suppression —
+# --- End suppression ---
 
-# — Import Strategies from strategies.py —
+
+# --- Import Strategies from strategies.py ---
 try:
     from strategies import (
-        BaseStrategy, QuantumMomentumLeap, VolatilitySurfer, ButterflyChaos, SynapseFiring,
-        ShadowPuppet, NebulaMomentumStorm, WormholeTemporal, AdaptiveVolBreakout, ResonanceEcho,
-        VolReversalHarvester, EscherLoop, MomentumCascade, AlphaVortex, MomentumMasters,
-        MOM1Strategy, MOM2Strategy, BreakoutAlphaHunter, VelocityApocalypse, SymbioticAlpha,
-        InterferenceWave, PhononVibe, PRStrategy, EntangledMomentum, CL3Strategy,
-        DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
-        SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
-        HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz
+        BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy, 
+        MOM1Strategy, MOM2Strategy, MomentumMasters, VolatilitySurfer
     )
 except ImportError:
-    st.error("Fatal Error: `strategies.py` not found. Please ensure it’s in the same directory.")
+    st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
     st.stop()
 
-# — Import Live Data Generation from backdata.py —
+# --- Import Live Data Generation from backdata.py ---
 try:
     from backdata import (
-        generate_historical_data,
-        load_symbols_from_file,
+        generate_historical_data, 
+        load_symbols_from_file, 
         MAX_INDICATOR_PERIOD,
         SYMBOLS_UNIVERSE
     )
 except ImportError:
-    st.error("Fatal Error: `backdata.py` not found. Please ensure it’s in the same directory.")
+    st.error("Fatal Error: `backdata.py` not found. Please ensure it's in the same directory.")
     st.stop()
 
-# — Import Unified Market Analysis Booster —
-try:
-    from unified_booster import boost_portfolio_with_unified_signals
-    UNIFIED_BOOSTER_AVAILABLE = True
-except ImportError:
-    UNIFIED_BOOSTER_AVAILABLE = False
-    logging.warning("unified_booster.py not found - Unified signal boost will be disabled")
 
-# — System Configuration —
+# --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
 st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 VERSION = "v1.1.0 - Curation Engine"
 
-# — CSS Styling —
+# --- CSS Styling ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -330,10 +318,9 @@ st.markdown("""
         margin: 1rem 0;
     }
 </style>
-
 """, unsafe_allow_html=True)
 
-# — Session State Management —
+# --- Session State Management ---
 if 'performance' not in st.session_state: st.session_state.performance = None
 if 'portfolio' not in st.session_state: st.session_state.portfolio = None
 if 'current_df' not in st.session_state: st.session_state.current_df = None
@@ -342,10 +329,8 @@ if 'suggested_mix' not in st.session_state: st.session_state.suggested_mix = Non
 if 'regime_display' not in st.session_state: st.session_state.regime_display = None # For sidebar display
 if 'min_pos_pct' not in st.session_state: st.session_state.min_pos_pct = 1.0
 if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 10.0
-if 'booster_config' not in st.session_state: st.session_state.booster_config = {'enabled': False}
 
-# — Base Classes and Utilities —
-
+# --- Base Classes and Utilities ---
 def fix_csv_export(df: pd.DataFrame) -> bytes:
     output = io.BytesIO()
     df.to_csv(output, index=False, encoding='utf-8-sig')
@@ -358,18 +343,18 @@ def create_export_link(data_bytes, filename):
     return href
 
 # =========================================================================
-# — Live Data Loading Function —
+# --- Live Data Loading Function ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[datetime, pd.DataFrame]]:
     """
     Fetches and processes all historical data on-the-fly using the
     backdata.py module.
     """
-    logging.info(f"— START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) —")
-
+    logging.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
+    
     total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
     fetch_start_date = end_date - timedelta(days=total_days_to_fetch)
-
+    
     logging.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
 
     try:
@@ -392,8 +377,9 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
         return []
 
 # =========================================================================
-# — Core Backtesting & Curation Engine (Optimized) —
 
+
+# --- Core Backtesting & Curation Engine (Optimized) ---
 def compute_portfolio_return(portfolio: pd.DataFrame, next_prices: pd.DataFrame) -> float:
     if portfolio.empty or 'value' not in portfolio.columns or portfolio['value'].sum() == 0: return 0.0
     merged = portfolio.merge(next_prices[['symbol', 'price']], on='symbol', how='inner', suffixes=('_prev', '_next'))
@@ -476,7 +462,6 @@ def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFr
                         sub_ret = compute_portfolio_return(sub_df, next_df)
                         subset_performance[name][tier_name].append({'return': sub_ret, 'date': next_date})
             except Exception as e: logging.error(f"Window Calc Error ({name}, {date}): {e}")
-    
     final_performance = {name: {'metrics': calculate_advanced_metrics(perf['returns'])[0], 'sharpe': calculate_advanced_metrics(perf['returns'])[0]['sharpe']} for name, perf in performance.items()}
     final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
     return {'strategy': final_performance, 'subset': final_sub_performance}
@@ -496,11 +481,12 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
 
     progress_bar = st.progress(0, text="Initializing backtest...")
     total_steps = len(historical_data) - MIN_TRAIN_FILES - 1
-
+    
     if total_steps <= 0:
         st.error(f"Not enough data for a single backtest step. Need at least {MIN_TRAIN_FILES + 2} days of data.")
         progress_bar.empty()
         return {}
+
 
     for i in range(MIN_TRAIN_FILES, len(historical_data) - 1):
         train_window = historical_data[:i]
@@ -515,16 +501,7 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
 
         try:
             logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
-            curated_port, strategy_weights, subset_weights = curate_final_portfolio(
-                _strategies, 
-                in_sample_perf, 
-                test_df, 
-                TRAINING_CAPITAL, 
-                30, 
-                1.0, 
-                10.0, 
-                apply_booster=False  # Do not apply booster during OOS backtest
-            )
+            curated_port, strategy_weights, subset_weights = curate_final_portfolio(_strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0)
             
             strategy_weights_history.append({'date': test_date, **strategy_weights})
             subset_weights_history.append({'date': test_date, **subset_weights})
@@ -568,18 +545,8 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
         'subset_weights_history': subset_weights_history
     }
 
-def curate_final_portfolio(
-    strategies: Dict[str, BaseStrategy], 
-    performance: Dict, 
-    current_df: pd.DataFrame, 
-    sip_amount: float, 
-    num_positions: int, 
-    min_pos_pct: float, 
-    max_pos_pct: float,
-    apply_booster: bool = False,
-    analysis_date: datetime = None
-) -> Tuple[pd.DataFrame, Dict, Dict]:
-    
+
+def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dict, current_df: pd.DataFrame, sip_amount: float, num_positions: int, min_pos_pct: float, max_pos_pct: float) -> Tuple[pd.DataFrame, Dict, Dict]:
     strategy_weights = calculate_strategy_weights(performance)
     subset_weights = {}
     for name in strategies:
@@ -622,7 +589,6 @@ def curate_final_portfolio(
                 final_weight = (weight_pct / 100) * tier_weight * strategy_weights.get(name, 0)
                 if symbol in aggregated_holdings: aggregated_holdings[symbol]['weight'] += final_weight
                 else: aggregated_holdings[symbol] = {'price': price, 'weight': final_weight}
-    
     if not aggregated_holdings: 
         return pd.DataFrame(), {}, {}
         
@@ -633,45 +599,17 @@ def curate_final_portfolio(
     final_port['weightage_pct'] = (final_port['weightage_pct'] / final_port['weightage_pct'].sum()) * 100
     final_port['units'] = np.floor((sip_amount * final_port['weightage_pct'] / 100) / final_port['price'])
     final_port['value'] = final_port['units'] * final_port['price']
-
+    
     final_port_df = final_port.sort_values('weightage_pct', ascending=False).reset_index(drop=True)
-
-    # --- UNIFIED MARKET ANALYSIS BOOSTER LAYER ---
-    # Apply weight boost for symbols with buy signals (non-invasive layer)
-    booster_config = st.session_state.get('booster_config', {'enabled': False})
-
-    if UNIFIED_BOOSTER_AVAILABLE and apply_booster and booster_config.get('enabled', False) and not final_port_df.empty:
-        try:
-            logging.info("Applying Unified Market Analysis booster...")
-            
-            # Get all symbols in current universe for signal detection
-            all_symbols = current_df['symbol'].unique().tolist() if 'symbol' in current_df.columns else []
-            
-            # Apply boost with user-configured parameters
-            final_port_df = boost_portfolio_with_unified_signals(
-                portfolio_df=final_port_df,
-                symbols=all_symbols,
-                boost_multiplier=booster_config.get('boost_multiplier', 1.15),
-                max_boost_weight=booster_config.get('max_boost_weight', 0.15),
-                lookback_days=booster_config.get('lookback_days', 100),
-                analysis_date=analysis_date # Pass the specific analysis date
-            )
-            
-            logging.info("Unified booster applied successfully")
-            
-        except Exception as e:
-            logging.warning(f"Unified booster failed, continuing without boost: {e}")
-            # Portfolio remains unchanged on failure
-
     return final_port_df, strategy_weights, subset_weights
 
-# — NEW: Production-Grade Market Regime Detection System (v2 - Corrected Logic) —
-
+# --- NEW: Production-Grade Market Regime Detection System (v2 - Corrected Logic) ---
 class MarketRegimeDetectorV2:
     """
     Institutional-grade market regime detection (v2) with corrected scoring and
     classification logic.
     """
+    
     def __init__(self):
         self.regime_thresholds = {
             'CRISIS': {'score': -1.0, 'confidence': 0.85},
@@ -682,7 +620,7 @@ class MarketRegimeDetectorV2:
             'BULL': {'score': 1.0, 'confidence': 0.75},
             'STRONG_BULL': {'score': 1.5, 'confidence': 0.85},
         }
-
+    
     def detect_regime(self, historical_data: list) -> Tuple[str, str, float, Dict]:
         if len(historical_data) < 10:
             return "INSUFFICIENT_DATA", "🐂 Bull Market Mix", 0.3, {}
@@ -846,7 +784,7 @@ class MarketRegimeDetectorV2:
     def _calculate_composite_score(self, metrics: Dict) -> float:
         weights = { 'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15, 'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15 }
         return sum(metrics[factor]['score'] * weight for factor, weight in weights.items())
-
+    
     def _classify_regime(self, score: float, metrics: Dict) -> Tuple[str, float]:
         if metrics['volatility']['regime'] == 'PANIC' and score < -0.5 and metrics['breadth']['quality'] == 'CAPITULATION':
             return 'CRISIS', 0.90
@@ -859,7 +797,7 @@ class MarketRegimeDetectorV2:
                 return regime, confidence
 
         return 'CRISIS', 0.85
-
+    
     def _map_regime_to_mix(self, regime: str) -> str:
         mapping = {
             'STRONG_BULL': 'Bull Market Mix', 'BULL': 'Bull Market Mix',
@@ -868,7 +806,7 @@ class MarketRegimeDetectorV2:
             'CRISIS': 'Bear Market Mix'
         }
         return mapping.get(regime, 'Chop/Consolidate Mix')
-
+    
     def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float) -> str:
         lines = [f"**Detected Regime:** {regime} (Score: {score:.2f}, Confidence: {confidence:.0%})", ""]
         rationales = {
@@ -895,9 +833,9 @@ class MarketRegimeDetectorV2:
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, Dict]:
     detector = MarketRegimeDetectorV2()
-    regime_days_to_fetch = int(MAX_INDICATOR_PERIOD * 1.5) + 30
+    regime_days_to_fetch = int(MAX_INDICATOR_PERIOD * 1.5) + 30 
     fetch_start_date = end_date - timedelta(days=regime_days_to_fetch)
-
+    
     try:
         historical_data = generate_historical_data(
             symbols_to_process=SYMBOLS_UNIVERSE,
@@ -923,8 +861,8 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
             0.30, {}
         )
 
-# — UI & Visualization Functions —
 
+# --- UI & Visualization Functions ---
 def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: str):
     if not weight_history:
         st.warning(f"No data available for {title}.")
@@ -965,7 +903,7 @@ def display_performance_metrics(performance: Dict):
     col2.metric("Max Drawdown", f"{curated_metrics.get('max_drawdown', 0):.2%}", help="The largest peak-to-trough decline in value. Closer to 0 is better.")
     col3.metric("Sortino Ratio", f"{curated_metrics.get('sortino', 0):.2f}", help="Measures return per unit of downside risk. Good > 1, Excellent > 2.")
     col4.metric("Kelly Criterion", f"{curated_metrics.get('kelly_criterion', 0):.2%}", help="Theoretical optimal fraction of capital to allocate. Prone to estimation error; use with caution.")
-
+    
     avg_entropy = curated_metrics.get('avg_weight_entropy')
     if avg_entropy is not None:
         st.metric("Average Weight Entropy", f"{avg_entropy:.3f}", help="Measures portfolio diversification. Higher values indicate a more diversified, less concentrated portfolio.")
@@ -1028,6 +966,7 @@ def display_performance_metrics(performance: Dict):
     fig_corr.update_layout(title="Correlation of Strategy Returns", template='plotly_dark')
     st.plotly_chart(fig_corr, width='stretch')
 
+
 def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
     if not subset_perf: return
 
@@ -1082,11 +1021,12 @@ def display_subset_weight_evolution(subset_weights_history: List[Dict], strategi
             y_axis_title="Tier Weight"
         )
 
+
 def create_conviction_heatmap(strategies, current_df):
     all_signals = []
     for name, s in strategies.items():
         port = s.generate_portfolio(current_df.copy())
-
+        
         if port.empty:
             continue
 
@@ -1108,65 +1048,36 @@ def create_conviction_heatmap(strategies, current_df):
     fig.update_layout(template='plotly_dark', height=600)
     return fig
 
-# — Main Application —
-
+# --- Main Application ---
 def main():
     strategies = {
-        'QuantumMomentumLeap': QuantumMomentumLeap(),
-        'VolatilitySurfer': VolatilitySurfer(),
-        'ButterflyChaos': ButterflyChaos(),
-        'SynapseFiring': SynapseFiring(),
-        'ShadowPuppet': ShadowPuppet(),
-        'NebulaMomentumStorm': NebulaMomentumStorm(),
-        'WormholeTemporal': WormholeTemporal(),
-        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
-        'ResonanceEcho': ResonanceEcho(),
-        'VolReversalHarvester': VolReversalHarvester(),
-        'EscherLoop': EscherLoop(),
-        'MomentumCascade': MomentumCascade(),
-        'AlphaVortex': AlphaVortex(),
+        'PR_v1': PRStrategy(), 
+        'CL_v1': CL1Strategy(), 
+        'CL2': CL2Strategy(), 
+        'CL3': CL3Strategy(),
         'MomentumMasters': MomentumMasters(),
-        'MOM1Strategy': MOM1Strategy(),
-        'MOM2Strategy': MOM2Strategy(),
-        'BreakoutAlphaHunter': BreakoutAlphaHunter(),
-        'VelocityApocalypse': VelocityApocalypse(),
-        'SymbioticAlpha': SymbioticAlpha(),
-        'InterferenceWave': InterferenceWave(),
-        'PhononVibe': PhononVibe(),
-        'PRStrategy': PRStrategy(),
-        'EntangledMomentum': EntangledMomentum(),
-        'CL3Strategy': CL3Strategy(),
-        'DivergenceMirage': DivergenceMirage(),
-        'CL2Strategy': CL2Strategy(),
-        'CL1Strategy': CL1Strategy(),
-        'VelocityVortex': VelocityVortex(),
-        'HorizonEvent': HorizonEvent(),
-        'SurgeSentinel': SurgeSentinel(),
-        'MicrowaveCosmic': MicrowaveCosmic(),
-        'FractalWhisper': FractalWhisper(),
-        'HolographicMomentum': HolographicMomentum(),
-        'ReturnPyramid': ReturnPyramid(),
-        'HyperAlphaIgniter': HyperAlphaIgniter(),
-        'AlphaSurge': AlphaSurge(),
-        'ExtremeMomentumBlitz': ExtremeMomentumBlitz()
+        'VolatilitySurfer': VolatilitySurfer(),
+        'MOM_v1': MOM1Strategy(),
+        'MOM_v2': MOM2Strategy() 
     }
-
+    
     PORTFOLIO_STYLES = {
         "Swing Trading": {
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
+                    "strategies": ['CL2', 'CL3', 'VolatilitySurfer', 'PR_v1'],
                     "rationale": "Counter-intuitive smooth-trend specialists. CL2/CL3 dominate bull swings (14.4-14.6% returns) by avoiding momentum whipsaw in strong trends. VolatilitySurfer provides superior risk management (Calmar 141.93). PR_v1 captures pullbacks within uptrend. MomentumMasters deliberately EXCLUDED - performs worst in bull swings (9.24% vs 14.55% for CL2) due to premature stop-outs."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
+                    "strategies": ['VolatilitySurfer', 'MOM_v1', 'MomentumMasters'],
                     "rationale": "Volatility-first defense with measured aggression. VolatilitySurfer dominates bear swings (-1.21% loss vs -4.71% average) through superior drawdown control (-4.61% vs -5.54% average). MOM_v1 provides 38% win rate (best in bears) through adaptive positioning. MomentumMasters limited to 20% - surprisingly resilient in bears (-2.53%) despite failing in bulls."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VolatilitySurfer', 'QuantumMomentumLeap', 'AdaptiveVolBreakout', 'WormholeTemporal'],
+                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
+                    "rationale": "Range masters with breakout validation. VolatilitySurfer dominates chop swings (12.53% vs 7.96% for worst) with exceptional Calmar (20.42). MomentumMasters surprisingly effective in chop (11.60%, #2) - volatility enables quick pivots. MOM_v1 stabilizes with consistent middle performance (10.59%). CL strategies completely excluded - fail in choppy conditions (bottom 4 positions consistently)."
                 }
             }
         },
@@ -1175,23 +1086,23 @@ def main():
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'NebulaMomentumStorm', 'QuantumMomentumLeap', 'ResonanceEcho'],
+                    "strategies": ['CL_v1', 'CL2', 'VolatilitySurfer', 'MOM_v1'],
                     "rationale": "Regime-specific reversion: CL strategies excel. CL_v1/CL2 deliver highest returns in bull SIPs (13.12% vs 11.57% for MomentumMasters) through low-volatility trend capture. VolatilitySurfer provides best risk-adjusted returns (Calmar 13.19) despite lower absolute performance. MOM_v1 stabilizes with adaptive allocation. MomentumMasters deliberately EXCLUDED despite 65% win rate - absolute returns lag (11.57%, dead last)."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
+                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
                     "rationale": "Damage control with VolatilitySurfer anchor. VolatilitySurfer loses least in bear SIPs (-4.12% vs -5.86% average) with shallowest drawdown (-6.07% vs -8.97% average). MomentumMasters at 25% for measured participation (-4.80%, #2 overall). MOM_v1 provides adaptive defense (37% win rate, highest in bears). All CL strategies excluded - catastrophic bear SIP performance (bottom 4 positions, losses -5.54% to -5.86%)."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['QuantumMomentumLeap', 'AdaptiveVolBreakout', 'VolatilitySurfer', 'NebulaMomentumStorm'],
+                    "strategies": ['VolatilitySurfer', 'MomentumMasters', 'MOM_v1'],
                     "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
                 }
             }
         }
     }
-
+    
     def update_regime_suggestion():
         """
         Called when the analysis date changes. Fetches *just enough*
@@ -1272,58 +1183,6 @@ def main():
         st.markdown("### Portfolio Parameters")
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
-        
-        # --- UNIFIED BOOSTER CONFIGURATION ---
-        st.markdown("### Advanced: Unified Signal Booster")
-        
-        if UNIFIED_BOOSTER_AVAILABLE:
-            enable_booster = st.checkbox(
-                "Enable Unified Market Analysis Booster",
-                value=True,
-                help="Boost weights for symbols with buy signals from Unified Market Analysis indicator"
-            )
-            
-            if enable_booster:
-                with st.expander("Booster Settings"):
-                    boost_multiplier = st.slider(
-                        "Boost Multiplier",
-                        min_value=1.05,
-                        max_value=1.50,
-                        value=1.15,
-                        step=0.05,
-                        help="Weight multiplier for symbols with buy signals (1.15 = 15% boost)"
-                    )
-                    
-                    max_boost_weight = st.slider(
-                        "Max Boosted Weight (%)",
-                        min_value=10.0,
-                        max_value=25.0,
-                        value=15.0,
-                        step=1.0,
-                        help="Maximum weight a single position can have after boost"
-                    ) / 100
-                    
-                    lookback_days = st.number_input(
-                        "Signal Lookback Days",
-                        min_value=50,
-                        max_value=200,
-                        value=100,
-                        step=10,
-                        help="Days of historical data for signal calculation"
-                    )
-                    
-                    # Store in session state for use in curation
-                    st.session_state.booster_config = {
-                        'enabled': True,
-                        'boost_multiplier': boost_multiplier,
-                        'max_boost_weight': max_boost_weight,
-                        'lookback_days': lookback_days
-                    }
-            else:
-                st.session_state.booster_config = {'enabled': False}
-        else:
-            st.info("📦 Unified Booster requires `investpy` package. Install with: `pip install investpy`")
-            st.session_state.booster_config = {'enabled': False}
 
         if st.button("Run Analysis", width='stretch', type="primary"):
             
@@ -1383,9 +1242,7 @@ def main():
                     capital,
                     num_positions,
                     st.session_state.min_pos_pct,
-                    st.session_state.max_pos_pct,
-                    apply_booster=True, # Apply booster only for final analysis
-                    analysis_date=selected_date_dt 
+                    st.session_state.max_pos_pct
                 )
                 st.success("✅ Analysis Complete!")
         
