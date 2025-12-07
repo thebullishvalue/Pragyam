@@ -358,7 +358,7 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
     """
     logging.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
     
-    total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
+    total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 12)
     fetch_start_date = end_date - timedelta(days=total_days_to_fetch)
     
     logging.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
