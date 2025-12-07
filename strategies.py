@@ -2679,3 +2679,611 @@ class BreakoutAlphaHunter(BaseStrategy):
             df_sorted['weightage'] /= total_w
 
         return self._allocate_portfolio(df_sorted, sip_amount)
+        
+# =====================================
+# NEW: ExtremeMomentumBlitz Strategy
+# =====================================
+class ExtremeMomentumBlitz(BaseStrategy):
+    """
+    ExtremeMomentumBlitz: Blitzkrieg Momentum Assault.
+    - Thesis: Launch aggressive alpha assaults on extreme momentum outliers where daily velocity explodes beyond weekly norms, amplified by z-score velocity flips for 3x+ return spikes.
+    - Focus: Target top 3% velocity freaks in uptrends for blitz allocation.
+    - Allocation: 85% to top 3 stocks, 10% to next 7, 5% to rest – ultra-extreme concentration.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', 'osc weekly', '9ema osc latest', '21ema osc latest',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest', 'rsi latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Daily Velocity Explosion (Extreme ROC in OSC)
+        daily_vel = (df['9ema osc latest'] - df['21ema osc latest']) / (df['21ema osc latest'] + 1e-6)
+        df['daily_explosion'] = np.clip(daily_vel * 5, 0, 4)  # Extreme scaling
+
+        # 2. Weekly Norm Breach (Daily >> Weekly)
+        breach = np.where(daily_vel > df['osc weekly'] * 2, 3.5, np.clip(daily_vel / (df['osc weekly'] + 1e-6), 0.5, 2.5))
+        df['breach_score'] = breach
+
+        # 3. Z-Score Velocity Flip (From extreme negative to surge)
+        flip_boost = np.where(
+            (df['zscore latest'] < -1.5) & (daily_vel > 0.1),
+            4.0,  # Massive flip potential
+            np.clip(-df['zscore latest'] + 1, 0.5, 2.0)
+        )
+        df['flip_boost'] = flip_boost
+
+        # 4. RSI Overdrive (High but not exhausted)
+        overdrive = np.where((df['rsi latest'] > 70) & (df['rsi latest'] < 85), 2.8, 1.2)
+        df['rsi_overdrive'] = overdrive
+
+        # 5. Uptrend Siege (Price dominance)
+        siege = np.where(df['price'] > df['ma90 latest'] * 1.05, 2.2, 0.8)
+        df['siege'] = siege
+
+        # 6. Blitz Composite
+        df['blitz_score'] = (
+            df['daily_explosion'] * df['breach_score'] * df['flip_boost'] *
+            df['rsi_overdrive'] * df['siege']
+        )
+
+        df['blitz_score'] = np.maximum(df['blitz_score'], 0.01)
+
+        # 7. Ultra-Concentration
+        df_sorted = df.sort_values('blitz_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top3_end = min(3, n)
+        df_sorted.loc[:top3_end-1, 'weightage'] = 0.85 / top3_end
+
+        next7_end = min(n, top3_end + 7)
+        if next7_end > top3_end:
+            count = next7_end - top3_end
+            df_sorted.loc[top3_end:next7_end-1, 'weightage'] = 0.10 / count
+
+        remaining_start = next7_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.05 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: HyperAlphaIgniter Strategy
+# =====================================
+class HyperAlphaIgniter(BaseStrategy):
+    """
+    HyperAlphaIgniter: Ignite Hyper-Returns via Signal Ignition.
+    - Thesis: Ignite 5x+ alpha by detecting ignition points where multi-indicator fuses (RSI ignition, OSC spark, Z-fire) light up in low-vol powder kegs for chain-reaction gains.
+    - Focus: Fuse convergence at extremes for ignition scoring.
+    - Allocation: 82% to top 2, 12% to next 8, 6% to rest – ignition-level focus.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', 'zscore latest', 'dev20 latest', 'ma200 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. RSI Ignition (Rapid rise from oversold)
+        rsi_ignite = np.where(
+            (df['rsi latest'] > df['rsi weekly'] + 15) & (df['rsi latest'] > 60),
+            3.8,  # Hot ignition
+            np.clip((df['rsi latest'] - 40) / 20, 0.4, 2.0)
+        )
+        df['rsi_ignite'] = rsi_ignite
+
+        # 2. OSC Spark (Sudden positive spike)
+        spark = np.where(
+            (df['osc latest'] > 30) & (df['osc weekly'] < 0),
+            4.2,  # Spark from negative
+            np.clip(df['osc latest'] / 50, 0.3, 2.5)
+        )
+        df['osc_spark'] = spark
+
+        # 3. Z-Fire (Extreme z-score with positive turn)
+        z_fire = np.where(
+            np.abs(df['zscore latest']) > 2 & (df['9ema osc latest'] > 0),
+            3.5,
+            np.clip(1 + df['zscore latest'], 0.2, 2.2)
+        )
+        df['z_fire'] = z_fire
+
+        # 4. Low-Vol Powder Keg (Tight bands pre-explosion)
+        keg = np.where(df['dev20 latest'] / df['price'] < 0.015, 2.8, 1.0)
+        df['keg'] = keg * np.where(df['price'] > df['ma200 latest'], 1.5, 0.7)
+
+        # 5. Fuse Convergence (All igniting)
+        convergence = np.minimum(df['rsi_ignite'], df['osc_spark'], df['z_fire'])
+        df['ignite_score'] = convergence * df['keg']
+
+        df['ignite_score'] = np.maximum(df['ignite_score'], 0.01)
+
+        # 6. Hyper-Allocation
+        df_sorted = df.sort_values('ignite_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top2_end = min(2, n)
+        df_sorted.loc[:top2_end-1, 'weightage'] = 0.82 / top2_end
+
+        next8_end = min(n, top2_end + 8)
+        if next8_end > top2_end:
+            count = next8_end - top2_end
+            df_sorted.loc[top2_end:next8_end-1, 'weightage'] = 0.12 / count
+
+        remaining_start = next8_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.06 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: VelocityApocalypse Strategy
+# =====================================
+class VelocityApocalypse(BaseStrategy):
+    """
+    VelocityApocalypse: Apocalyptic Velocity Endgame.
+    - Thesis: Endgame alpha (10x potential) in apocalyptic velocity spikes where indicators hit escape velocity (>3 std dev moves) in regime shifts, dooming laggards and rewarding frontrunners.
+    - Focus: Std-dev normalized velocity for apocalypse-level outliers.
+    - Allocation: 90% to top 1-2, 8% to next 3, 2% to rest – doomsday concentration.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'osc latest', '9ema osc latest', '21ema osc latest',
+            'zscore latest', 'rsi latest', 'ma90 latest', 'dev20 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Oscillator Escape Velocity (3+ std dev)
+        osc_std = df['osc latest'].std()
+        escape_vel = np.where(np.abs(df['osc latest']) > 3 * osc_std, 5.0, np.clip(df['osc latest'] / osc_std, 0.1, 3.0))
+        df['escape_vel'] = escape_vel * np.sign(df['osc latest'])  # Direction matters
+
+        # 2. EMA Acceleration Apocalypse (Rapid crossover)
+        accel = (df['9ema osc latest'] - df['21ema osc latest']) / (df['21ema osc latest'] + 1e-6)
+        apoc_accel = np.clip(accel * 10, 0, 4.5)
+        df['apoc_accel'] = apoc_accel
+
+        # 3. Z-Apocalypse (Regime shift via z-extreme)
+        z_apoc = np.where(np.abs(df['zscore latest']) > 2.5, 4.8, np.clip(np.abs(df['zscore latest']) * 2, 0.2, 3.0))
+        df['z_apoc'] = z_apoc
+
+        # 4. RSI Doomsday Threshold
+        doom_rsi = np.where(df['rsi latest'] > 80, 3.2, np.clip((df['rsi latest'] - 50) / 15, 0.5, 2.5))
+        df['doom_rsi'] = doom_rsi
+
+        # 5. Price Surge Confirmation
+        surge_confirm = np.where(df['price'] > df['ma90 latest'] * 1.1, 2.9, 0.9)
+        df['surge_confirm'] = surge_confirm * (1 / (df['dev20 latest'] / df['price'] + 1e-6))  # Vol inverse
+
+        # 6. Apocalypse Score
+        df['apoc_score'] = (
+            df['escape_vel'] * df['apoc_accel'] * df['z_apoc'] *
+            df['doom_rsi'] * df['surge_confirm']
+        )  # Positive bias via signs
+
+        df['apoc_score'] = np.maximum(df['apoc_score'], 0.01)
+
+        # 7. Doomsday Alloc
+        df_sorted = df.sort_values('apoc_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top2_end = min(2, n)
+        df_sorted.loc[:top2_end-1, 'weightage'] = 0.90 / top2_end
+
+        next3_end = min(n, top2_end + 3)
+        if next3_end > top2_end:
+            count = next3_end - top2_end
+            df_sorted.loc[top2_end:next3_end-1, 'weightage'] = 0.08 / count
+
+        remaining_start = next3_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.02 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: QuantumMomentumLeap Strategy
+# =====================================
+class QuantumMomentumLeap(BaseStrategy):
+    """
+    QuantumMomentumLeap: Quantum Leap into Untapped Momentum.
+    - Thesis: Quantum leaps (4x+ returns) occur when momentum 'tunnels' through resistance via synchronized quantum states (aligned extreme indicators) in superposition of trend/mean-reversion.
+    - Focus: Phase alignment of indicators for leap detection.
+    - Allocation: 78% to top 4, 15% to next 5, 7% to rest – quantum precision.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest', '21ema osc latest',
+            'zscore latest', 'zscore weekly', 'ma200 latest', 'dev20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. RSI Quantum Phase (Synchronized rise)
+        phase_rsi = np.sin(np.pi * (df['rsi latest'] - 50) / 50) * 2 + 1  # Wave-like alignment
+        df['phase_rsi'] = np.abs(phase_rsi) * np.where(df['rsi latest'] > 55, 2.1, 1.0)
+
+        # 2. OSC Tunnel Velocity
+        tunnel_vel = np.exp((df['9ema osc latest'] - df['21ema osc latest']) / 50) - 1
+        df['tunnel_vel'] = np.clip(tunnel_vel, 0, 4.0)
+
+        # 3. Z-Superposition (Balanced extreme)
+        super_z = 1 / (1 + np.exp(-df['zscore latest'])) * np.clip(np.abs(df['zscore weekly']), 0, 3)  # Sigmoid balance
+        df['super_z'] = super_z * 2.5
+
+        # 4. Low-Resistance Barrier (Vol/MA)
+        barrier = np.where(
+            (df['dev20 latest'] / df['price'] < 0.02) & (df['price'] > df['ma20 weekly']),
+            3.3,
+            1.1
+        )
+        df['barrier'] = barrier
+
+        # 5. Leap Alignment Score
+        alignment = np.minimum(df['phase_rsi'], df['tunnel_vel'], df['super_z'])
+        df['leap_score'] = alignment * df['barrier'] * np.where(df['price'] > df['ma200 latest'], 1.8, 0.6)
+
+        df['leap_score'] = np.maximum(df['leap_score'], 0.01)
+
+        # 6. Quantum Alloc
+        df_sorted = df.sort_values('leap_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top4_end = min(4, n)
+        df_sorted.loc[:top4_end-1, 'weightage'] = 0.78 / top4_end
+
+        next5_end = min(n, top4_end + 5)
+        if next5_end > top4_end:
+            count = next5_end - top4_end
+            df_sorted.loc[top4_end:next5_end-1, 'weightage'] = 0.15 / count
+
+        remaining_start = next5_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.07 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+
+# =====================================
+# NEW: NebulaMomentumStorm Strategy
+# =====================================
+class NebulaMomentumStorm(BaseStrategy):
+    """
+    NebulaMomentumStorm: Storm of Nebula-Scale Momentum.
+    - Thesis: Nebula storms brew 7x+ returns in vast momentum clouds where indicators form storm cells (clustered extremes) pulling price into hyper-acceleration.
+    - Focus: Cluster density of momentum signals for storm intensity.
+    - Allocation: 88% to top 1, 9% to next 4, 3% to rest – storm-eye precision.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', 'zscore latest', 'ma90 latest', 'dev20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Storm Cell Density (Indicator clustering)
+        cell_rsi = np.where(np.abs(df['rsi latest'] - df['rsi weekly']) < 5, 3.6, 1.4)
+        df['cell_rsi'] = cell_rsi
+
+        cell_osc = np.where(np.abs(df['osc latest'] - df['osc weekly']) < 20, 4.1, 1.6)
+        df['cell_osc'] = cell_osc * np.where(df['9ema osc latest'] > 0, 1.7, 0.8)
+
+        # 2. Z-Nebula Core (Extreme density)
+        nebula_core = np.clip(np.abs(df['zscore latest']) * 2.2, 0, 4.5)
+        df['nebula_core'] = nebula_core
+
+        # 3. Hyper-Acceleration Pull
+        pull = (df['price'] / df['ma90 latest'] - 1) * 100
+        df['pull'] = np.clip(pull / 5, 0, 3.8) * (1 / (df['dev20 weekly'] / df['price'] + 1e-6))
+
+        # 4. Storm Intensity (Density * Pull)
+        intensity = np.minimum(df['cell_rsi'], df['cell_osc'], df['nebula_core'])
+        df['storm_score'] = intensity * df['pull']
+
+        df['storm_score'] = np.maximum(df['storm_score'], 0.01)
+
+        # 5. Nebula Alloc
+        df_sorted = df.sort_values('storm_score', ascending=False).reset_index(drop=True)
+        n = len(df_sorted)
+        if n == 0:
+            return pd.DataFrame()
+
+        top1_end = min(1, n)
+        df_sorted.loc[:top1_end-1, 'weightage'] = 0.88 / top1_end
+
+        next4_end = min(n, top1_end + 4)
+        if next4_end > top1_end:
+            count = next4_end - top1_end
+            df_sorted.loc[top1_end:next4_end-1, 'weightage'] = 0.09 / count
+
+        remaining_start = next4_end
+        if remaining_start < n:
+            count = n - remaining_start
+            df_sorted.loc[remaining_start:, 'weightage'] = 0.03 / count
+
+        total_w = df_sorted['weightage'].sum()
+        if total_w > 0:
+            df_sorted['weightage'] /= total_w
+
+        return self._allocate_portfolio(df_sorted, sip_amount)
+        
+# =====================================
+# NEW: ResonanceEcho Strategy
+# =====================================
+class ResonanceEcho(BaseStrategy):
+    """
+    ResonanceEcho: Harmonic Resonance in Indicator Echoes.
+    - Thesis: Out-of-box harmonic trading – alpha from 'echo chambers' where indicators resonate (correlated lags between daily/weekly) like sound waves, amplifying momentum echoes for sustained returns.
+    - Innovation: Compute pseudo-frequency resonance via lagged correlations; bet on high-resonance setups.
+    - Weighting: Natural score normalization for balanced, echo-proportional allocation.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Lagged Echo Correlation (Daily leading weekly by 'echo')
+        # Pseudo-lag resonance: abs(corr) high = strong echo
+        if len(df) > 1:
+            echo_rsi = np.abs(np.corrcoef(df['rsi latest'], df['rsi weekly'])[0,1])
+            echo_osc = np.abs(np.corrcoef(df['osc latest'], df['osc weekly'])[0,1])
+            echo_ema9 = np.abs(np.corrcoef(df['9ema osc latest'], df['9ema osc weekly'])[0,1])
+            echo_ema21 = np.abs(np.corrcoef(df['21ema osc latest'], df['21ema osc weekly'])[0,1])
+            avg_echo = (echo_rsi + echo_osc + echo_ema9 + echo_ema21) / 4
+        else:
+            avg_echo = 0.5
+
+        # 2. Resonance Amplitude (Strength of echo in extremes)
+        amp_rsi = np.where(np.abs(df['rsi latest'] - 50) > 20, 2.0, 1.0)
+        amp_osc = np.clip(np.abs(df['osc latest']) / 50, 0.5, 2.5)
+        df['resonance_amp'] = (amp_rsi + amp_osc) / 2 * avg_echo * 2  # Scaled
+
+        # 3. Harmonic Phase Alignment (Sine-phase match)
+        phase_rsi = np.sin(np.pi * (df['rsi latest'] / 100)) * np.sin(np.pi * (df['rsi weekly'] / 100))
+        phase_osc = np.sign(df['osc latest']) * np.sign(df['osc weekly'])
+        df['phase_align'] = np.abs(phase_rsi) * phase_osc * 1.5 + 0.5
+
+        # 4. Echo Momentum Boost (Positive direction)
+        boost = np.where((df['osc latest'] > 0) & (df['9ema osc latest'] > df['21ema osc latest']), 2.2, 1.0)
+        df['echo_boost'] = boost
+
+        # 5. Composite Resonance Score
+        df['resonance_score'] = df['resonance_amp'] * df['phase_align'] * df['echo_boost']
+
+        df['resonance_score'] = np.maximum(df['resonance_score'], 0.01)
+
+        # Normalize to weights (natural)
+        total_score = df['resonance_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['resonance_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: DivergenceMirage Strategy
+# =====================================
+class DivergenceMirage(BaseStrategy):
+    """
+    DivergenceMirage: Mirage of Hidden Divergences.
+    - Thesis: Creative illusion-breaker – alpha from 'mirage divergences' where apparent indicator confluences hide subtle divergences (e.g., RSI up but OSC lag), signaling impending reversals/momentum shifts like optical illusions in charts.
+    - Innovation: Quantify 'mirage strength' as divergence hidden in convergence; trade the reveal.
+    - Weighting: Score-based diffusion for mirage-proportional exposure.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '21ema osc latest', 'zscore latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Apparent Convergence (Surface agreement)
+        conv_rsi = np.where(np.sign(df['rsi latest'] - 50) == np.sign(df['rsi weekly'] - 50), 1.5, 0.5)
+        conv_osc = np.where(np.sign(df['osc latest']) == np.sign(df['osc weekly']), 1.8, 0.6)
+
+        # 2. Hidden Divergence Mirage (Subtle lag/mismatch)
+        mirage_rsi = np.abs((df['rsi latest'] - df['rsi weekly']) / (df['rsi latest'] + df['rsi weekly'] + 1e-6)) * 3
+        mirage_osc = np.abs((df['osc latest'] - df['osc weekly']) / 50) * 2.5
+        mirage_z = np.abs(df['zscore latest'] - 0) * 1.5  # Deviation from mean
+        df['mirage_strength'] = (mirage_rsi + mirage_osc + mirage_z) / 3 * conv_rsi * conv_osc
+
+        # 3. Reveal Potential (Divergence direction for alpha)
+        reveal = np.where(
+            (df['osc latest'] > df['21ema osc latest']) & (df['rsi latest'] < 60),  # Bullish hidden
+            2.4,
+            np.where(df['rsi latest'] > 60, 0.7, 1.2)  # Bearish mirage
+        )
+        df['reveal_pot'] = reveal
+
+        # 4. Mirage Illusion Score
+        df['mirage_score'] = df['mirage_strength'] * df['reveal_pot']
+
+        df['mirage_score'] = np.maximum(df['mirage_score'], 0.01)
+
+        # Normalize naturally
+        total_score = df['mirage_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['mirage_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: FractalWhisper Strategy
+# =====================================
+class FractalWhisper(BaseStrategy):
+    """
+    FractalWhisper: Whispers from Fractal Self-Similarity.
+    - Thesis: Unconventional fractal geometry – alpha from 'whispers' of self-similar patterns across scales (daily/weekly indicator fractals), detecting hidden continuations like Mandelbrot echoes in price noise.
+    - Innovation: Approximate Hurst exponent via rescaled range on indicators for persistence whispers.
+    - Weighting: Fractal persistence scores for organic scaling.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            'ma90 latest', 'ma90 weekly', 'dev20 latest', 'dev20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Pseudo-Hurst Exponent (Fractal persistence approx)
+        # Simple R/S on log-returns proxy via indicators
+        log_rsi = np.log(df['rsi latest'] + 1)
+        rs_rsi = (log_rsi.max() - log_rsi.min()) / (log_rsi.std() + 1e-6) if len(df) > 1 else 0.5
+        log_osc = np.log(np.abs(df['osc latest']) + 1)
+        rs_osc = (log_osc.max() - log_osc.min()) / (log_osc.std() + 1e-6) if len(df) > 1 else 0.5
+        hurst_approx = np.log((rs_rsi + rs_osc) / 2) / np.log(len(df)) if len(df) > 1 else 0.5
+        df['hurst_persist'] = np.clip(hurst_approx + 0.5, 0.2, 1.8)  # Broadcast scalar
+
+        # 2. Self-Similarity Whisper (Scale match daily-weekly)
+        scale_match = np.abs((df['dev20 latest'] / df['price']) - (df['dev20 weekly'] / df['price'])) < 0.01
+        whisper = np.where(scale_match, 2.6, 1.0) * np.abs(df['osc latest'] - df['osc weekly']) / 50
+        df['whisper_sim'] = whisper
+
+        # 3. Fractal Edge (Persistence in trends)
+        edge = np.where(df['price'] > df['ma90 latest'], df['hurst_persist'] * 1.7, df['hurst_persist'] * 0.6)
+        df['fractal_edge'] = edge
+
+        # 4. Composite Whisper Score
+        df['whisper_score'] = df['hurst_persist'] * df['whisper_sim'] * df['fractal_edge']
+
+        df['whisper_score'] = np.maximum(df['whisper_score'], 0.01)
+
+        # Natural fractal weighting
+        total_score = df['whisper_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['whisper_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: InterferenceWave Strategy
+# =====================================
+class InterferenceWave(BaseStrategy):
+    """
+    InterferenceWave: Wave Interference Patterns for Alpha.
+    - Thesis: Physics-inspired – alpha from constructive interference waves where indicator 'waves' (sine-transformed) interfere positively, creating amplification peaks like light waves in optics.
+    - Innovation: Sine-decompose indicators, compute interference factor for peak detection.
+    - Weighting: Interference intensity for wave-proportional diffusion.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', '9ema osc latest',
+            '21ema osc latest', 'zscore latest', 'ma20 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Wave Decomposition (Sine transforms)
+        wave_rsi = np.sin(2 * np.pi * df['rsi latest'] / 100)
+        wave_osc = np.sin(2 * np.pi * (df['osc latest'] + 100) / 200)  # Normalize to 0-1
+        wave_ema = np.sin(2 * np.pi * (df['9ema osc latest'] - df['21ema osc latest']) / 200)
+
+        # 2. Interference Factor (Constructive sum)
+        interf_rsi_osc = np.abs(wave_rsi + wave_osc)  # Amplitude sum
+        interf_ema = np.abs(wave_ema + wave_rsi) * 0.5
+        df['interf_factor'] = (interf_rsi_osc + interf_ema) / 2 * 2.0  # Scale
+
+        # 3. Wave Peak Detection (High amplitude + trend)
+        peak = np.where(
+            (df['price'] > df['ma20 latest']) & (np.abs(df['zscore latest']) > 1),
+            df['interf_factor'] * 2.3,
+            df['interf_factor']
+        )
+        df['wave_peak'] = peak
+
+        # 4. Destructive Filter (Low interference penalty)
+        destruct = np.where(np.abs(wave_rsi + wave_osc) < 0.5, 0.4, 1.0)
+        df['destruct_filt'] = destruct
+
+        # 5. Composite Interference Score
+        df['interf_score'] = df['wave_peak'] * df['destruct_filt']
+
+        df['interf_score'] = np.maximum(df['interf_score'], 0.01)
+
+        # Wave-natural weighting
+        total_score = df['interf_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['interf_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
+
+# =====================================
+# NEW: ShadowPuppet Strategy
+# =====================================
+class ShadowPuppet(BaseStrategy):
+    """
+    ShadowPuppet: Puppetry of Shadow Indicators.
+    - Thesis: Theatrical out-of-box – alpha from 'shadow puppets' where primary indicators (OSC/RSI) cast shadows (lagged MAs/dev) that 'puppet' price moves, trading the shadow-price disconnects like marionette strings.
+    - Innovation: Shadow disconnect as string tension; high tension = alpha pull.
+    - Weighting: Tension scores for puppet-like fluid allocation.
+    """
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'osc latest', 'ma20 latest', 'ma90 latest',
+            'dev20 latest', 'zscore latest', 'ma200 latest'
+        ]
+        df = self._clean_data(df, required_columns)
+
+        # 1. Primary Puppet (OSC/RSI 'hands')
+        puppet_primary = (np.abs(df['osc latest']) / 50 + (df['rsi latest'] - 50) / 50) / 2
+        df['puppet_primary'] = np.clip(puppet_primary, 0, 2.5)
+
+        # 2. Shadow Cast (MA/dev as shadows)
+        shadow_ma = np.abs(df['price'] - df['ma20 latest']) / df['ma20 latest']
+        shadow_dev = df['dev20 latest'] / df['price']
+        df['shadow_cast'] = (shadow_ma + shadow_dev) * 1.5
+
+        # 3. Disconnect Tension (Primary vs shadow mismatch)
+        tension = np.abs(df['puppet_primary'] - df['shadow_cast']) * np.abs(df['zscore latest'])
+        df['tension'] = np.clip(tension, 0.5, 3.0)
+
+        # 4. Puppet Pull (Direction toward long-term shadow)
+        pull = np.where(df['price'] > df['ma200 latest'] * 0.95, tension * 2.1, tension * 0.8)
+        df['puppet_pull'] = pull
+
+        # 5. Composite Shadow Score
+        df['shadow_score'] = df['puppet_primary'] * df['shadow_cast'] * df['puppet_pull']
+
+        df['shadow_score'] = np.maximum(df['shadow_score'], 0.01)
+
+        # Fluid puppet weighting
+        total_score = df['shadow_score'].sum()
+        if total_score > 0:
+            df['weightage'] = df['shadow_score'] / total_score
+        else:
+            df['weightage'] = 1.0 / len(df)
+
+        return self._allocate_portfolio(df, sip_amount)
