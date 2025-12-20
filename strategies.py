@@ -4342,3 +4342,526 @@ class TranscendentAlpha(BaseStrategy):
             df['weightage'] = 1.0 / len(df)
 
         return self._allocate_portfolio(df, sip_amount)
+
+class TurnaroundSniper(BaseStrategy):
+    """
+    Snipes the exact turnaround point: deeply oversold + first signs of momentum reversal.
+    Key: multiplicative scoring like VolatilitySurfer but for mean reversion setups.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # 1. OVERSOLD DEPTH SCORE (higher = more oversold = better opportunity)
+        # Combine multiple oversold indicators
+        zscore_depth = np.clip(-df['zscore latest'] / 1.5, 0, 3.0)  # z < -1.5 starts scoring
+        zscore_weekly_depth = np.clip(-df['zscore weekly'] / 1.5, 0, 2.5)
+        rsi_depth = np.clip((30 - df['rsi latest']) / 15, 0, 2.0)  # RSI < 30 scores
+        osc_depth = np.clip((-df['osc latest'] - 40) / 30, 0, 2.5)  # OSC < -40 scores
+        
+        oversold_score = (zscore_depth * 0.35 + zscore_weekly_depth * 0.25 + 
+                         rsi_depth * 0.20 + osc_depth * 0.20)
+        
+        # 2. TURNAROUND SIGNAL (the key differentiator)
+        # 9EMA crossing above 21EMA while still oversold = turnaround
+        ema_cross_bullish = df['9ema osc latest'] > df['21ema osc latest']
+        ema_cross_weekly = df['9ema osc weekly'] > df['21ema osc weekly']
+        
+        # Daily improving faster than weekly = leading indicator
+        daily_leading = df['osc latest'] > df['osc weekly']
+        
+        turnaround_score = np.where(
+            ema_cross_bullish & ema_cross_weekly & daily_leading,
+            3.0,  # Triple confirmation
+            np.where(
+                ema_cross_bullish & daily_leading,
+                2.5,  # Daily turn + leading
+                np.where(
+                    ema_cross_bullish,
+                    2.0,  # Just daily turn
+                    np.where(
+                        daily_leading & (df['osc latest'] > -50),
+                        1.5,  # Improving but no cross yet
+                        0.3   # No turnaround signal - heavy penalty
+                    )
+                )
+            )
+        )
+        
+        # 3. TREND CONTEXT (prefer pullbacks in uptrends)
+        trend_mult = np.where(
+            df['ma90 latest'] > df['ma200 latest'],
+            1.4,  # Uptrend pullback
+            np.where(
+                df['ma90 weekly'] > df['ma200 weekly'],
+                1.2,  # Weekly still positive
+                np.where(
+                    df['price'] > df['ma200 weekly'],
+                    1.0,  # At least above long-term
+                    0.6   # Structural downtrend - risky
+                )
+            )
+        )
+        
+        # 4. VOLATILITY QUALITY (moderate vol preferred)
+        vol_ratio = df['dev20 latest'] / df['price']
+        vol_mult = np.where(
+            (vol_ratio > 0.015) & (vol_ratio < 0.04),
+            1.2,  # Sweet spot
+            np.where(
+                vol_ratio > 0.06,
+                0.6,  # Too volatile
+                0.9   # Too quiet
+            )
+        )
+        
+        # FINAL: Multiplicative combination (all factors must align)
+        df['composite_score'] = oversold_score * turnaround_score * trend_mult * vol_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# Strategy 2: MomentumAccelerator
+# Captures momentum ACCELERATION not just momentum
+# =========================================================================
+
+class MomentumAccelerator(BaseStrategy):
+    """
+    Targets stocks where momentum is ACCELERATING (second derivative positive).
+    Differentiator: focuses on rate of change of momentum, not absolute level.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # 1. EMA SPREAD ACCELERATION
+        # 9EMA - 21EMA spread: positive and widening = accelerating
+        ema_spread_daily = df['9ema osc latest'] - df['21ema osc latest']
+        ema_spread_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        
+        # Acceleration: daily spread > weekly spread AND both positive
+        acceleration_score = np.where(
+            (ema_spread_daily > ema_spread_weekly) & (ema_spread_daily > 0) & (ema_spread_weekly > 0),
+            3.0,  # Strong acceleration
+            np.where(
+                (ema_spread_daily > ema_spread_weekly) & (ema_spread_daily > 0),
+                2.5,  # Daily accelerating, weekly catching up
+                np.where(
+                    (ema_spread_daily > 0) & (ema_spread_weekly > 0),
+                    2.0,  # Both positive but not accelerating
+                    np.where(
+                        (ema_spread_daily > 0),
+                        1.5,  # Daily positive
+                        np.where(
+                            ema_spread_daily > ema_spread_weekly,
+                            1.0,  # At least improving
+                            0.3   # Decelerating
+                        )
+                    )
+                )
+            )
+        )
+        
+        # 2. RSI VELOCITY
+        # RSI distance from oversold: the further above 30, the more momentum
+        rsi_velocity = np.clip((df['rsi latest'] - 30) / 40, 0, 1.5)
+        rsi_weekly_velocity = np.clip((df['rsi weekly'] - 35) / 35, 0, 1.3)
+        velocity_score = rsi_velocity * 0.6 + rsi_weekly_velocity * 0.4
+        
+        # 3. OSCILLATOR MOMENTUM
+        # Positive and improving oscillator
+        osc_momentum = np.where(
+            (df['osc latest'] > 0) & (df['osc weekly'] > 0),
+            np.clip(1 + df['osc latest'] / 50, 1, 2.5),
+            np.where(
+                df['osc latest'] > df['osc weekly'],
+                np.clip(1 + (df['osc latest'] - df['osc weekly']) / 30, 0.8, 1.5),
+                0.5
+            )
+        )
+        
+        # 4. TREND STRENGTH MULTIPLIER
+        trend_mult = np.where(
+            (df['price'] > df['ma90 latest']) & (df['ma90 latest'] > df['ma200 latest']),
+            1.5,  # Golden cross alignment
+            np.where(
+                df['price'] > df['ma90 latest'],
+                1.2,
+                np.where(
+                    df['price'] > df['ma200 latest'],
+                    1.0,
+                    0.5  # Below MA200 - weak
+                )
+            )
+        )
+        
+        # 5. Z-SCORE CONFIRMATION (not extreme = sustainable)
+        zscore_quality = np.where(
+            (df['zscore latest'] > -1) & (df['zscore latest'] < 2),
+            1.2,  # Normal range - sustainable
+            np.where(
+                df['zscore latest'] > 2.5,
+                0.7,  # Overextended
+                1.0
+            )
+        )
+        
+        # FINAL SCORE
+        df['composite_score'] = acceleration_score * velocity_score * osc_momentum * trend_mult * zscore_quality
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# Strategy 3: VolatilityRegimeTrader
+# Explicitly trades different volatility regimes
+# =========================================================================
+
+class VolatilityRegimeTrader(BaseStrategy):
+    """
+    Adapts strategy based on volatility regime of each stock.
+    Low vol: buy breakouts. High vol: buy mean reversion. Medium: momentum.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # Calculate volatility percentile for each stock
+        vol_ratio = df['dev20 latest'] / df['price']
+        vol_percentile = vol_ratio.rank(pct=True)
+        
+        # Bollinger Band position
+        bb_upper = df['ma20 latest'] + 2 * df['dev20 latest']
+        bb_lower = df['ma20 latest'] - 2 * df['dev20 latest']
+        bb_position = (df['price'] - bb_lower) / (bb_upper - bb_lower + 1e-6)
+        
+        # LOW VOLATILITY REGIME: Breakout strategy (like VolatilitySurfer)
+        low_vol_score = np.where(
+            vol_percentile < 0.33,
+            np.where(
+                (df['price'] > bb_upper) & (df['osc latest'] > 0),
+                3.0,  # Breakout with confirmation
+                np.where(
+                    bb_position > 0.8,
+                    2.0,  # Near breakout
+                    np.where(
+                        (df['9ema osc latest'] > df['21ema osc latest']) & (df['osc latest'] > -20),
+                        1.5,  # Building momentum
+                        0.5
+                    )
+                )
+            ),
+            0.0  # Not in low vol regime
+        )
+        
+        # HIGH VOLATILITY REGIME: Mean reversion strategy
+        high_vol_score = np.where(
+            vol_percentile > 0.67,
+            np.where(
+                (bb_position < 0.2) & (df['rsi latest'] < 35) & (df['9ema osc latest'] > df['21ema osc latest']),
+                3.0,  # Oversold with turn signal
+                np.where(
+                    (bb_position < 0.3) & (df['zscore latest'] < -1.5),
+                    2.0,  # Oversold
+                    np.where(
+                        (df['osc latest'] < -50) & (df['osc latest'] > df['osc weekly']),
+                        1.5,  # Deep oversold improving
+                        0.3
+                    )
+                )
+            ),
+            0.0  # Not in high vol regime
+        )
+        
+        # MEDIUM VOLATILITY REGIME: Momentum strategy
+        med_vol_score = np.where(
+            (vol_percentile >= 0.33) & (vol_percentile <= 0.67),
+            np.where(
+                (df['rsi latest'] > 50) & (df['osc latest'] > 0) & (df['price'] > df['ma90 latest']),
+                2.5,  # Strong momentum
+                np.where(
+                    (df['9ema osc latest'] > df['21ema osc latest']) & (df['rsi latest'] > 45),
+                    2.0,  # Building momentum
+                    np.where(
+                        df['price'] > df['ma200 latest'],
+                        1.0,  # At least in uptrend
+                        0.5
+                    )
+                )
+            ),
+            0.0  # Not in medium vol regime
+        )
+        
+        # Combine regime scores
+        regime_score = low_vol_score + high_vol_score + med_vol_score
+        
+        # TREND QUALITY MULTIPLIER
+        trend_mult = np.where(
+            df['ma90 latest'] > df['ma200 latest'],
+            1.3,
+            np.where(
+                df['price'] > df['ma200 weekly'],
+                1.0,
+                0.7
+            )
+        )
+        
+        # CONSISTENCY BONUS (daily and weekly agree)
+        consistency = np.where(
+            np.sign(df['osc latest']) == np.sign(df['osc weekly']),
+            1.2,
+            0.9
+        )
+        
+        df['composite_score'] = regime_score * trend_mult * consistency
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# Strategy 4: CrossSectionalAlpha
+# Pure cross-sectional relative value
+# =========================================================================
+
+class CrossSectionalAlpha(BaseStrategy):
+    """
+    Pure cross-sectional strategy: buy the cheapest vs universe with momentum turn.
+    Doesn't care about absolute levels, only relative ranking.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # Calculate cross-sectional ranks (0 = lowest/most oversold, 1 = highest)
+        rsi_rank = df['rsi latest'].rank(pct=True)
+        osc_rank = df['osc latest'].rank(pct=True)
+        zscore_rank = df['zscore latest'].rank(pct=True)
+        
+        # Combined value rank (lower = cheaper = better)
+        value_rank = (rsi_rank * 0.30 + osc_rank * 0.40 + zscore_rank * 0.30)
+        
+        # VALUE SCORE: Bottom quintile gets highest score
+        value_score = np.where(
+            value_rank < 0.20,
+            3.0,  # Bottom 20%
+            np.where(
+                value_rank < 0.40,
+                2.0,  # 20-40%
+                np.where(
+                    value_rank < 0.60,
+                    1.0,  # 40-60%
+                    np.where(
+                        value_rank < 0.80,
+                        0.5,  # 60-80%
+                        0.2   # Top 20% (most overbought)
+                    )
+                )
+            )
+        )
+        
+        # MOMENTUM TURN SIGNAL (critical - don't buy falling knives)
+        momentum_turn = np.where(
+            (df['9ema osc latest'] > df['21ema osc latest']),
+            2.0,  # Turning up
+            np.where(
+                df['osc latest'] > df['osc weekly'],
+                1.5,  # Improving
+                0.4   # Still falling - big penalty
+            )
+        )
+        
+        # RELATIVE STRENGTH vs UNIVERSE
+        # Price vs MA spread rank
+        ma_spread = (df['price'] - df['ma200 latest']) / df['ma200 latest']
+        ma_spread_rank = ma_spread.rank(pct=True)
+        
+        # We want stocks that are cheap (low RSI rank) but not in worst trend (not bottom MA rank)
+        relative_strength = np.where(
+            ma_spread_rank > 0.30,  # Not in bottom 30% by MA spread
+            1.2,
+            np.where(
+                ma_spread_rank > 0.15,
+                1.0,
+                0.7  # Structurally weak
+            )
+        )
+        
+        # VOLATILITY FILTER (prefer moderate vol for better risk/reward)
+        vol_rank = (df['dev20 latest'] / df['price']).rank(pct=True)
+        vol_filter = np.where(
+            (vol_rank > 0.20) & (vol_rank < 0.70),
+            1.1,  # Middle 50%
+            0.9
+        )
+        
+        df['composite_score'] = value_score * momentum_turn * relative_strength * vol_filter
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# Strategy 5: DualMomentum
+# Combines absolute and relative momentum
+# =========================================================================
+
+class DualMomentum(BaseStrategy):
+    """
+    Classic dual momentum: requires BOTH absolute momentum (vs own history)
+    AND relative momentum (vs universe) to score well.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # ===== ABSOLUTE MOMENTUM =====
+        # Price vs moving averages
+        above_ma90 = df['price'] > df['ma90 latest']
+        above_ma200 = df['price'] > df['ma200 latest']
+        ma90_above_ma200 = df['ma90 latest'] > df['ma200 latest']
+        
+        abs_trend_score = np.where(
+            above_ma90 & above_ma200 & ma90_above_ma200,
+            3.0,  # Perfect alignment
+            np.where(
+                above_ma200 & ma90_above_ma200,
+                2.5,  # Good trend, minor pullback
+                np.where(
+                    above_ma200,
+                    2.0,  # Above long-term
+                    np.where(
+                        above_ma90,
+                        1.0,  # Short-term bounce only
+                        0.3   # Below both MAs
+                    )
+                )
+            )
+        )
+        
+        # Oscillator absolute momentum
+        osc_abs_momentum = np.where(
+            (df['osc latest'] > 0) & (df['osc weekly'] > 0),
+            1.5,
+            np.where(
+                df['osc latest'] > 0,
+                1.2,
+                np.where(
+                    df['9ema osc latest'] > df['21ema osc latest'],
+                    1.0,  # Turning but not positive yet
+                    0.6
+                )
+            )
+        )
+        
+        absolute_momentum = abs_trend_score * osc_abs_momentum
+        
+        # ===== RELATIVE MOMENTUM =====
+        # Rank vs universe
+        rsi_rank = df['rsi latest'].rank(pct=True)
+        osc_rank = df['osc latest'].rank(pct=True)
+        price_mom = df['price'] / df['ma90 latest']
+        price_mom_rank = price_mom.rank(pct=True)
+        
+        # Composite relative rank
+        relative_rank = (rsi_rank * 0.30 + osc_rank * 0.35 + price_mom_rank * 0.35)
+        
+        relative_momentum = np.where(
+            relative_rank > 0.70,
+            2.0,  # Top 30%
+            np.where(
+                relative_rank > 0.50,
+                1.5,  # Top 50%
+                np.where(
+                    relative_rank > 0.30,
+                    1.0,  # Above median
+                    0.5   # Bottom half
+                )
+            )
+        )
+        
+        # ===== DUAL MOMENTUM COMBINATION =====
+        # Require BOTH to score well (multiplicative)
+        dual_momentum = absolute_momentum * relative_momentum
+        
+        # ===== CONFIRMATION SIGNALS =====
+        # EMA acceleration
+        ema_acceleration = np.where(
+            (df['9ema osc latest'] > df['21ema osc latest']) & (df['9ema osc weekly'] > df['21ema osc weekly']),
+            1.3,
+            np.where(
+                df['9ema osc latest'] > df['21ema osc latest'],
+                1.1,
+                0.9
+            )
+        )
+        
+        # Volatility quality
+        vol_ratio = df['dev20 latest'] / df['price']
+        vol_quality = np.where(
+            vol_ratio < 0.02,
+            1.2,  # Low vol
+            np.where(
+                vol_ratio < 0.04,
+                1.0,  # Normal
+                0.8   # High vol
+            )
+        )
+        
+        df['composite_score'] = dual_momentum * ema_acceleration * vol_quality
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        
+        return self._allocate_portfolio(df, sip_amount)
