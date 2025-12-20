@@ -25,16 +25,8 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 # --- Import Strategies from strategies.py ---
 try:
     from strategies import (
-        BaseStrategy, QuantumMomentumLeap, VolatilitySurfer, ButterflyChaos, SynapseFiring,
-        ShadowPuppet, NebulaMomentumStorm, WormholeTemporal, AdaptiveVolBreakout, ResonanceEcho,
-        VolReversalHarvester, EscherLoop, MomentumCascade, AlphaVortex, MomentumMasters,
-        MOM1Strategy, MOM2Strategy, BreakoutAlphaHunter, VelocityApocalypse, SymbioticAlpha,
-        InterferenceWave, PhononVibe, PRStrategy, EntangledMomentum, CL3Strategy,
-        DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
-        SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
-        HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, 
-        PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge, EternalReturnCycle,
-        GameTheoreticStrategy, MomentumAccelerator, RegimeAdaptiveAlpha 
+        BaseStrategy, GameTheoreticStrategy, MomentumAccelerator, VolatilitySurfer, 
+        DivineMomentumOracle, AdaptiveVolBreakout, NebulaMomentumStorm, CelestialAlphaForge
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -1059,52 +1051,13 @@ def create_conviction_heatmap(strategies, current_df):
 # --- Main Application ---
 def main():
     strategies = {
-        'QuantumMomentumLeap': QuantumMomentumLeap(),
         'VolatilitySurfer': VolatilitySurfer(),
-        'ButterflyChaos': ButterflyChaos(),
-        'SynapseFiring': SynapseFiring(),
-        'ShadowPuppet': ShadowPuppet(),
-        'NebulaMomentumStorm': NebulaMomentumStorm(),
-        'WormholeTemporal': WormholeTemporal(),
-        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
-        'ResonanceEcho': ResonanceEcho(),
-        'VolReversalHarvester': VolReversalHarvester(),
-        'EscherLoop': EscherLoop(),
-        'MomentumCascade': MomentumCascade(),
-        'AlphaVortex': AlphaVortex(),
-        'MomentumMasters': MomentumMasters(),
-        'MOM1Strategy': MOM1Strategy(),
-        'MOM2Strategy': MOM2Strategy(),
-        'BreakoutAlphaHunter': BreakoutAlphaHunter(),
-        'VelocityApocalypse': VelocityApocalypse(),
-        'SymbioticAlpha': SymbioticAlpha(),
-        'InterferenceWave': InterferenceWave(),
-        'PhononVibe': PhononVibe(),
-        'PRStrategy': PRStrategy(),
-        'EntangledMomentum': EntangledMomentum(),
-        'CL3Strategy': CL3Strategy(),
-        'DivergenceMirage': DivergenceMirage(),
-        'CL2Strategy': CL2Strategy(),
-        'CL1Strategy': CL1Strategy(),
-        'VelocityVortex': VelocityVortex(),
-        'HorizonEvent': HorizonEvent(),
-        'SurgeSentinel': SurgeSentinel(),
-        'MicrowaveCosmic': MicrowaveCosmic(),
-        'FractalWhisper': FractalWhisper(),
-        'HolographicMomentum': HolographicMomentum(),
-        'ReturnPyramid': ReturnPyramid(),
-        'HyperAlphaIgniter': HyperAlphaIgniter(),
-        'AlphaSurge': AlphaSurge(),
-        'ExtremeMomentumBlitz': ExtremeMomentumBlitz(),
-        'MultiverseAlpha': MultiverseAlpha(),
-        'InfiniteMomentumLoop': InfiniteMomentumLoop(),
-        'DivineMomentumOracle': DivineMomentumOracle(),
-        'PantheonAlphaRealm': PantheonAlphaRealm(),
-        'RegimeAdaptiveAlpha': RegimeAdaptiveAlpha(),
         'GameTheoreticStrategy': GameTheoreticStrategy(),
-        'StochasticDominance': StochasticDominance(),
         'CelestialAlphaForge': CelestialAlphaForge(),
         'MomentumAccelerator': MomentumAccelerator(),
+        'NebulaMomentumStorm': NebulaMomentumStorm(),
+        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
+        'DivineMomentumOracle': DivineMomentumOracle(),
     }
 
     PORTFOLIO_STYLES = {
