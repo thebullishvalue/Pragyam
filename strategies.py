@@ -4865,3 +4865,2844 @@ class DualMomentum(BaseStrategy):
         df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
         
         return self._allocate_portfolio(df, sip_amount)
+
+# =========================================================================
+# 5 SOPHISTICATED STRATEGIES - V4
+# Continuous scoring, statistical transforms, nuanced signal processing
+# =========================================================================
+
+class AdaptiveZScoreEngine(BaseStrategy):
+    """
+    Dynamically adjusts z-score sensitivity based on cross-sectional volatility.
+    When universe is calm, smaller z-scores matter more.
+    When universe is stressed, requires larger deviations.
+    Uses sigmoid transforms for smooth scoring.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # ADAPTIVE THRESHOLD based on universe stress
+        universe_zscore_std = df['zscore latest'].std()
+        universe_osc_mean = df['osc latest'].mean()
+        
+        # In stressed markets (high dispersion, low osc), adjust sensitivity
+        stress_factor = np.clip(universe_zscore_std / 1.5, 0.5, 2.0)
+        
+        # SIGMOID-TRANSFORMED Z-SCORE
+        # Maps z-score to (0, 1) with adaptive midpoint
+        adaptive_midpoint = -1.0 * stress_factor
+        z_sigmoid = 1 / (1 + np.exp((df['zscore latest'] - adaptive_midpoint) * 1.5))
+        z_weekly_sigmoid = 1 / (1 + np.exp((df['zscore weekly'] - adaptive_midpoint * 0.8) * 1.2))
+        
+        # Combined z-signal with variance-preserving blend
+        z_combined = (z_sigmoid * 0.6 + z_weekly_sigmoid * 0.4) * np.sqrt(2)
+        
+        # RSI SIGMOID (smooth transition, not stepped)
+        rsi_sigmoid = 1 / (1 + np.exp((df['rsi latest'] - 35) * 0.15))
+        rsi_weekly_sigmoid = 1 / (1 + np.exp((df['rsi weekly'] - 40) * 0.12))
+        rsi_combined = (rsi_sigmoid * 0.55 + rsi_weekly_sigmoid * 0.45)
+        
+        # OSCILLATOR SIGMOID
+        osc_sigmoid = 1 / (1 + np.exp((df['osc latest'] + 40) * 0.03))
+        osc_weekly_sigmoid = 1 / (1 + np.exp((df['osc weekly'] + 30) * 0.025))
+        osc_combined = (osc_sigmoid * 0.5 + osc_weekly_sigmoid * 0.5)
+        
+        # MOMENTUM TURN GRADIENT (continuous, not binary)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_spread_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        
+        # Normalize spreads to comparable scale
+        ema_spread_norm = ema_spread / (df['osc latest'].std() + 1)
+        ema_weekly_norm = ema_spread_weekly / (df['osc weekly'].std() + 1)
+        
+        # Sigmoid for turn signal
+        turn_sigmoid = 1 / (1 + np.exp(-ema_spread_norm * 2))
+        turn_weekly_sigmoid = 1 / (1 + np.exp(-ema_weekly_norm * 1.5))
+        turn_combined = (turn_sigmoid * 0.6 + turn_weekly_sigmoid * 0.4)
+        
+        # TREND QUALITY (continuous)
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        price_ma_ratio = df['price'] / (df['ma200 latest'] + 1e-6)
+        trend_score = (np.clip(ma_ratio, 0.8, 1.2) - 0.8) / 0.4 * 0.5 + \
+                      (np.clip(price_ma_ratio, 0.85, 1.15) - 0.85) / 0.3 * 0.5
+        trend_score = np.clip(trend_score, 0.3, 1.5)
+        
+        # COMPOSITE with geometric mean for balance
+        base_score = (z_combined * rsi_combined * osc_combined) ** (1/3)
+        
+        # Apply turn and trend as multipliers
+        df['composite_score'] = base_score * (0.5 + turn_combined) * trend_score
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class MomentumDecayModel(BaseStrategy):
+    """
+    Models momentum as a decaying function.
+    Recent momentum (daily) decays faster, weekly momentum is more persistent.
+    Combines decay-weighted signals for optimal timing.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # MOMENTUM COMPONENTS with different decay rates
+        # Daily momentum (fast decay - lambda = 0.8)
+        daily_mom_raw = (df['rsi latest'] - 50) / 50
+        daily_osc_raw = df['osc latest'] / 100
+        daily_ema_raw = (df['9ema osc latest'] - df['21ema osc latest']) / 50
+        
+        # Weekly momentum (slow decay - lambda = 0.95)
+        weekly_mom_raw = (df['rsi weekly'] - 50) / 50
+        weekly_osc_raw = df['osc weekly'] / 100
+        weekly_ema_raw = (df['9ema osc weekly'] - df['21ema osc weekly']) / 50
+        
+        # DECAY-WEIGHTED COMBINATION
+        # More weight to weekly (persistent) when daily is noisy
+        daily_vol = np.abs(daily_mom_raw - weekly_mom_raw)
+        decay_weight = 1 / (1 + daily_vol * 3)  # Higher noise = more weekly weight
+        
+        blended_mom = daily_mom_raw * (1 - decay_weight * 0.3) + weekly_mom_raw * decay_weight * 0.3
+        blended_osc = daily_osc_raw * (1 - decay_weight * 0.4) + weekly_osc_raw * decay_weight * 0.4
+        blended_ema = daily_ema_raw * (1 - decay_weight * 0.3) + weekly_ema_raw * decay_weight * 0.3
+        
+        # MEAN REVERSION SIGNAL (negative momentum = opportunity)
+        # Use tanh for bounded output
+        reversion_signal = np.tanh(-blended_mom * 2) * 0.5 + 0.5  # Maps to (0, 1)
+        osc_signal = np.tanh(-blended_osc * 2) * 0.5 + 0.5
+        
+        # ACCELERATION (second derivative proxy)
+        ema_acceleration = blended_ema - weekly_ema_raw  # Daily leading weekly
+        accel_signal = np.tanh(ema_acceleration * 3) * 0.5 + 0.5
+        
+        # Z-SCORE OVERLAY
+        z_signal = np.tanh(-df['zscore latest'] * 0.8) * 0.5 + 0.5
+        z_weekly_signal = np.tanh(-df['zscore weekly'] * 0.6) * 0.5 + 0.5
+        
+        # COMPOSITE using power mean (p=2 for quadratic emphasis)
+        signals = np.column_stack([reversion_signal, osc_signal, accel_signal, z_signal, z_weekly_signal])
+        weights = np.array([0.25, 0.25, 0.20, 0.15, 0.15])
+        
+        # Weighted power mean
+        power_mean = np.power(np.sum(np.power(signals, 2) * weights, axis=1), 0.5)
+        
+        # TREND CONTEXT (soft multiplier)
+        trend_ratio = df['price'] / df['ma200 latest']
+        trend_mult = np.tanh((trend_ratio - 0.9) * 5) * 0.3 + 1.0  # Centers around 1.0
+        
+        # VOLATILITY ADJUSTMENT
+        vol_ratio = df['dev20 latest'] / df['price']
+        vol_penalty = 1 / (1 + np.exp((vol_ratio - 0.03) * 100))  # Penalize high vol
+        
+        df['composite_score'] = power_mean * trend_mult * (0.7 + vol_penalty * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class InformationRatioOptimizer(BaseStrategy):
+    """
+    Weights signals by their information content (signal-to-noise ratio).
+    Noisier signals get less weight. Cleaner signals dominate.
+    Cross-sectional dispersion determines signal quality.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # SIGNAL EXTRACTION with cross-sectional normalization
+        def cs_normalize(series):
+            mean, std = series.mean(), series.std()
+            return (series - mean) / (std + 1e-6)
+        
+        rsi_norm = cs_normalize(df['rsi latest'])
+        rsi_weekly_norm = cs_normalize(df['rsi weekly'])
+        osc_norm = cs_normalize(df['osc latest'])
+        osc_weekly_norm = cs_normalize(df['osc weekly'])
+        zscore_norm = cs_normalize(df['zscore latest'])
+        zscore_weekly_norm = cs_normalize(df['zscore weekly'])
+        
+        # INFORMATION RATIO for each signal (how much does it differentiate?)
+        # Higher dispersion = more information
+        rsi_ir = np.abs(rsi_norm) / (np.abs(rsi_norm - rsi_weekly_norm) + 0.5)
+        osc_ir = np.abs(osc_norm) / (np.abs(osc_norm - osc_weekly_norm) + 0.5)
+        zscore_ir = np.abs(zscore_norm) / (np.abs(zscore_norm - zscore_weekly_norm) + 0.5)
+        
+        # Normalize IRs to weights
+        total_ir = rsi_ir + osc_ir + zscore_ir + 1e-6
+        rsi_weight = rsi_ir / total_ir
+        osc_weight = osc_ir / total_ir
+        zscore_weight = zscore_ir / total_ir
+        
+        # VALUE SIGNALS (lower = more oversold = better)
+        rsi_value = 1 - (df['rsi latest'] / 100)  # 0-1, higher = more oversold
+        osc_value = (100 - df['osc latest']) / 200  # Normalized to ~0-1
+        zscore_value = 1 / (1 + np.exp(df['zscore latest'] * 0.8))  # Sigmoid transform
+        
+        # INFORMATION-WEIGHTED COMPOSITE
+        weighted_value = (rsi_value * rsi_weight + 
+                         osc_value * osc_weight + 
+                         zscore_value * zscore_weight)
+        
+        # MOMENTUM TURN SIGNAL with confidence weighting
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_spread_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        
+        # Confidence: both agreeing = high confidence
+        spread_agreement = ema_spread * ema_spread_weekly
+        confidence = np.tanh(spread_agreement / 500) * 0.5 + 0.5
+        
+        turn_signal = np.tanh(ema_spread / 30) * 0.5 + 0.5
+        weighted_turn = turn_signal * confidence + 0.5 * (1 - confidence)
+        
+        # TREND QUALITY
+        ma_alignment = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        price_position = df['price'] / (df['ma200 latest'] + 1e-6)
+        trend_quality = (np.clip(ma_alignment, 0.9, 1.1) - 0.9) / 0.2 * 0.5 + \
+                       (np.clip(price_position, 0.9, 1.1) - 0.9) / 0.2 * 0.5
+        trend_quality = np.clip(trend_quality, 0.4, 1.3)
+        
+        # VOLATILITY EFFICIENCY (prefer lower vol for same signal)
+        vol_ratio = df['dev20 latest'] / df['price']
+        vol_efficiency = 1 / (1 + vol_ratio * 20)
+        
+        df['composite_score'] = weighted_value * weighted_turn * trend_quality * (0.5 + vol_efficiency)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class BayesianMomentumUpdater(BaseStrategy):
+    """
+    Treats weekly as prior, daily as likelihood.
+    Updates belief about momentum state using Bayesian-like weighting.
+    Stronger daily signals override weak weekly priors.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # PRIOR (weekly indicators) - probability of being oversold
+        prior_rsi = 1 / (1 + np.exp((df['rsi weekly'] - 40) * 0.15))
+        prior_osc = 1 / (1 + np.exp((df['osc weekly'] + 35) * 0.04))
+        prior_zscore = 1 / (1 + np.exp((df['zscore weekly'] + 1.2) * 0.8))
+        
+        # Combined prior (geometric mean for independence assumption)
+        prior = (prior_rsi * prior_osc * prior_zscore) ** (1/3)
+        
+        # LIKELIHOOD (daily indicators) - evidence strength
+        likelihood_rsi = 1 / (1 + np.exp((df['rsi latest'] - 35) * 0.18))
+        likelihood_osc = 1 / (1 + np.exp((df['osc latest'] + 45) * 0.035))
+        likelihood_zscore = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.7))
+        
+        likelihood = (likelihood_rsi * likelihood_osc * likelihood_zscore) ** (1/3)
+        
+        # EVIDENCE STRENGTH (how much should daily update prior?)
+        # Large deviation from weekly = strong evidence
+        rsi_deviation = np.abs(df['rsi latest'] - df['rsi weekly']) / 20
+        osc_deviation = np.abs(df['osc latest'] - df['osc weekly']) / 40
+        evidence_strength = np.tanh((rsi_deviation + osc_deviation) / 2)
+        
+        # POSTERIOR (Bayesian update approximation)
+        # High evidence strength = more weight to likelihood
+        posterior = prior * (1 - evidence_strength * 0.6) + likelihood * evidence_strength * 0.6
+        
+        # Normalize posterior to prevent extremes
+        posterior = np.clip(posterior, 0.05, 0.95)
+        
+        # MOMENTUM TURN (daily leading weekly = positive update)
+        ema_spread_daily = df['9ema osc latest'] - df['21ema osc latest']
+        ema_spread_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        
+        # Turn signal as likelihood ratio
+        turn_lr = np.exp(ema_spread_daily / 30) / (np.exp(ema_spread_weekly / 40) + 0.1)
+        turn_signal = np.tanh(np.log(turn_lr + 0.1)) * 0.5 + 0.5
+        
+        # TREND PRIOR
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_prior = 1 / (1 + np.exp(-(ma_ratio - 1.0) * 15))
+        
+        price_ratio = df['price'] / (df['ma200 latest'] + 1e-6)
+        trend_likelihood = 1 / (1 + np.exp(-(price_ratio - 0.95) * 10))
+        
+        trend_posterior = trend_prior * 0.4 + trend_likelihood * 0.6
+        
+        # FINAL SCORE
+        df['composite_score'] = posterior * (0.4 + turn_signal * 0.8) * (0.5 + trend_posterior * 0.7)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class RelativeStrengthRotator(BaseStrategy):
+    """
+    Ranks stocks on relative strength vs universe.
+    Rotates into bottom quartile with improving momentum.
+    Uses percentile-based scoring for robustness.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # PERCENTILE RANKS (0 = weakest, 1 = strongest)
+        rsi_pct = df['rsi latest'].rank(pct=True)
+        osc_pct = df['osc latest'].rank(pct=True)
+        zscore_pct = df['zscore latest'].rank(pct=True)
+        price_ma_pct = (df['price'] / df['ma90 latest']).rank(pct=True)
+        
+        # COMPOSITE WEAKNESS RANK
+        weakness_rank = (rsi_pct * 0.25 + osc_pct * 0.35 + 
+                        zscore_pct * 0.25 + price_ma_pct * 0.15)
+        
+        # WEAKNESS SCORE (lower rank = higher score)
+        # Use beta distribution-like shaping for concentration in tails
+        alpha, beta_param = 0.5, 2.0  # Emphasize bottom
+        weakness_score = np.power(1 - weakness_rank, beta_param) * np.power(weakness_rank + 0.1, alpha)
+        weakness_score = weakness_score / weakness_score.max()  # Normalize
+        
+        # IMPROVEMENT SIGNALS (momentum picking up)
+        rsi_improvement = df['rsi latest'] - df['rsi weekly']
+        osc_improvement = df['osc latest'] - df['osc weekly']
+        
+        # Rank improvements
+        rsi_imp_pct = rsi_improvement.rank(pct=True)
+        osc_imp_pct = osc_improvement.rank(pct=True)
+        
+        # Want high improvement rank (top improvers)
+        improvement_score = (rsi_imp_pct * 0.4 + osc_imp_pct * 0.6)
+        
+        # EMA MOMENTUM (acceleration)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_spread_pct = ema_spread.rank(pct=True)
+        
+        # COMPOSITE: weak stocks that are improving
+        # Multiplicative blend
+        base_score = np.sqrt(weakness_score * improvement_score)
+        
+        # ACCELERATION BOOST
+        accel_boost = 0.7 + ema_spread_pct * 0.6
+        
+        # TREND FILTER (soft)
+        trend_pct = (df['ma90 latest'] / df['ma200 latest']).rank(pct=True)
+        trend_filter = 0.6 + trend_pct * 0.6
+        
+        # VOLATILITY EFFICIENCY
+        vol_pct = (df['dev20 latest'] / df['price']).rank(pct=True)
+        vol_filter = 1.2 - vol_pct * 0.4  # Lower vol = higher score
+        
+        df['composite_score'] = base_score * accel_boost * trend_filter * vol_filter
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class VolatilityAdjustedValue(BaseStrategy):
+    """
+    Scores value (oversold) per unit of volatility.
+    Sharpe-ratio-like: signal / risk.
+    Prefers strong signals in calm names.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # VALUE SIGNAL (higher = more oversold)
+        rsi_value = np.clip((40 - df['rsi latest']) / 25, 0, 1.5)
+        osc_value = np.clip((-df['osc latest'] - 30) / 50, 0, 1.5)
+        zscore_value = np.clip(-df['zscore latest'] / 2, 0, 2.0)
+        
+        # Blend values
+        raw_value = (rsi_value * 0.30 + osc_value * 0.40 + zscore_value * 0.30)
+        
+        # VOLATILITY (risk measure)
+        vol_daily = df['dev20 latest'] / df['price']
+        vol_weekly = df['dev20 weekly'] / df['price']
+        blended_vol = vol_daily * 0.6 + vol_weekly * 0.4
+        
+        # Normalize volatility to cross-sectional z-score
+        vol_mean, vol_std = blended_vol.mean(), blended_vol.std()
+        vol_zscore = (blended_vol - vol_mean) / (vol_std + 1e-6)
+        
+        # VOLATILITY ADJUSTMENT (value per unit vol)
+        # Use softplus to avoid division issues
+        vol_adjustment = 1 / (1 + np.exp(vol_zscore * 1.5))  # Lower vol = higher adjustment
+        
+        value_per_vol = raw_value * (0.5 + vol_adjustment)
+        
+        # MOMENTUM TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        
+        turn_signal = np.tanh(ema_spread / 25) * 0.5 + 0.5
+        turn_weekly = np.tanh(ema_weekly / 30) * 0.5 + 0.5
+        combined_turn = turn_signal * 0.6 + turn_weekly * 0.4
+        
+        # TREND QUALITY
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_signal = np.tanh((ma_ratio - 1.0) * 10) * 0.5 + 0.5
+        
+        price_ratio = df['price'] / (df['ma200 latest'] + 1e-6)
+        price_signal = np.tanh((price_ratio - 0.95) * 8) * 0.5 + 0.5
+        
+        trend_combined = trend_signal * 0.5 + price_signal * 0.5
+        
+        # FINAL
+        df['composite_score'] = value_per_vol * (0.4 + combined_turn * 0.8) * (0.5 + trend_combined * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class NonlinearMomentumBlender(BaseStrategy):
+    """
+    Uses polynomial and exponential transforms to capture non-linear relationships.
+    Momentum at extremes behaves differently than at center.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # NONLINEAR RSI TRANSFORM
+        # Quadratic emphasis at extremes
+        rsi_centered = (df['rsi latest'] - 50) / 50  # -1 to 1
+        rsi_nonlinear = -np.sign(rsi_centered) * np.power(np.abs(rsi_centered), 1.5)
+        rsi_score = (1 - rsi_nonlinear) / 2  # Map to 0-1, higher for oversold
+        
+        rsi_weekly_centered = (df['rsi weekly'] - 50) / 50
+        rsi_weekly_nonlinear = -np.sign(rsi_weekly_centered) * np.power(np.abs(rsi_weekly_centered), 1.5)
+        rsi_weekly_score = (1 - rsi_weekly_nonlinear) / 2
+        
+        # EXPONENTIAL OSC TRANSFORM
+        # Exponential decay from neutral
+        osc_exp = np.exp(-df['osc latest'] / 40)  # Higher for negative OSC
+        osc_exp = np.clip(osc_exp / osc_exp.max(), 0, 1)
+        
+        osc_weekly_exp = np.exp(-df['osc weekly'] / 50)
+        osc_weekly_exp = np.clip(osc_weekly_exp / osc_weekly_exp.max(), 0, 1)
+        
+        # POLYNOMIAL Z-SCORE
+        z_poly = np.clip(-df['zscore latest'], 0, 3)
+        z_poly_score = z_poly ** 1.3 / (3 ** 1.3)  # Polynomial emphasis
+        
+        z_weekly_poly = np.clip(-df['zscore weekly'], 0, 2.5)
+        z_weekly_poly_score = z_weekly_poly ** 1.2 / (2.5 ** 1.2)
+        
+        # BLEND with variance preservation
+        n_signals = 6
+        blended = (rsi_score + rsi_weekly_score + osc_exp + osc_weekly_exp + 
+                  z_poly_score + z_weekly_poly_score) / np.sqrt(n_signals)
+        
+        # EMA CROSSOVER (cubic sensitivity)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_normalized = np.clip(ema_spread / 40, -1, 1)
+        ema_cubic = np.sign(ema_normalized) * np.power(np.abs(ema_normalized), 0.7)
+        ema_score = (ema_cubic + 1) / 2  # Map to 0-1
+        
+        ema_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        ema_weekly_norm = np.clip(ema_weekly / 50, -1, 1)
+        ema_weekly_score = (np.sign(ema_weekly_norm) * np.power(np.abs(ema_weekly_norm), 0.8) + 1) / 2
+        
+        turn_combined = ema_score * 0.6 + ema_weekly_score * 0.4
+        
+        # TREND (softplus transform)
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_raw = np.log1p(np.exp((ma_ratio - 1) * 10))  # Softplus
+        trend_score = trend_raw / (trend_raw.max() + 1e-6)
+        
+        price_ratio = df['price'] / (df['ma200 latest'] + 1e-6)
+        price_raw = np.log1p(np.exp((price_ratio - 0.95) * 8))
+        price_score = price_raw / (price_raw.max() + 1e-6)
+        
+        trend_combined = (trend_score + price_score) / 2
+        
+        df['composite_score'] = blended * (0.4 + turn_combined * 0.8) * (0.5 + trend_combined * 0.7)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class EntropyWeightedSelector(BaseStrategy):
+    """
+    Weights signals by their entropy (information content).
+    Low entropy signals (concentrated) get more weight.
+    High entropy signals (dispersed) get less weight.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        def calc_entropy_weight(series):
+            """Lower entropy = more concentrated = higher weight"""
+            # Normalize to probabilities
+            shifted = series - series.min() + 1e-6
+            probs = shifted / shifted.sum()
+            entropy = -np.sum(probs * np.log(probs + 1e-10))
+            max_entropy = np.log(len(series))
+            normalized_entropy = entropy / max_entropy
+            return 1 - normalized_entropy  # Invert: low entropy = high weight
+        
+        # Calculate entropy weights for each signal
+        rsi_entropy_w = calc_entropy_weight(100 - df['rsi latest'])
+        osc_entropy_w = calc_entropy_weight(-df['osc latest'])
+        zscore_entropy_w = calc_entropy_weight(-df['zscore latest'])
+        
+        # Normalize weights
+        total_entropy_w = rsi_entropy_w + osc_entropy_w + zscore_entropy_w + 1e-6
+        w_rsi = rsi_entropy_w / total_entropy_w
+        w_osc = osc_entropy_w / total_entropy_w
+        w_zscore = zscore_entropy_w / total_entropy_w
+        
+        # VALUE SIGNALS
+        rsi_value = 1 / (1 + np.exp((df['rsi latest'] - 35) * 0.15))
+        osc_value = 1 / (1 + np.exp((df['osc latest'] + 40) * 0.035))
+        zscore_value = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.7))
+        
+        # ENTROPY-WEIGHTED COMPOSITE
+        weighted_value = rsi_value * w_rsi + osc_value * w_osc + zscore_value * w_zscore
+        
+        # WEEKLY CONFIRMATION
+        rsi_weekly_value = 1 / (1 + np.exp((df['rsi weekly'] - 40) * 0.12))
+        osc_weekly_value = 1 / (1 + np.exp((df['osc weekly'] + 35) * 0.03))
+        weekly_avg = (rsi_weekly_value + osc_weekly_value) / 2
+        
+        # Combine daily and weekly
+        combined_value = weighted_value * 0.55 + weekly_avg * 0.45
+        
+        # MOMENTUM TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 25))
+        
+        # TREND
+        ma_trend = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_signal = 1 / (1 + np.exp(-(ma_trend - 1.0) * 12))
+        
+        price_trend = df['price'] / (df['ma200 latest'] + 1e-6)
+        price_signal = 1 / (1 + np.exp(-(price_trend - 0.95) * 10))
+        
+        trend_combined = (trend_signal + price_signal) / 2
+        
+        df['composite_score'] = combined_value * (0.4 + turn_signal * 0.8) * (0.5 + trend_combined * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# MORE SOPHISTICATED STRATEGIES - V5
+# Novel quantitative approaches
+# =========================================================================
+
+class KalmanFilterMomentum(BaseStrategy):
+    """
+    Kalman-filter inspired: estimates 'true' momentum state from noisy observations.
+    Daily and weekly are noisy measurements of underlying momentum.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # Measurement noise estimates (cross-sectional variance)
+        rsi_noise = df['rsi latest'].var() / 100
+        osc_noise = df['osc latest'].var() / 1000
+        
+        # Kalman gain approximation: K = P / (P + R) where P=process var, R=measurement var
+        # Higher noise = lower gain = trust measurement less
+        rsi_gain = 1 / (1 + rsi_noise * 2)
+        osc_gain = 1 / (1 + osc_noise * 2)
+        
+        # State estimate: weighted average of daily (measurement) and weekly (prior state)
+        rsi_state = df['rsi weekly'] + rsi_gain * (df['rsi latest'] - df['rsi weekly'])
+        osc_state = df['osc weekly'] + osc_gain * (df['osc latest'] - df['osc weekly'])
+        
+        # Innovation (surprise): how much daily differs from prediction
+        rsi_innovation = np.abs(df['rsi latest'] - df['rsi weekly']) / 20
+        osc_innovation = np.abs(df['osc latest'] - df['osc weekly']) / 40
+        
+        # Value signal from filtered state
+        rsi_value = 1 / (1 + np.exp((rsi_state - 35) * 0.15))
+        osc_value = 1 / (1 + np.exp((osc_state + 40) * 0.03))
+        
+        # Innovation bonus (large positive surprise = opportunity)
+        daily_better = (df['rsi latest'] > df['rsi weekly']) | (df['osc latest'] > df['osc weekly'])
+        innovation_bonus = np.where(daily_better, 
+                                    1 + (rsi_innovation + osc_innovation) * 0.3,
+                                    1 - (rsi_innovation + osc_innovation) * 0.15)
+        
+        # Z-score state
+        z_gain = 1 / (1 + df['zscore latest'].var() / 2)
+        z_state = df['zscore weekly'] + z_gain * (df['zscore latest'] - df['zscore weekly'])
+        z_value = 1 / (1 + np.exp((z_state + 1.5) * 0.7))
+        
+        # Combined filtered value
+        filtered_value = (rsi_value * 0.30 + osc_value * 0.40 + z_value * 0.30) * innovation_bonus
+        
+        # EMA momentum state
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        ema_state = ema_weekly + 0.6 * (ema_spread - ema_weekly)
+        turn_signal = 1 / (1 + np.exp(-ema_state / 25))
+        
+        # Trend
+        trend = 1 / (1 + np.exp(-(df['ma90 latest'] / df['ma200 latest'] - 1) * 12))
+        
+        df['composite_score'] = filtered_value * (0.4 + turn_signal * 0.8) * (0.5 + trend * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class MeanVarianceOptimizer(BaseStrategy):
+    """
+    Mean-variance inspired: maximizes expected return per unit risk.
+    Expected return from oversold signals, risk from volatility dispersion.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # EXPECTED RETURN PROXY (from mean reversion potential)
+        # Deeper oversold = higher expected reversion return
+        rsi_exp_ret = np.clip((40 - df['rsi latest']) / 30, 0, 1.5)
+        osc_exp_ret = np.clip((-df['osc latest'] - 30) / 60, 0, 1.5)
+        z_exp_ret = np.clip(-df['zscore latest'] / 2.5, 0, 1.5)
+        
+        # Turn signal adds to expected return
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_exp = np.clip(ema_spread / 40 + 0.5, 0, 1.2)
+        
+        expected_return = (rsi_exp_ret * 0.25 + osc_exp_ret * 0.35 + 
+                         z_exp_ret * 0.25 + turn_exp * 0.15)
+        
+        # RISK ESTIMATE
+        vol_daily = df['dev20 latest'] / df['price']
+        vol_weekly = df['dev20 weekly'] / df['price']
+        
+        # Uncertainty from daily-weekly disagreement
+        rsi_uncertainty = np.abs(df['rsi latest'] - df['rsi weekly']) / 30
+        osc_uncertainty = np.abs(df['osc latest'] - df['osc weekly']) / 50
+        
+        total_risk = np.sqrt(vol_daily**2 + rsi_uncertainty**2 + osc_uncertainty**2)
+        total_risk = np.clip(total_risk, 0.005, 0.15)
+        
+        # MEAN-VARIANCE SCORE: return / risk (Sharpe-like)
+        mv_score = expected_return / total_risk
+        
+        # Normalize to reasonable range
+        mv_score = mv_score / (mv_score.max() + 1e-6)
+        
+        # TREND QUALITY multiplier
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 8) * 0.3 + 1.0
+        
+        df['composite_score'] = mv_score * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class RegimeSwitchingStrategy(BaseStrategy):
+    """
+    Detects market regime from cross-sectional stats and switches strategy.
+    Stressed regime: aggressive mean reversion.
+    Normal regime: balanced approach.
+    Euphoric regime: momentum focus.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # REGIME DETECTION
+        avg_rsi = df['rsi latest'].mean()
+        avg_osc = df['osc latest'].mean()
+        osc_dispersion = df['osc latest'].std()
+        pct_oversold = (df['rsi latest'] < 40).mean()
+        
+        # Regime probabilities (soft classification)
+        stressed_prob = 1 / (1 + np.exp((avg_rsi - 35) * 0.2 + (avg_osc + 30) * 0.02))
+        euphoric_prob = 1 / (1 + np.exp(-(avg_rsi - 60) * 0.15 - (avg_osc - 20) * 0.02))
+        normal_prob = 1 - stressed_prob - euphoric_prob
+        normal_prob = np.clip(normal_prob, 0.1, 0.8)
+        
+        # Normalize
+        total_prob = stressed_prob + euphoric_prob + normal_prob
+        stressed_prob /= total_prob
+        euphoric_prob /= total_prob
+        normal_prob /= total_prob
+        
+        # STRESSED REGIME SCORE (aggressive mean reversion)
+        z_depth = np.clip(-df['zscore latest'] / 2, 0, 2)
+        rsi_depth = np.clip((35 - df['rsi latest']) / 20, 0, 2)
+        osc_depth = np.clip((-df['osc latest'] - 50) / 40, 0, 2)
+        stressed_score = (z_depth * 0.35 + rsi_depth * 0.30 + osc_depth * 0.35)
+        
+        # Turn signal critical in stressed
+        ema_turn = df['9ema osc latest'] > df['21ema osc latest']
+        stressed_score = stressed_score * np.where(ema_turn, 1.8, 0.5)
+        
+        # NORMAL REGIME SCORE (balanced)
+        rsi_value = 1 / (1 + np.exp((df['rsi latest'] - 40) * 0.12))
+        osc_value = 1 / (1 + np.exp((df['osc latest'] + 35) * 0.025))
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_value = 1 / (1 + np.exp(-ema_spread / 30))
+        normal_score = (rsi_value * 0.30 + osc_value * 0.40 + turn_value * 0.30)
+        
+        # EUPHORIC REGIME SCORE (momentum)
+        rsi_strength = np.clip((df['rsi latest'] - 45) / 35, 0, 1.5)
+        osc_strength = np.clip((df['osc latest'] + 20) / 80, 0, 1.5)
+        trend_strength = np.clip((df['price'] / df['ma90 latest'] - 0.95) * 10, 0, 1.5)
+        euphoric_score = (rsi_strength * 0.30 + osc_strength * 0.35 + trend_strength * 0.35)
+        
+        # REGIME-WEIGHTED COMPOSITE
+        composite = (stressed_score * stressed_prob + 
+                    normal_score * normal_prob + 
+                    euphoric_score * euphoric_prob)
+        
+        # TREND OVERLAY
+        ma_trend = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_trend - 0.95) * 6) * 0.25 + 1.0
+        
+        df['composite_score'] = composite * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class FractalMomentumStrategy(BaseStrategy):
+    """
+    Treats daily and weekly as fractal scales of same underlying process.
+    Self-similarity: patterns at daily should echo at weekly.
+    Exploits scale-invariant momentum structures.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # SCALE NORMALIZATION (make daily and weekly comparable)
+        rsi_daily_norm = (df['rsi latest'] - 50) / 50
+        rsi_weekly_norm = (df['rsi weekly'] - 50) / 50
+        
+        osc_daily_norm = df['osc latest'] / 100
+        osc_weekly_norm = df['osc weekly'] / 100
+        
+        z_daily_norm = df['zscore latest'] / 3
+        z_weekly_norm = df['zscore weekly'] / 2.5
+        
+        # SELF-SIMILARITY SCORE (correlation between scales)
+        # Both scales pointing same direction = fractal alignment
+        rsi_alignment = rsi_daily_norm * rsi_weekly_norm
+        osc_alignment = osc_daily_norm * osc_weekly_norm
+        z_alignment = z_daily_norm * z_weekly_norm
+        
+        # Positive alignment in oversold = strong signal
+        fractal_coherence = (np.clip(rsi_alignment, 0, 1) * 0.30 +
+                            np.clip(osc_alignment, 0, 1) * 0.40 +
+                            np.clip(z_alignment, 0, 1) * 0.30)
+        
+        # VALUE at both scales
+        rsi_value = (1 / (1 + np.exp(rsi_daily_norm * 3)) + 
+                    1 / (1 + np.exp(rsi_weekly_norm * 2.5))) / 2
+        
+        osc_value = (1 / (1 + np.exp(osc_daily_norm * 2.5)) +
+                    1 / (1 + np.exp(osc_weekly_norm * 2))) / 2
+        
+        z_value = (1 / (1 + np.exp(z_daily_norm * 2)) +
+                  1 / (1 + np.exp(z_weekly_norm * 1.8))) / 2
+        
+        multi_scale_value = (rsi_value * 0.30 + osc_value * 0.40 + z_value * 0.30)
+        
+        # FRACTAL MOMENTUM (EMA structure at both scales)
+        ema_daily = (df['9ema osc latest'] - df['21ema osc latest']) / 50
+        ema_weekly = (df['9ema osc weekly'] - df['21ema osc weekly']) / 60
+        
+        # Both scales turning = fractal turn
+        ema_fractal = np.tanh(ema_daily * 2) * np.tanh(ema_weekly * 1.5)
+        ema_fractal_score = (ema_fractal + 1) / 2  # Map to 0-1
+        
+        # Add individual scale turns
+        daily_turn = 1 / (1 + np.exp(-ema_daily * 3))
+        weekly_turn = 1 / (1 + np.exp(-ema_weekly * 2.5))
+        combined_turn = (daily_turn * 0.5 + weekly_turn * 0.3 + ema_fractal_score * 0.2)
+        
+        # COMPOSITE
+        base_score = multi_scale_value * (1 + fractal_coherence * 0.5)
+        
+        # TREND (fractal view)
+        ma_daily_ratio = df['price'] / (df['ma90 latest'] + 1e-6)
+        ma_weekly_ratio = df['price'] / (df['ma90 weekly'] + 1e-6)
+        trend_fractal = (np.tanh((ma_daily_ratio - 1) * 5) + 
+                        np.tanh((ma_weekly_ratio - 1) * 4)) / 2
+        trend_score = (trend_fractal + 1) / 2
+        
+        df['composite_score'] = base_score * (0.4 + combined_turn * 0.8) * (0.5 + trend_score * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class CopulaBlendStrategy(BaseStrategy):
+    """
+    Models dependency structure between indicators using copula-inspired approach.
+    Captures tail dependencies (extreme co-movements) better than correlation.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # UNIFORM MARGINALS (empirical CDF transform)
+        def to_uniform(series):
+            return series.rank(pct=True)
+        
+        u_rsi = to_uniform(df['rsi latest'])
+        u_osc = to_uniform(df['osc latest'])
+        u_zscore = to_uniform(df['zscore latest'])
+        u_rsi_w = to_uniform(df['rsi weekly'])
+        u_osc_w = to_uniform(df['osc weekly'])
+        
+        # TAIL DEPENDENCY (lower tail - both in bottom)
+        # Clayton-inspired: emphasizes lower tail
+        theta = 2.0  # Dependency parameter
+        
+        def clayton_lower_tail(u1, u2, theta):
+            """Lower tail dependency from Clayton copula"""
+            return np.power(np.power(u1, -theta) + np.power(u2, -theta) - 1, -1/theta)
+        
+        # Pairwise lower tail dependencies
+        rsi_osc_tail = clayton_lower_tail(u_rsi + 0.01, u_osc + 0.01, theta)
+        rsi_z_tail = clayton_lower_tail(u_rsi + 0.01, u_zscore + 0.01, theta)
+        osc_z_tail = clayton_lower_tail(u_osc + 0.01, u_zscore + 0.01, theta)
+        
+        # Combined tail score (lower = both in lower tail = oversold together)
+        tail_score = 1 - (rsi_osc_tail * 0.35 + rsi_z_tail * 0.30 + osc_z_tail * 0.35)
+        
+        # MARGINAL VALUES
+        rsi_value = 1 - u_rsi  # Lower rank = higher value
+        osc_value = 1 - u_osc
+        z_value = 1 - u_zscore
+        
+        marginal_value = (rsi_value * 0.30 + osc_value * 0.40 + z_value * 0.30)
+        
+        # COPULA-ADJUSTED VALUE
+        # High tail score + high marginal = strong signal
+        copula_value = marginal_value * (0.6 + tail_score * 0.6)
+        
+        # WEEKLY CONFIRMATION (same copula approach)
+        weekly_tail = clayton_lower_tail(u_rsi_w + 0.01, u_osc_w + 0.01, theta * 0.8)
+        weekly_confirm = 1 - weekly_tail
+        
+        combined_value = copula_value * 0.65 + weekly_confirm * 0.35
+        
+        # MOMENTUM TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        u_ema = to_uniform(ema_spread)
+        turn_signal = u_ema  # Higher rank = more bullish turn
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        u_trend = to_uniform(ma_ratio)
+        trend_signal = u_trend
+        
+        df['composite_score'] = combined_value * (0.4 + turn_signal * 0.8) * (0.5 + trend_signal * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class WaveletDenoiser(BaseStrategy):
+    """
+    Wavelet-inspired: separates signal from noise across scales.
+    Low frequency (weekly) = trend signal.
+    High frequency (daily-weekly diff) = noise to filter.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # DECOMPOSITION: Approximation (low freq) + Detail (high freq)
+        # Weekly = approximation, Daily-Weekly = detail
+        
+        rsi_approx = df['rsi weekly']
+        rsi_detail = df['rsi latest'] - df['rsi weekly']
+        
+        osc_approx = df['osc weekly']
+        osc_detail = df['osc latest'] - df['osc weekly']
+        
+        z_approx = df['zscore weekly']
+        z_detail = df['zscore latest'] - df['zscore weekly']
+        
+        # SOFT THRESHOLDING (denoise detail coefficients)
+        def soft_threshold(detail, threshold):
+            """Shrink small details to zero (noise), keep large (signal)"""
+            sign = np.sign(detail)
+            magnitude = np.abs(detail)
+            shrunk = np.maximum(magnitude - threshold, 0)
+            return sign * shrunk
+        
+        # Adaptive thresholds based on cross-sectional MAD
+        rsi_thresh = np.median(np.abs(rsi_detail)) * 1.5
+        osc_thresh = np.median(np.abs(osc_detail)) * 1.2
+        z_thresh = np.median(np.abs(z_detail)) * 1.3
+        
+        rsi_detail_clean = soft_threshold(rsi_detail, rsi_thresh)
+        osc_detail_clean = soft_threshold(osc_detail, osc_thresh)
+        z_detail_clean = soft_threshold(z_detail, z_thresh)
+        
+        # RECONSTRUCT DENOISED SIGNAL
+        rsi_denoised = rsi_approx + rsi_detail_clean * 0.5  # Partial reconstruction
+        osc_denoised = osc_approx + osc_detail_clean * 0.5
+        z_denoised = z_approx + z_detail_clean * 0.5
+        
+        # VALUE FROM DENOISED SIGNALS
+        rsi_value = 1 / (1 + np.exp((rsi_denoised - 38) * 0.14))
+        osc_value = 1 / (1 + np.exp((osc_denoised + 38) * 0.028))
+        z_value = 1 / (1 + np.exp((z_denoised + 1.3) * 0.65))
+        
+        denoised_value = (rsi_value * 0.30 + osc_value * 0.40 + z_value * 0.30)
+        
+        # DETAIL DIRECTION (positive detail = improving)
+        detail_direction = np.tanh((rsi_detail_clean / 10 + osc_detail_clean / 20 + z_detail_clean / 1.5) / 3)
+        detail_signal = (detail_direction + 1) / 2
+        
+        # EMA (denoised approach)
+        ema_approx = df['9ema osc weekly'] - df['21ema osc weekly']
+        ema_detail = (df['9ema osc latest'] - df['21ema osc latest']) - ema_approx
+        ema_detail_clean = soft_threshold(ema_detail, np.median(np.abs(ema_detail)) * 1.2)
+        ema_denoised = ema_approx + ema_detail_clean * 0.6
+        turn_signal = 1 / (1 + np.exp(-ema_denoised / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_signal = 1 / (1 + np.exp(-(ma_ratio - 1) * 12))
+        
+        df['composite_score'] = denoised_value * (0.5 + detail_signal * 0.5) * (0.4 + turn_signal * 0.8) * (0.5 + trend_signal * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class GradientBoostBlender(BaseStrategy):
+    """
+    Gradient-boosting inspired: sequential correction of residuals.
+    Each signal layer corrects errors from previous layer.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        learning_rate = 0.3
+        
+        # LAYER 0: Base prediction (weekly-based, stable)
+        base_pred = 1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12))
+        
+        # LAYER 1: RSI residual correction
+        rsi_signal = 1 / (1 + np.exp((df['rsi latest'] - 38) * 0.15))
+        residual_1 = rsi_signal - base_pred
+        pred_1 = base_pred + learning_rate * residual_1
+        
+        # LAYER 2: OSC residual correction
+        osc_signal = 1 / (1 + np.exp((df['osc latest'] + 42) * 0.03))
+        residual_2 = osc_signal - pred_1
+        pred_2 = pred_1 + learning_rate * residual_2
+        
+        # LAYER 3: Z-score residual correction
+        z_signal = 1 / (1 + np.exp((df['zscore latest'] + 1.4) * 0.7))
+        residual_3 = z_signal - pred_2
+        pred_3 = pred_2 + learning_rate * residual_3
+        
+        # LAYER 4: Weekly confirmation correction
+        weekly_signal = (1 / (1 + np.exp((df['osc weekly'] + 38) * 0.025)) +
+                        1 / (1 + np.exp((df['zscore weekly'] + 1.2) * 0.6))) / 2
+        residual_4 = weekly_signal - pred_3
+        pred_4 = pred_3 + learning_rate * 0.5 * residual_4  # Lower LR for weekly
+        
+        # LAYER 5: EMA momentum correction
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        residual_5 = ema_signal - pred_4
+        final_pred = pred_4 + learning_rate * 0.4 * residual_5
+        
+        # Clip to valid range
+        final_pred = np.clip(final_pred, 0.01, 0.99)
+        
+        # TREND MULTIPLIER
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = final_pred * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class AttentionMechanism(BaseStrategy):
+    """
+    Attention-inspired: dynamically weights signals based on their relevance.
+    Signals with stronger extremes get more attention.
+    Cross-signal attention for context.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # SIGNAL VALUES (queries)
+        rsi_val = 1 / (1 + np.exp((df['rsi latest'] - 37) * 0.15))
+        osc_val = 1 / (1 + np.exp((df['osc latest'] + 42) * 0.032))
+        z_val = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.7))
+        rsi_w_val = 1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12))
+        osc_w_val = 1 / (1 + np.exp((df['osc weekly'] + 38) * 0.028))
+        
+        # ATTENTION SCORES (based on signal strength/extremity)
+        # More extreme = higher attention
+        rsi_attention = np.abs(df['rsi latest'] - 50) / 50
+        osc_attention = np.abs(df['osc latest']) / 100
+        z_attention = np.abs(df['zscore latest']) / 3
+        rsi_w_attention = np.abs(df['rsi weekly'] - 50) / 50
+        osc_w_attention = np.abs(df['osc weekly']) / 100
+        
+        # SOFTMAX over attention scores
+        attention_scores = np.column_stack([rsi_attention, osc_attention, z_attention, 
+                                           rsi_w_attention, osc_w_attention])
+        # Temperature for softmax sharpness
+        temperature = 0.5
+        exp_scores = np.exp(attention_scores / temperature)
+        softmax_weights = exp_scores / (exp_scores.sum(axis=1, keepdims=True) + 1e-6)
+        
+        # WEIGHTED VALUE (attention-weighted)
+        values = np.column_stack([rsi_val, osc_val, z_val, rsi_w_val, osc_w_val])
+        attended_value = np.sum(values * softmax_weights, axis=1)
+        
+        # CROSS-ATTENTION (signals attending to each other)
+        # RSI-OSC agreement boosts both
+        rsi_osc_agreement = np.tanh(rsi_val * osc_val * 3)
+        # Daily-Weekly agreement
+        daily_weekly_agreement = np.tanh((rsi_val * rsi_w_val + osc_val * osc_w_val) * 2)
+        
+        cross_attention_boost = (rsi_osc_agreement * 0.5 + daily_weekly_agreement * 0.5)
+        
+        # COMBINED
+        attention_output = attended_value * (1 + cross_attention_boost * 0.4)
+        
+        # EMA MOMENTUM (with attention)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_attention = np.abs(ema_spread) / 50
+        ema_val = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # Combine with momentum attention
+        final_with_momentum = attention_output * 0.7 + ema_val * 0.3 * (1 + ema_attention * 0.5)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = final_with_momentum * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class EnsembleVotingStrategy(BaseStrategy):
+    """
+    Ensemble of multiple mini-strategies with soft voting.
+    Each sub-strategy votes, final score is weighted vote.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # SUB-STRATEGY 1: Pure value (oversold depth)
+        value_vote = (
+            1 / (1 + np.exp((df['rsi latest'] - 35) * 0.16)) * 0.30 +
+            1 / (1 + np.exp((df['osc latest'] + 45) * 0.035)) * 0.40 +
+            1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.75)) * 0.30
+        )
+        
+        # SUB-STRATEGY 2: Momentum turn
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_weekly = df['9ema osc weekly'] - df['21ema osc weekly']
+        momentum_vote = (
+            1 / (1 + np.exp(-ema_spread / 26)) * 0.50 +
+            1 / (1 + np.exp(-ema_weekly / 32)) * 0.30 +
+            1 / (1 + np.exp(-(df['osc latest'] - df['osc weekly']) / 25)) * 0.20
+        )
+        
+        # SUB-STRATEGY 3: Weekly confirmation
+        weekly_vote = (
+            1 / (1 + np.exp((df['rsi weekly'] - 40) * 0.13)) * 0.35 +
+            1 / (1 + np.exp((df['osc weekly'] + 38) * 0.028)) * 0.40 +
+            1 / (1 + np.exp((df['zscore weekly'] + 1.2) * 0.65)) * 0.25
+        )
+        
+        # SUB-STRATEGY 4: Trend quality
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        price_ratio = df['price'] / (df['ma200 latest'] + 1e-6)
+        trend_vote = (
+            1 / (1 + np.exp(-(ma_ratio - 0.98) * 15)) * 0.50 +
+            1 / (1 + np.exp(-(price_ratio - 0.92) * 12)) * 0.50
+        )
+        
+        # SUB-STRATEGY 5: Volatility quality
+        vol = df['dev20 latest'] / df['price']
+        vol_vote = 1 / (1 + np.exp((vol - 0.025) * 80))
+        
+        # VOTE WEIGHTS (can be adaptive)
+        # More weight to value and momentum in oversold markets
+        avg_rsi = df['rsi latest'].mean()
+        if avg_rsi < 40:
+            weights = np.array([0.30, 0.25, 0.20, 0.15, 0.10])
+        elif avg_rsi > 55:
+            weights = np.array([0.20, 0.25, 0.15, 0.30, 0.10])
+        else:
+            weights = np.array([0.25, 0.25, 0.20, 0.20, 0.10])
+        
+        # WEIGHTED VOTE
+        votes = np.column_stack([value_vote, momentum_vote, weekly_vote, trend_vote, vol_vote])
+        ensemble_score = np.sum(votes * weights, axis=1)
+        
+        # AGREEMENT BONUS (when sub-strategies agree)
+        vote_std = np.std(votes, axis=1)
+        agreement_bonus = 1 / (1 + vote_std * 5)  # Lower std = more agreement
+        
+        df['composite_score'] = ensemble_score * (0.8 + agreement_bonus * 0.4)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+# =========================================================================
+# MORE SOPHISTICATED STRATEGIES - V6
+# Novel quantitative approaches continued
+# =========================================================================
+
+class OptimalTransportBlender(BaseStrategy):
+    """
+    Optimal transport inspired: finds minimum cost mapping between 
+    current state and ideal oversold state. Distance from ideal = opportunity.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # IDEAL OVERSOLD STATE (target distribution)
+        ideal_rsi = 25
+        ideal_osc = -70
+        ideal_zscore = -2.0
+        ideal_rsi_w = 30
+        ideal_osc_w = -55
+        
+        # CURRENT STATE normalized
+        rsi_norm = df['rsi latest'] / 100
+        osc_norm = (df['osc latest'] + 100) / 200
+        z_norm = (df['zscore latest'] + 3) / 6
+        rsi_w_norm = df['rsi weekly'] / 100
+        osc_w_norm = (df['osc weekly'] + 100) / 200
+        
+        ideal_rsi_norm = ideal_rsi / 100
+        ideal_osc_norm = (ideal_osc + 100) / 200
+        ideal_z_norm = (ideal_zscore + 3) / 6
+        ideal_rsi_w_norm = ideal_rsi_w / 100
+        ideal_osc_w_norm = (ideal_osc_w + 100) / 200
+        
+        # WASSERSTEIN-LIKE DISTANCE (L2 in normalized space)
+        dist_rsi = np.abs(rsi_norm - ideal_rsi_norm)
+        dist_osc = np.abs(osc_norm - ideal_osc_norm)
+        dist_z = np.abs(z_norm - ideal_z_norm)
+        dist_rsi_w = np.abs(rsi_w_norm - ideal_rsi_w_norm)
+        dist_osc_w = np.abs(osc_w_norm - ideal_osc_w_norm)
+        
+        # Weighted distance (closer to ideal = lower distance = higher score)
+        total_distance = np.sqrt(
+            (dist_rsi ** 2) * 0.20 +
+            (dist_osc ** 2) * 0.25 +
+            (dist_z ** 2) * 0.20 +
+            (dist_rsi_w ** 2) * 0.15 +
+            (dist_osc_w ** 2) * 0.20
+        )
+        
+        # Convert distance to score (inverse with softmax-like transform)
+        proximity_score = np.exp(-total_distance * 4)
+        
+        # DIRECTION BONUS (moving toward ideal)
+        moving_toward = (
+            ((df['rsi latest'] < df['rsi weekly']) & (df['rsi latest'] < 45)).astype(float) * 0.3 +
+            ((df['osc latest'] > df['osc weekly']) & (df['osc latest'] < -30)).astype(float) * 0.4 +
+            ((df['zscore latest'] > df['zscore weekly']) & (df['zscore latest'] < -1)).astype(float) * 0.3
+        )
+        direction_mult = 1 + moving_toward * 0.5
+        
+        # EMA TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.94) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = proximity_score * direction_mult * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class StochasticDominance(BaseStrategy):
+    """
+    First-order stochastic dominance: prefers stocks that dominate 
+    others across all oversold metrics. Pareto-optimal selection.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # RANK on each dimension (lower rank = more oversold = better)
+        rsi_rank = df['rsi latest'].rank(pct=True)
+        osc_rank = df['osc latest'].rank(pct=True)
+        z_rank = df['zscore latest'].rank(pct=True)
+        rsi_w_rank = df['rsi weekly'].rank(pct=True)
+        osc_w_rank = df['osc weekly'].rank(pct=True)
+        
+        # DOMINANCE COUNT: how many metrics is this stock in bottom quartile?
+        bottom_q = 0.30
+        dominance_count = (
+            (rsi_rank < bottom_q).astype(float) +
+            (osc_rank < bottom_q).astype(float) +
+            (z_rank < bottom_q).astype(float) +
+            (rsi_w_rank < bottom_q).astype(float) +
+            (osc_w_rank < bottom_q).astype(float)
+        )
+        
+        # AVERAGE RANK (lower = better)
+        avg_rank = (rsi_rank * 0.20 + osc_rank * 0.25 + z_rank * 0.20 + 
+                   rsi_w_rank * 0.15 + osc_w_rank * 0.20)
+        
+        # DOMINANCE SCORE: combination of count and average
+        # Exponential boost for high dominance count
+        dominance_score = np.exp(dominance_count * 0.5) * (1 - avg_rank)
+        
+        # PARETO EFFICIENCY: check if dominated by others
+        # Simplified: penalize if consistently worse than median
+        median_rank = 0.5
+        inefficiency = np.maximum(0, avg_rank - median_rank)
+        pareto_mult = 1 / (1 + inefficiency * 3)
+        
+        # MOMENTUM TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        ema_rank = ema_spread.rank(pct=True)
+        turn_signal = ema_rank  # Higher rank = better turn
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_rank = ma_ratio.rank(pct=True)
+        
+        df['composite_score'] = dominance_score * pareto_mult * (0.4 + turn_signal * 0.8) * (0.5 + trend_rank * 0.6)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class MaximumEntropyStrategy(BaseStrategy):
+    """
+    Maximum entropy principle: among all portfolios consistent with 
+    constraints, choose the one with maximum entropy (least assumptions).
+    Constraints: expected value signal, expected turn signal.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # FEATURE FUNCTIONS (constraints we want to satisfy)
+        f1_value = 1 / (1 + np.exp((df['rsi latest'] - 38) * 0.14))
+        f2_osc = 1 / (1 + np.exp((df['osc latest'] + 42) * 0.03))
+        f3_zscore = 1 / (1 + np.exp((df['zscore latest'] + 1.4) * 0.7))
+        f4_turn = 1 / (1 + np.exp(-(df['9ema osc latest'] - df['21ema osc latest']) / 28))
+        f5_trend = 1 / (1 + np.exp(-(df['ma90 latest'] / df['ma200 latest'] - 1) * 12))
+        
+        # LAGRANGE MULTIPLIERS (learned from typical good portfolio)
+        # These weight the importance of each constraint
+        lambda1 = 1.2  # Value importance
+        lambda2 = 1.5  # OSC importance
+        lambda3 = 1.0  # Z-score importance
+        lambda4 = 0.8  # Turn importance
+        lambda5 = 0.6  # Trend importance
+        
+        # MAX ENTROPY DISTRIBUTION: p(x) ∝ exp(Σ λ_i f_i(x))
+        log_unnorm = (lambda1 * f1_value + lambda2 * f2_osc + lambda3 * f3_zscore + 
+                     lambda4 * f4_turn + lambda5 * f5_trend)
+        
+        # Exponentiate and normalize
+        unnorm_prob = np.exp(log_unnorm - log_unnorm.max())  # Subtract max for stability
+        
+        # ENTROPY REGULARIZATION
+        # Add small uniform component to increase entropy
+        uniform = np.ones(len(df)) / len(df)
+        entropy_weight = 0.1
+        regularized = unnorm_prob * (1 - entropy_weight) + uniform * entropy_weight * len(df)
+        
+        # WEEKLY CONFIRMATION
+        f_weekly = (1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) +
+                   1 / (1 + np.exp((df['osc weekly'] + 38) * 0.025))) / 2
+        weekly_mult = 0.7 + f_weekly * 0.5
+        
+        df['composite_score'] = regularized * weekly_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class HiddenMarkovModel(BaseStrategy):
+    """
+    HMM inspired: infers hidden momentum state from observable indicators.
+    States: Accumulation, Neutral, Distribution.
+    Transition probabilities from indicator changes.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # EMISSION PROBABILITIES P(observation | state)
+        # State 0: Accumulation (oversold, turning up)
+        # State 1: Neutral
+        # State 2: Distribution (overbought, turning down)
+        
+        # Emission for Accumulation state
+        emit_accum_rsi = np.exp(-((df['rsi latest'] - 30) ** 2) / 200)
+        emit_accum_osc = np.exp(-((df['osc latest'] + 60) ** 2) / 800)
+        emit_accum_turn = 1 / (1 + np.exp(-(df['9ema osc latest'] - df['21ema osc latest']) / 25))
+        p_emit_accum = (emit_accum_rsi * emit_accum_osc * emit_accum_turn) ** (1/3)
+        
+        # Emission for Neutral state
+        emit_neutral_rsi = np.exp(-((df['rsi latest'] - 50) ** 2) / 300)
+        emit_neutral_osc = np.exp(-((df['osc latest']) ** 2) / 1000)
+        p_emit_neutral = (emit_neutral_rsi * emit_neutral_osc) ** 0.5
+        
+        # Emission for Distribution state
+        emit_dist_rsi = np.exp(-((df['rsi latest'] - 70) ** 2) / 200)
+        emit_dist_osc = np.exp(-((df['osc latest'] - 60) ** 2) / 800)
+        emit_dist_turn = 1 / (1 + np.exp((df['9ema osc latest'] - df['21ema osc latest']) / 25))
+        p_emit_dist = (emit_dist_rsi * emit_dist_osc * emit_dist_turn) ** (1/3)
+        
+        # PRIOR STATE PROBABILITIES (from weekly data)
+        prior_accum = 1 / (1 + np.exp((df['rsi weekly'] - 35) * 0.12))
+        prior_dist = 1 / (1 + np.exp(-(df['rsi weekly'] - 65) * 0.12))
+        prior_neutral = 1 - prior_accum - prior_dist
+        prior_neutral = np.clip(prior_neutral, 0.1, 0.8)
+        
+        # Normalize priors
+        prior_sum = prior_accum + prior_neutral + prior_dist
+        prior_accum /= prior_sum
+        prior_neutral /= prior_sum
+        prior_dist /= prior_sum
+        
+        # POSTERIOR (Bayes: prior * likelihood)
+        post_accum = prior_accum * p_emit_accum
+        post_neutral = prior_neutral * p_emit_neutral
+        post_dist = prior_dist * p_emit_dist
+        
+        # Normalize posterior
+        post_sum = post_accum + post_neutral + post_dist + 1e-6
+        post_accum /= post_sum
+        
+        # SCORE: probability of being in accumulation state
+        accumulation_prob = post_accum
+        
+        # TREND MULTIPLIER
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.94) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = accumulation_prob * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class QuantileRegressionStrategy(BaseStrategy):
+    """
+    Quantile regression inspired: estimates conditional quantiles.
+    Scores based on how extreme current values are relative to 
+    expected quantiles given other indicators.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # CONDITIONAL QUANTILE ESTIMATION
+        # Expected RSI given OSC level (linear approximation)
+        osc_norm = df['osc latest'] / 100
+        expected_rsi_median = 50 + osc_norm * 20  # Higher OSC -> higher RSI expected
+        expected_rsi_q10 = 35 + osc_norm * 15
+        
+        # How far below expected is actual RSI?
+        rsi_surprise = (expected_rsi_median - df['rsi latest']) / 20
+        rsi_extreme = (expected_rsi_q10 - df['rsi latest']) / 15
+        
+        # Combined surprise score (more surprising = more oversold than expected)
+        rsi_quantile_score = np.tanh(rsi_surprise * 0.8) * 0.5 + np.tanh(rsi_extreme * 0.5) * 0.5
+        rsi_quantile_score = (rsi_quantile_score + 1) / 2  # Map to 0-1
+        
+        # OSC quantile given Z-score
+        z_norm = df['zscore latest'] / 3
+        expected_osc_median = -20 + z_norm * 40
+        osc_surprise = (expected_osc_median - df['osc latest']) / 40
+        osc_quantile_score = (np.tanh(osc_surprise * 0.6) + 1) / 2
+        
+        # Z-score quantile given RSI
+        rsi_norm = (df['rsi latest'] - 50) / 50
+        expected_z_median = rsi_norm * 1.5
+        z_surprise = (expected_z_median - df['zscore latest']) / 2
+        z_quantile_score = (np.tanh(z_surprise * 0.7) + 1) / 2
+        
+        # COMBINED QUANTILE SURPRISE
+        quantile_score = (rsi_quantile_score * 0.35 + 
+                         osc_quantile_score * 0.35 + 
+                         z_quantile_score * 0.30)
+        
+        # WEEKLY CONFIRMATION
+        weekly_rsi_surprise = (45 - df['rsi weekly']) / 20
+        weekly_osc_surprise = (-30 - df['osc weekly']) / 40
+        weekly_score = (np.tanh(weekly_rsi_surprise * 0.5) + np.tanh(weekly_osc_surprise * 0.4) + 2) / 4
+        
+        combined = quantile_score * 0.65 + weekly_score * 0.35
+        
+        # TURN SIGNAL
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class MutualInformationBlender(BaseStrategy):
+    """
+    Mutual information inspired: weights signals by their information 
+    content about future returns. Higher MI = more predictive = higher weight.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # PROXY FOR MUTUAL INFORMATION
+        # Signals that are extreme (high entropy in signal) carry more info
+        def entropy_proxy(series, bins=10):
+            """Higher variance in extreme regions = higher info"""
+            percentiles = series.rank(pct=True)
+            extreme_mask = (percentiles < 0.2) | (percentiles > 0.8)
+            extreme_var = series[extreme_mask].var() if extreme_mask.sum() > 2 else series.var()
+            total_var = series.var()
+            return extreme_var / (total_var + 1e-6)
+        
+        # Calculate MI proxies for each signal
+        mi_rsi = entropy_proxy(df['rsi latest'])
+        mi_osc = entropy_proxy(df['osc latest'])
+        mi_zscore = entropy_proxy(df['zscore latest'])
+        mi_rsi_w = entropy_proxy(df['rsi weekly'])
+        mi_osc_w = entropy_proxy(df['osc weekly'])
+        
+        # Normalize to weights
+        total_mi = mi_rsi + mi_osc + mi_zscore + mi_rsi_w + mi_osc_w + 1e-6
+        w_rsi = mi_rsi / total_mi
+        w_osc = mi_osc / total_mi
+        w_zscore = mi_zscore / total_mi
+        w_rsi_w = mi_rsi_w / total_mi
+        w_osc_w = mi_osc_w / total_mi
+        
+        # SIGNAL VALUES
+        v_rsi = 1 / (1 + np.exp((df['rsi latest'] - 36) * 0.15))
+        v_osc = 1 / (1 + np.exp((df['osc latest'] + 44) * 0.032))
+        v_zscore = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.72))
+        v_rsi_w = 1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12))
+        v_osc_w = 1 / (1 + np.exp((df['osc weekly'] + 38) * 0.028))
+        
+        # MI-WEIGHTED COMBINATION
+        mi_weighted = (v_rsi * w_rsi + v_osc * w_osc + v_zscore * w_zscore +
+                      v_rsi_w * w_rsi_w + v_osc_w * w_osc_w)
+        
+        # CONDITIONAL MI (daily given weekly)
+        # If daily is surprising given weekly, it has more info
+        rsi_cond = np.abs(df['rsi latest'] - df['rsi weekly']) / 20
+        osc_cond = np.abs(df['osc latest'] - df['osc weekly']) / 40
+        cond_mi_boost = 1 + np.tanh((rsi_cond + osc_cond) / 2) * 0.3
+        
+        # But only if moving in right direction
+        right_direction = ((df['rsi latest'] > df['rsi weekly']) & (df['rsi weekly'] < 45)) | \
+                         ((df['osc latest'] > df['osc weekly']) & (df['osc weekly'] < -30))
+        cond_mi_boost = np.where(right_direction, cond_mi_boost, 1.0)
+        
+        combined = mi_weighted * cond_mi_boost
+        
+        # TURN SIGNAL
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 27))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class GameTheoreticStrategy(BaseStrategy):
+    """
+    Game theory inspired: models market as game between buyers/sellers.
+    Nash equilibrium approximation for optimal position.
+    Payoff matrix based on indicator states.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # PLAYER STATES
+        # Buyer strength (accumulation pressure)
+        buyer_strength = (
+            (1 / (1 + np.exp((df['rsi latest'] - 35) * 0.15))) * 0.30 +
+            (1 / (1 + np.exp((df['osc latest'] + 50) * 0.03))) * 0.40 +
+            (df['9ema osc latest'] > df['21ema osc latest']).astype(float) * 0.30
+        )
+        
+        # Seller exhaustion (selling pressure declining)
+        seller_exhaustion = (
+            (df['osc latest'] > df['osc weekly']).astype(float) * 0.40 +
+            (df['rsi latest'] > df['rsi weekly']).astype(float) * 0.30 +
+            (df['zscore latest'] > df['zscore weekly']).astype(float) * 0.30
+        )
+        
+        # PAYOFF MATRIX APPROXIMATION
+        # Buyer payoff when buying at oversold with seller exhaustion
+        buyer_payoff = buyer_strength * (0.5 + seller_exhaustion * 0.7)
+        
+        # Risk-adjusted payoff (lower vol = better payoff)
+        vol = df['dev20 latest'] / df['price']
+        vol_adj = 1 / (1 + vol * 30)
+        risk_adj_payoff = buyer_payoff * (0.7 + vol_adj * 0.5)
+        
+        # NASH EQUILIBRIUM PROXY
+        # Equilibrium when both sides have incentive to trade
+        # Buyer incentive: oversold + turning
+        # Seller incentive: selling at higher levels
+        buyer_incentive = buyer_strength * seller_exhaustion
+        
+        # Market clearing (implied by both having incentive)
+        clearing_score = np.sqrt(buyer_incentive * risk_adj_payoff)
+        
+        # WEEKLY CONFIRMATION
+        weekly_buyer = (
+            (1 / (1 + np.exp((df['rsi weekly'] - 40) * 0.12))) * 0.50 +
+            (1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025))) * 0.50
+        )
+        weekly_mult = 0.6 + weekly_buyer * 0.6
+        
+        combined = clearing_score * weekly_mult
+        
+        # TREND (structural advantage)
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.94) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class ReinforcementLearningInspired(BaseStrategy):
+    """
+    RL inspired: state-action-reward framework.
+    State = indicator values. Action = allocation weight.
+    Value function approximation for expected cumulative reward.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # STATE FEATURES (normalized)
+        s_rsi = (df['rsi latest'] - 50) / 50
+        s_osc = df['osc latest'] / 100
+        s_zscore = df['zscore latest'] / 3
+        s_ema_spread = (df['9ema osc latest'] - df['21ema osc latest']) / 50
+        s_trend = (df['ma90 latest'] / df['ma200 latest']) - 1
+        s_rsi_w = (df['rsi weekly'] - 50) / 50
+        s_osc_w = df['osc weekly'] / 100
+        
+        # VALUE FUNCTION APPROXIMATION V(s) = w^T * φ(s)
+        # φ = feature transform (radial basis functions for oversold states)
+        
+        # RBF centered at oversold state
+        oversold_center = np.array([-0.3, -0.5, -0.5, 0.1, 0.0])  # [rsi, osc, z, ema, trend]
+        
+        state_vec = np.column_stack([s_rsi, s_osc, s_zscore, s_ema_spread, s_trend])
+        dist_to_oversold = np.sqrt(np.sum((state_vec - oversold_center) ** 2, axis=1))
+        
+        # RBF kernel
+        gamma = 1.5
+        rbf_oversold = np.exp(-gamma * dist_to_oversold)
+        
+        # RBF for turning state
+        turning_center = np.array([-0.2, -0.4, -0.4, 0.3, 0.05])
+        dist_to_turning = np.sqrt(np.sum((state_vec - turning_center) ** 2, axis=1))
+        rbf_turning = np.exp(-gamma * dist_to_turning)
+        
+        # VALUE FUNCTION (weighted RBFs)
+        w_oversold = 1.5
+        w_turning = 2.0
+        value_estimate = w_oversold * rbf_oversold + w_turning * rbf_turning
+        
+        # TEMPORAL DIFFERENCE (reward prediction)
+        # Immediate reward proxy: weekly confirmation
+        immediate_reward = (
+            (1 / (1 + np.exp(s_rsi_w * 3))) * 0.50 +
+            (1 / (1 + np.exp(s_osc_w * 2))) * 0.50
+        )
+        
+        # BELLMAN-LIKE UPDATE
+        discount = 0.9
+        q_value = immediate_reward + discount * value_estimate
+        
+        # EXPLORATION BONUS (less visited states = bonus)
+        # Proxy: how unusual is this state?
+        state_unusualness = np.abs(s_rsi) + np.abs(s_osc) + np.abs(s_zscore)
+        exploration_bonus = np.tanh(state_unusualness * 0.5) * 0.2
+        
+        df['composite_score'] = q_value + exploration_bonus
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class SpectralClusteringStrategy(BaseStrategy):
+    """
+    Spectral clustering inspired: groups stocks by indicator similarity.
+    Prefers stocks in oversold cluster with momentum turn.
+    Uses affinity matrix and Laplacian eigenvector properties.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # FEATURE VECTORS (normalized)
+        features = np.column_stack([
+            df['rsi latest'] / 100,
+            (df['osc latest'] + 100) / 200,
+            (df['zscore latest'] + 3) / 6,
+            df['rsi weekly'] / 100,
+            (df['osc weekly'] + 100) / 200
+        ])
+        
+        # CLUSTER CENTER for "oversold with turn"
+        oversold_center = np.array([0.30, 0.20, 0.25, 0.35, 0.25])
+        
+        # DISTANCE TO CLUSTER CENTER
+        dist_to_cluster = np.sqrt(np.sum((features - oversold_center) ** 2, axis=1))
+        
+        # AFFINITY to oversold cluster (Gaussian kernel)
+        sigma = 0.3
+        affinity = np.exp(-dist_to_cluster ** 2 / (2 * sigma ** 2))
+        
+        # DEGREE (sum of affinities - higher = more connected)
+        # Simplified: assume connection to cluster center only
+        degree = affinity
+        
+        # LAPLACIAN SCORE (approximation)
+        # Lower Laplacian score for oversold stocks = better
+        laplacian_score = degree * affinity
+        
+        # WITHIN-CLUSTER QUALITY
+        # How consistent are daily and weekly?
+        daily_weekly_consistency = 1 - np.abs(features[:, 0] - features[:, 3]) - \
+                                   np.abs(features[:, 1] - features[:, 4])
+        daily_weekly_consistency = np.clip(daily_weekly_consistency, 0, 1)
+        
+        cluster_quality = laplacian_score * (0.6 + daily_weekly_consistency * 0.6)
+        
+        # MOMENTUM TURN
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = cluster_quality * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class CausalInferenceStrategy(BaseStrategy):
+    """
+    Causal inference inspired: estimates causal effect of oversold on returns.
+    Propensity scoring to isolate treatment effect.
+    Treatment = being in oversold state.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # TREATMENT: Being oversold
+        # Propensity P(oversold | covariates)
+        propensity = (
+            1 / (1 + np.exp((df['rsi latest'] - 38) * 0.14)) * 0.35 +
+            1 / (1 + np.exp((df['osc latest'] + 45) * 0.03)) * 0.40 +
+            1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.7)) * 0.25
+        )
+        
+        # TREATMENT INTENSITY (degree of oversold)
+        treatment_intensity = (
+            np.clip((40 - df['rsi latest']) / 25, 0, 1.5) * 0.30 +
+            np.clip((-df['osc latest'] - 35) / 50, 0, 1.5) * 0.40 +
+            np.clip(-df['zscore latest'] / 2.5, 0, 1.5) * 0.30
+        )
+        
+        # CONFOUNDERS (things that affect both treatment and outcome)
+        # Trend is a confounder: affects oversold probability and returns
+        trend_confounder = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        vol_confounder = df['dev20 latest'] / df['price']
+        
+        # INVERSE PROPENSITY WEIGHTING
+        # Weight by 1/propensity to debias (with clipping for stability)
+        ipw = 1 / np.clip(propensity, 0.1, 0.9)
+        ipw_normalized = ipw / ipw.mean()
+        
+        # CAUSAL EFFECT ESTIMATE
+        # E[Y | treated] adjusted for confounders
+        # Using doubly robust-like combination
+        outcome_model = treatment_intensity * (0.8 + np.tanh((trend_confounder - 1) * 5) * 0.3)
+        
+        # Treatment effect with IPW
+        causal_effect = outcome_model * np.sqrt(ipw_normalized)
+        
+        # TURN SIGNAL (not confounder, but effect modifier)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_modifier = 1 / (1 + np.exp(-ema_spread / 26))
+        
+        # Effect modification
+        modified_effect = causal_effect * (0.4 + turn_modifier * 0.8)
+        
+        # WEEKLY CONFIRMATION
+        weekly_treatment = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        df['composite_score'] = modified_effect * (0.6 + weekly_treatment * 0.5)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# =========================================================================
+# 13 MORE SOPHISTICATED STRATEGIES - V7
+# Final batch of novel quantitative approaches
+# =========================================================================
+
+class BootstrapConfidenceStrategy(BaseStrategy):
+    """
+    Bootstrap inspired: estimates confidence intervals for signal strength.
+    Higher confidence in oversold signal = higher weight.
+    Uses resampling logic via cross-indicator agreement.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # POINT ESTIMATES for oversold
+        est_rsi = 1 / (1 + np.exp((df['rsi latest'] - 36) * 0.15))
+        est_osc = 1 / (1 + np.exp((df['osc latest'] + 45) * 0.032))
+        est_z = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.72))
+        est_rsi_w = 1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12))
+        est_osc_w = 1 / (1 + np.exp((df['osc weekly'] + 40) * 0.028))
+        
+        # BOOTSTRAP VARIANCE PROXY (disagreement between estimates)
+        estimates = np.column_stack([est_rsi, est_osc, est_z, est_rsi_w, est_osc_w])
+        point_estimate = np.mean(estimates, axis=1)
+        bootstrap_std = np.std(estimates, axis=1)
+        
+        # CONFIDENCE INTERVAL WIDTH
+        ci_width = 2 * bootstrap_std  # Approximate 95% CI
+        
+        # CONFIDENCE SCORE (narrow CI = high confidence)
+        confidence = 1 / (1 + ci_width * 5)
+        
+        # LOWER BOUND OF CI (conservative estimate)
+        lower_bound = point_estimate - bootstrap_std
+        lower_bound = np.clip(lower_bound, 0, 1)
+        
+        # COMBINED: high point estimate AND high confidence
+        bootstrap_score = point_estimate * (0.5 + confidence * 0.7)
+        
+        # TURN SIGNAL
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 27))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = bootstrap_score * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class KernelDensityStrategy(BaseStrategy):
+    """
+    KDE inspired: estimates probability density of being in favorable state.
+    Uses Gaussian kernels centered at favorable indicator values.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # KERNEL CENTERS (favorable states)
+        # Multiple kernels for different favorable scenarios
+        
+        # Kernel 1: Deep oversold with turn
+        k1_rsi, k1_osc, k1_z = 28, -65, -2.0
+        bw1 = 0.3  # Bandwidth
+        
+        dist1 = np.sqrt(
+            ((df['rsi latest'] - k1_rsi) / 30) ** 2 +
+            ((df['osc latest'] - k1_osc) / 50) ** 2 +
+            ((df['zscore latest'] - k1_z) / 2) ** 2
+        )
+        density1 = np.exp(-dist1 ** 2 / (2 * bw1 ** 2))
+        
+        # Kernel 2: Moderate oversold with strong turn
+        k2_rsi, k2_osc, k2_ema = 35, -45, 15
+        bw2 = 0.35
+        
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        dist2 = np.sqrt(
+            ((df['rsi latest'] - k2_rsi) / 30) ** 2 +
+            ((df['osc latest'] - k2_osc) / 50) ** 2 +
+            ((ema_spread - k2_ema) / 40) ** 2
+        )
+        density2 = np.exp(-dist2 ** 2 / (2 * bw2 ** 2))
+        
+        # Kernel 3: Weekly confirmation
+        k3_rsi_w, k3_osc_w = 35, -50
+        bw3 = 0.4
+        
+        dist3 = np.sqrt(
+            ((df['rsi weekly'] - k3_rsi_w) / 30) ** 2 +
+            ((df['osc weekly'] - k3_osc_w) / 50) ** 2
+        )
+        density3 = np.exp(-dist3 ** 2 / (2 * bw3 ** 2))
+        
+        # MIXTURE DENSITY
+        weights = np.array([0.40, 0.35, 0.25])
+        mixture_density = density1 * weights[0] + density2 * weights[1] + density3 * weights[2]
+        
+        # TURN SIGNAL
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = mixture_density * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class SurvivalAnalysisStrategy(BaseStrategy):
+    """
+    Survival analysis inspired: models time-to-recovery from oversold.
+    Hazard rate = probability of recovery given current state.
+    Higher hazard = closer to recovery = better entry.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # BASELINE HAZARD (deeper oversold = been down longer = closer to recovery)
+        baseline_hazard = (
+            np.clip((40 - df['rsi latest']) / 30, 0, 1.5) * 0.30 +
+            np.clip((-df['osc latest'] - 30) / 60, 0, 1.5) * 0.40 +
+            np.clip(-df['zscore latest'] / 2.5, 0, 1.5) * 0.30
+        )
+        
+        # COVARIATE EFFECTS (Cox proportional hazards style)
+        # Turn signal increases hazard (closer to event)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_covariate = np.tanh(ema_spread / 30) * 0.5 + 0.5
+        
+        # Daily improving vs weekly increases hazard
+        improvement_covariate = np.where(
+            (df['osc latest'] > df['osc weekly']) & (df['rsi latest'] > df['rsi weekly']),
+            1.5,
+            np.where(
+                df['osc latest'] > df['osc weekly'],
+                1.2,
+                0.8
+            )
+        )
+        
+        # Weekly confirmation
+        weekly_covariate = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        # HAZARD RATE (multiplicative model)
+        hazard_rate = baseline_hazard * (0.5 + turn_covariate * 0.7) * improvement_covariate * (0.6 + weekly_covariate * 0.5)
+        
+        # SURVIVAL SCORE (high hazard = good)
+        survival_score = hazard_rate
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = survival_score * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class PrincipalComponentStrategy(BaseStrategy):
+    """
+    PCA inspired: projects indicators onto principal components.
+    First PC captures common oversold factor. Scores by projection.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # STANDARDIZE FEATURES
+        def standardize(x):
+            return (x - x.mean()) / (x.std() + 1e-6)
+        
+        f_rsi = standardize(df['rsi latest'])
+        f_osc = standardize(df['osc latest'])
+        f_z = standardize(df['zscore latest'])
+        f_rsi_w = standardize(df['rsi weekly'])
+        f_osc_w = standardize(df['osc weekly'])
+        f_ema = standardize(df['9ema osc latest'] - df['21ema osc latest'])
+        
+        # APPROXIMATE PC1 (oversold factor)
+        # Loadings: negative for RSI/OSC/Z (lower = more oversold)
+        pc1_loadings = np.array([-0.40, -0.45, -0.35, -0.35, -0.40, 0.30])
+        pc1_loadings = pc1_loadings / np.linalg.norm(pc1_loadings)
+        
+        features = np.column_stack([f_rsi, f_osc, f_z, f_rsi_w, f_osc_w, f_ema])
+        pc1_score = np.dot(features, pc1_loadings)
+        
+        # APPROXIMATE PC2 (momentum factor)
+        pc2_loadings = np.array([0.20, 0.25, 0.15, -0.15, -0.20, 0.55])
+        pc2_loadings = pc2_loadings / np.linalg.norm(pc2_loadings)
+        pc2_score = np.dot(features, pc2_loadings)
+        
+        # COMBINED SCORE (high PC1 = oversold, high PC2 = turning)
+        # Transform to positive scores
+        pc1_transformed = (pc1_score - pc1_score.min()) / (pc1_score.max() - pc1_score.min() + 1e-6)
+        pc2_transformed = (pc2_score - pc2_score.min()) / (pc2_score.max() - pc2_score.min() + 1e-6)
+        
+        pca_score = pc1_transformed * 0.6 + pc2_transformed * 0.4
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = pca_score * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class FactorMomentumStrategy(BaseStrategy):
+    """
+    Factor investing inspired: constructs value and momentum factors.
+    Long value + momentum intersection.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # VALUE FACTOR (oversold = cheap)
+        value_components = np.column_stack([
+            1 - df['rsi latest'].rank(pct=True),
+            1 - df['osc latest'].rank(pct=True),
+            1 - df['zscore latest'].rank(pct=True)
+        ])
+        value_factor = np.mean(value_components, axis=1)
+        
+        # MOMENTUM FACTOR (turning + trend)
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        momentum_components = np.column_stack([
+            ema_spread.rank(pct=True),
+            (df['osc latest'] - df['osc weekly']).rank(pct=True),
+            (df['rsi latest'] - df['rsi weekly']).rank(pct=True),
+            (df['price'] / df['ma90 latest']).rank(pct=True)
+        ])
+        momentum_factor = np.mean(momentum_components, axis=1)
+        
+        # QUALITY FACTOR (weekly confirmation + trend)
+        quality_components = np.column_stack([
+            1 - df['rsi weekly'].rank(pct=True),
+            1 - df['osc weekly'].rank(pct=True),
+            (df['ma90 latest'] / df['ma200 latest']).rank(pct=True)
+        ])
+        quality_factor = np.mean(quality_components, axis=1)
+        
+        # FACTOR COMBINATION (value + momentum with quality tilt)
+        combined_factor = (
+            value_factor * 0.40 +
+            momentum_factor * 0.35 +
+            quality_factor * 0.25
+        )
+        
+        # NON-LINEAR TRANSFORM (emphasize extremes)
+        factor_score = np.power(combined_factor, 1.3)
+        
+        # VOLATILITY ADJUSTMENT
+        vol = df['dev20 latest'] / df['price']
+        vol_adj = 1 / (1 + vol * 25)
+        
+        df['composite_score'] = factor_score * (0.7 + vol_adj * 0.5)
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class ElasticNetBlender(BaseStrategy):
+    """
+    Elastic net inspired: L1 + L2 regularized combination of signals.
+    Balances sparsity (few strong signals) and ridge (all signals matter).
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # SIGNAL VALUES
+        s1 = 1 / (1 + np.exp((df['rsi latest'] - 36) * 0.15))
+        s2 = 1 / (1 + np.exp((df['osc latest'] + 44) * 0.032))
+        s3 = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.72))
+        s4 = 1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12))
+        s5 = 1 / (1 + np.exp((df['osc weekly'] + 40) * 0.028))
+        
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        s6 = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        signals = np.column_stack([s1, s2, s3, s4, s5, s6])
+        
+        # L1 COMPONENT (sparsity - emphasize strongest signal)
+        max_signal = np.max(signals, axis=1)
+        l1_score = max_signal
+        
+        # L2 COMPONENT (ridge - average of squared signals)
+        l2_score = np.sqrt(np.mean(signals ** 2, axis=1))
+        
+        # ELASTIC NET COMBINATION
+        alpha = 0.4  # Mixing parameter (0 = ridge, 1 = lasso)
+        elastic_score = alpha * l1_score + (1 - alpha) * l2_score
+        
+        # SIGNAL AGREEMENT BONUS
+        signal_std = np.std(signals, axis=1)
+        agreement_bonus = 1 / (1 + signal_std * 4)
+        
+        combined = elastic_score * (0.7 + agreement_bonus * 0.5)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class RobustRegressionStrategy(BaseStrategy):
+    """
+    Robust regression inspired: uses Huber loss for outlier resistance.
+    Scores based on robust distance from favorable state.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # TARGET STATE (ideal oversold with turn)
+        target_rsi = 30
+        target_osc = -55
+        target_z = -1.8
+        target_ema = 10
+        
+        # RESIDUALS
+        r_rsi = (df['rsi latest'] - target_rsi) / 30
+        r_osc = (df['osc latest'] - target_osc) / 50
+        r_z = (df['zscore latest'] - target_z) / 2
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        r_ema = (ema_spread - target_ema) / 40
+        
+        # HUBER LOSS (robust to outliers)
+        def huber_loss(r, delta=1.0):
+            abs_r = np.abs(r)
+            return np.where(abs_r <= delta, 
+                           0.5 * r ** 2, 
+                           delta * (abs_r - 0.5 * delta))
+        
+        delta = 0.8
+        loss_rsi = huber_loss(r_rsi, delta)
+        loss_osc = huber_loss(r_osc, delta)
+        loss_z = huber_loss(r_z, delta)
+        loss_ema = huber_loss(r_ema, delta)
+        
+        # TOTAL ROBUST LOSS (lower = closer to target)
+        total_loss = (loss_rsi * 0.25 + loss_osc * 0.30 + 
+                     loss_z * 0.25 + loss_ema * 0.20)
+        
+        # CONVERT TO SCORE (lower loss = higher score)
+        robust_score = np.exp(-total_loss * 2)
+        
+        # WEEKLY CONFIRMATION
+        weekly_score = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        combined = robust_score * (0.6 + weekly_score * 0.5)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class ConvexOptimizationStrategy(BaseStrategy):
+    """
+    Convex optimization inspired: maximizes concave objective.
+    Objective: expected return - risk penalty.
+    Uses log-barrier for constraints.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # EXPECTED RETURN (concave - log for diminishing returns)
+        raw_return = (
+            np.clip((40 - df['rsi latest']) / 30, 0, 2) * 0.30 +
+            np.clip((-df['osc latest'] - 30) / 60, 0, 2) * 0.40 +
+            np.clip(-df['zscore latest'] / 2.5, 0, 2) * 0.30
+        )
+        exp_return = np.log1p(raw_return * 2)  # Concave transform
+        
+        # RISK PENALTY (convex)
+        vol = df['dev20 latest'] / df['price']
+        uncertainty = np.abs(df['rsi latest'] - df['rsi weekly']) / 30
+        risk = vol * 10 + uncertainty
+        risk_penalty = risk ** 2 * 0.5  # Quadratic penalty
+        
+        # TURN BONUS
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_bonus = np.log1p(np.clip(ema_spread / 30 + 0.5, 0.1, 2))
+        
+        # OBJECTIVE: return - risk + turn
+        objective = exp_return - risk_penalty + turn_bonus * 0.5
+        
+        # SHIFT TO POSITIVE
+        objective = objective - objective.min() + 0.1
+        
+        # WEEKLY CONSTRAINT (log-barrier style)
+        weekly_feasibility = (
+            1 / (1 + np.exp((df['rsi weekly'] - 50) * 0.1)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 20) * 0.02)) * 0.50
+        )
+        barrier = -np.log(weekly_feasibility + 0.1) * 0.1
+        
+        final_objective = objective - barrier
+        final_objective = np.clip(final_objective, 0.01, None)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = final_objective * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class MonteCarloStrategy(BaseStrategy):
+    """
+    Monte Carlo inspired: simulates scenarios via indicator perturbations.
+    Score = expected value across simulated scenarios.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # BASE SCENARIO (current state)
+        def score_state(rsi, osc, z, ema_spread):
+            v_rsi = 1 / (1 + np.exp((rsi - 37) * 0.15))
+            v_osc = 1 / (1 + np.exp((osc + 45) * 0.032))
+            v_z = 1 / (1 + np.exp((z + 1.5) * 0.72))
+            v_turn = 1 / (1 + np.exp(-ema_spread / 28))
+            return (v_rsi * 0.25 + v_osc * 0.35 + v_z * 0.20 + v_turn * 0.20)
+        
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        base_score = score_state(df['rsi latest'], df['osc latest'], 
+                                 df['zscore latest'], ema_spread)
+        
+        # SIMULATED SCENARIOS (deterministic perturbations)
+        # Scenario 1: RSI improves
+        s1 = score_state(df['rsi latest'] + 5, df['osc latest'], 
+                        df['zscore latest'], ema_spread)
+        
+        # Scenario 2: OSC improves
+        s2 = score_state(df['rsi latest'], df['osc latest'] + 10, 
+                        df['zscore latest'], ema_spread)
+        
+        # Scenario 3: Both improve
+        s3 = score_state(df['rsi latest'] + 3, df['osc latest'] + 7, 
+                        df['zscore latest'] + 0.3, ema_spread + 5)
+        
+        # Scenario 4: Deterioration
+        s4 = score_state(df['rsi latest'] - 5, df['osc latest'] - 10, 
+                        df['zscore latest'] - 0.3, ema_spread - 5)
+        
+        # EXPECTED VALUE (weighted by probability)
+        # Improvement more likely if turning
+        turn_prob = 1 / (1 + np.exp(-ema_spread / 20))
+        
+        expected_score = (
+            base_score * 0.30 +
+            s1 * 0.15 * turn_prob +
+            s2 * 0.20 * turn_prob +
+            s3 * 0.25 * turn_prob +
+            s4 * 0.10 * (1 - turn_prob)
+        )
+        
+        # Normalize
+        expected_score = expected_score / (0.30 + 0.15 * turn_prob + 0.20 * turn_prob + 
+                                           0.25 * turn_prob + 0.10 * (1 - turn_prob))
+        
+        # WEEKLY CONFIRMATION
+        weekly_score = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        combined = expected_score * (0.6 + weekly_score * 0.5)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class VariationalInferenceStrategy(BaseStrategy):
+    """
+    Variational inference inspired: approximates posterior over momentum state.
+    Uses ELBO-like objective: expected log-likelihood + entropy.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # VARIATIONAL PARAMETERS (approximate posterior mean and variance)
+        # Mean: point estimates of oversold probability
+        q_mean_rsi = 1 / (1 + np.exp((df['rsi latest'] - 36) * 0.15))
+        q_mean_osc = 1 / (1 + np.exp((df['osc latest'] + 45) * 0.032))
+        q_mean_z = 1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.72))
+        
+        # Variance: uncertainty from daily-weekly disagreement
+        q_var_rsi = np.abs(df['rsi latest'] - df['rsi weekly']) / 50
+        q_var_osc = np.abs(df['osc latest'] - df['osc weekly']) / 80
+        q_var_z = np.abs(df['zscore latest'] - df['zscore weekly']) / 3
+        
+        # EXPECTED LOG-LIKELIHOOD (higher when confident and oversold)
+        ell_rsi = q_mean_rsi * np.log(q_mean_rsi + 1e-6) + (1 - q_mean_rsi) * np.log(1 - q_mean_rsi + 1e-6)
+        ell_osc = q_mean_osc * np.log(q_mean_osc + 1e-6) + (1 - q_mean_osc) * np.log(1 - q_mean_osc + 1e-6)
+        
+        # Normalize (less negative = better)
+        ell = -(ell_rsi + ell_osc) / 2
+        ell = (ell - ell.min()) / (ell.max() - ell.min() + 1e-6)
+        
+        # ENTROPY (prefer moderate uncertainty - not too confident, not too uncertain)
+        total_var = (q_var_rsi + q_var_osc + q_var_z) / 3
+        entropy_score = 1 / (1 + np.abs(total_var - 0.15) * 10)  # Peak at moderate variance
+        
+        # ELBO-LIKE SCORE
+        elbo = ell * 0.7 + entropy_score * 0.3
+        
+        # PRIOR (weekly - KL divergence term)
+        prior_score = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        # Combined (ELBO + prior)
+        combined = elbo * 0.65 + prior_score * 0.35
+        
+        # TURN SIGNAL
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class NeuralNetworkInspired(BaseStrategy):
+    """
+    Neural network inspired: multi-layer transform with activations.
+    Input layer -> Hidden layers with ReLU/tanh -> Output layer.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # INPUT LAYER (normalized features)
+        x1 = (50 - df['rsi latest']) / 50  # Inverted RSI
+        x2 = -df['osc latest'] / 100  # Inverted OSC
+        x3 = -df['zscore latest'] / 3
+        x4 = (50 - df['rsi weekly']) / 50
+        x5 = -df['osc weekly'] / 100
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        x6 = ema_spread / 50
+        x7 = (df['ma90 latest'] / df['ma200 latest'] - 1) * 5
+        
+        inputs = np.column_stack([x1, x2, x3, x4, x5, x6, x7])
+        
+        # HIDDEN LAYER 1 (7 -> 4) with ReLU
+        W1 = np.array([
+            [0.3, 0.4, 0.3, 0.2, 0.3, 0.2, 0.1],
+            [0.2, 0.3, 0.4, 0.3, 0.4, 0.3, 0.2],
+            [0.1, 0.2, 0.2, 0.1, 0.2, 0.5, 0.3],
+            [0.2, 0.2, 0.1, 0.2, 0.1, 0.4, 0.5]
+        ])
+        b1 = np.array([-0.3, -0.4, -0.2, -0.3])
+        
+        h1 = np.maximum(0, np.dot(inputs, W1.T) + b1)  # ReLU
+        
+        # HIDDEN LAYER 2 (4 -> 3) with tanh
+        W2 = np.array([
+            [0.5, 0.3, 0.4, 0.3],
+            [0.3, 0.5, 0.3, 0.4],
+            [0.2, 0.2, 0.5, 0.4]
+        ])
+        b2 = np.array([0.0, 0.0, -0.1])
+        
+        h2 = np.tanh(np.dot(h1, W2.T) + b2)
+        
+        # OUTPUT LAYER (3 -> 1) with sigmoid
+        W3 = np.array([[0.4, 0.4, 0.3]])
+        b3 = np.array([0.0])
+        
+        output = 1 / (1 + np.exp(-(np.dot(h2, W3.T) + b3)))
+        output = output.flatten()
+        
+        # SKIP CONNECTION (residual)
+        skip = (x1 + x2 + x3) / 3
+        skip = (skip - skip.min()) / (skip.max() - skip.min() + 1e-6)
+        
+        final_output = output * 0.7 + skip * 0.3
+        
+        df['composite_score'] = final_output
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class GraphNeuralInspired(BaseStrategy):
+    """
+    Graph neural network inspired: stocks as nodes, indicator similarity as edges.
+    Message passing to aggregate neighborhood information.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        n = len(df)
+        
+        # NODE FEATURES
+        node_features = np.column_stack([
+            1 / (1 + np.exp((df['rsi latest'] - 36) * 0.15)),
+            1 / (1 + np.exp((df['osc latest'] + 45) * 0.032)),
+            1 / (1 + np.exp((df['zscore latest'] + 1.5) * 0.72))
+        ])
+        
+        # Initial node score
+        node_score = np.mean(node_features, axis=1)
+        
+        # ADJACENCY (similarity-based, approximate without full matrix)
+        # Use cross-sectional percentile similarity
+        rsi_pct = df['rsi latest'].rank(pct=True).values
+        osc_pct = df['osc latest'].rank(pct=True).values
+        
+        # MESSAGE PASSING (aggregate from similar nodes)
+        # Approximate: boost if in same quintile as other oversold stocks
+        bottom_quintile_mask = (rsi_pct < 0.25) & (osc_pct < 0.25)
+        n_bottom = bottom_quintile_mask.sum()
+        
+        # Neighborhood score: average of bottom quintile
+        if n_bottom > 0:
+            neighborhood_score = node_score[bottom_quintile_mask].mean()
+        else:
+            neighborhood_score = node_score.mean()
+        
+        # AGGREGATION (node + neighborhood)
+        # Nodes in bottom quintile get boosted by neighborhood
+        aggregated = np.where(
+            bottom_quintile_mask,
+            node_score * 0.6 + neighborhood_score * 0.4,
+            node_score * 0.8 + neighborhood_score * 0.2
+        )
+        
+        # READOUT (attention over nodes)
+        attention_weights = np.exp(aggregated * 2)
+        attention_weights = attention_weights / attention_weights.sum()
+        
+        # Reweight by attention
+        graph_score = aggregated * (1 + attention_weights * n * 0.1)
+        
+        # TURN SIGNAL
+        ema_spread = df['9ema osc latest'] - df['21ema osc latest']
+        turn_signal = 1 / (1 + np.exp(-ema_spread / 28))
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = graph_score * (0.4 + turn_signal * 0.8) * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
+
+
+class ContrastiveLearningStrategy(BaseStrategy):
+    """
+    Contrastive learning inspired: maximizes similarity to positive examples,
+    minimizes similarity to negative examples.
+    Positive = oversold with turn. Negative = overbought declining.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required_columns = [
+            'symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+            '9ema osc latest', '9ema osc weekly', '21ema osc latest', '21ema osc weekly',
+            'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest',
+            'ma90 weekly', 'ma200 weekly', 'dev20 latest', 'dev20 weekly',
+            'ma20 latest', 'ma20 weekly'
+        ]
+        df = self._clean_data(df, required_columns)
+        
+        # EMBEDDING (normalized features)
+        emb = np.column_stack([
+            df['rsi latest'] / 100,
+            (df['osc latest'] + 100) / 200,
+            (df['zscore latest'] + 3) / 6,
+            (df['9ema osc latest'] - df['21ema osc latest'] + 50) / 100
+        ])
+        
+        # POSITIVE ANCHOR (ideal oversold with turn)
+        pos_anchor = np.array([0.28, 0.18, 0.22, 0.62])
+        
+        # NEGATIVE ANCHOR (overbought declining)
+        neg_anchor = np.array([0.72, 0.75, 0.70, 0.35])
+        
+        # SIMILARITY (cosine-like, using dot product)
+        def similarity(x, anchor):
+            dot = np.sum(x * anchor, axis=1)
+            norm_x = np.sqrt(np.sum(x ** 2, axis=1))
+            norm_a = np.sqrt(np.sum(anchor ** 2))
+            return dot / (norm_x * norm_a + 1e-6)
+        
+        sim_pos = similarity(emb, pos_anchor)
+        sim_neg = similarity(emb, neg_anchor)
+        
+        # CONTRASTIVE SCORE (InfoNCE-like)
+        temperature = 0.5
+        exp_pos = np.exp(sim_pos / temperature)
+        exp_neg = np.exp(sim_neg / temperature)
+        
+        contrastive_score = exp_pos / (exp_pos + exp_neg + 1e-6)
+        
+        # WEEKLY CONFIRMATION
+        weekly_score = (
+            1 / (1 + np.exp((df['rsi weekly'] - 42) * 0.12)) * 0.50 +
+            1 / (1 + np.exp((df['osc weekly'] + 40) * 0.025)) * 0.50
+        )
+        
+        combined = contrastive_score * (0.6 + weekly_score * 0.5)
+        
+        # TREND
+        ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
+        trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
+        
+        df['composite_score'] = combined * trend_mult
+        df['composite_score'] = df['composite_score'] + 1e-6
+        
+        total_score = df['composite_score'].sum()
+        df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
+        return self._allocate_portfolio(df, sip_amount)
