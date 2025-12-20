@@ -33,7 +33,7 @@ try:
         DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
         SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
         HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, 
-        PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge
+        PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge, EternalReturnCycle
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -1101,6 +1101,7 @@ def main():
         'PantheonAlphaRealm': PantheonAlphaRealm(),
         'OmniscienceReturn': OmniscienceReturn(),
         'CelestialAlphaForge': CelestialAlphaForge(),
+        'EternalReturnCycle': EternalReturnCycle(),
     }
 
     PORTFOLIO_STYLES = {
