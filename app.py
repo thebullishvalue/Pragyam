@@ -33,7 +33,8 @@ try:
         DivergenceMirage, CL2Strategy, CL1Strategy, VelocityVortex, HorizonEvent,
         SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
         HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, 
-        PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge, EternalReturnCycle
+        PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge, EternalReturnCycle,
+        GameTheoreticStrategy, MomentumAccelerator 
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -1099,9 +1100,17 @@ def main():
         'InfiniteMomentumLoop': InfiniteMomentumLoop(),
         'DivineMomentumOracle': DivineMomentumOracle(),
         'PantheonAlphaRealm': PantheonAlphaRealm(),
-        'OmniscienceReturn': OmniscienceReturn(),
+        'RegimeAdaptiveAlpha': RegimeAdaptiveAlpha(),
+        'StatisticalEdgeHunter': StatisticalEdgeHunter(),
+        'MultiTimeframeSynergy': MultiTimeframeSynergy(),
+        'AdaptiveRiskParity': AdaptiveRiskParity(),
+        'MeanReversionMaster': MeanReversionMaster(),
+        'GameTheoreticStrategy': GameTheoreticStrategy(),
+        'StochasticDominance': StochasticDominance(),
+        'KalmanFilterMomentum': KalmanFilterMomentum(),
         'CelestialAlphaForge': CelestialAlphaForge(),
-        'EternalReturnCycle': EternalReturnCycle(),
+        'MomentumAccelerator': MomentumAccelerator(),
+        'OmniscienceReturn': OmniscienceReturn(),
     }
 
     PORTFOLIO_STYLES = {
@@ -1109,17 +1118,18 @@ def main():
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['StatisticalEdgeHunter', 'VolReversalHarvester', 'CL1Strategy', 'EternalReturnCycle'],
-                    "rationale": "Counter-intuitive smooth-trend specialists. CL2/CL3 dominate bull swings (14.4-14.6% returns) by avoiding momentum whipsaw in strong trends. VolatilitySurfer provides superior risk management (Calmar 141.93). PR_v1 captures pullbacks within uptrend. MomentumMasters deliberately EXCLUDED - performs worst in bull swings (9.24% vs 14.55% for CL2) due to premature stop-outs."
+                    "strategies": ['GameTheoreticStrategy', 'NebulaMomentumStorm', 'VolatilitySurfer', 'CelestialAlphaForge'],
+                    "rationale": "Active when Breadth < 0.42. Selected based on highest Calmar Ratio (Top: GameTheoretic @ 5.11). These strategies recover fastest from the deep drawdowns typical of this entry zone."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VelocityVortex', 'EternalReturnCycle', 'VolReversalHarvester', 'InfiniteMomentumLoop'],
-                    "rationale": "Volatility-first defense with measured aggression. VolatilitySurfer dominates bear swings (-1.21% loss vs -4.71% average) through superior drawdown control (-4.61% vs -5.54% average). MOM_v1 provides 38% win rate (best in bears) through adaptive positioning. MomentumMasters limited to 20% - surprisingly resilient in bears (-2.53%) despite failing in bulls."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Active when Breadth > 0.52. Selected based on highest Sortino Ratio. These strategies maximize upside volatility (momentum) during stable market trends."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['PantheonAlphaRealm', 'MomentumCascade', 'OmniscienceReturn', 'CelestialAlphaForge'],
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Active during transition (0.42-0.52). Selected based on highest Sortino Ratio (Top: GameTheoretic @ 2.73) to ensure consistent returns without excessive volatility."
                 }
             }
         },
@@ -1128,18 +1138,18 @@ def main():
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['MicrowaveCosmic', 'ReturnPyramid', 'SurgeSentinel', 'CL1Strategy'],
-                    "rationale": "Regime-specific reversion: CL strategies excel. CL_v1/CL2 deliver highest returns in bull SIPs (13.12% vs 11.57% for MomentumMasters) through low-volatility trend capture. VolatilitySurfer provides best risk-adjusted returns (Calmar 13.19) despite lower absolute performance. MOM_v1 stabilizes with adaptive allocation. MomentumMasters deliberately EXCLUDED despite 65% win rate - absolute returns lag (11.57%, dead last)."
+                    "strategies": ['GameTheoreticStrategy', 'MomentumAccelerator', 'VolatilitySurfer', 'DivineMomentumOracle'],
+                    "rationale": "Selected based on highest Sharpe Ratio to ensure steady compounding and maximize risk-adjusted returns."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['ButterflyChaos', 'InfiniteMomentumLoop', 'VolatilityRegimeTrader', 'MeanReversionMaster'],
-                    "rationale": "Damage control with VolatilitySurfer anchor. VolatilitySurfer loses least in bear SIPs (-4.12% vs -5.86% average) with shallowest drawdown (-6.07% vs -8.97% average). MomentumMasters at 25% for measured participation (-4.80%, #2 overall). MOM_v1 provides adaptive defense (37% win rate, highest in bears). All CL strategies excluded - catastrophic bear SIP performance (bottom 4 positions, losses -5.54% to -5.86%)."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Selected based on highest Sortino Ratio. In expensive markets, these strategies provide the best defense by minimizing volatility per unit of return."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['VelocityApocalypse', 'WormholeTemporal', 'SynapseFiring', 'VolatilitySurfer'],
-                    "rationale": "Range extraction specialists. VolatilitySurfer dominates chop SIPs (9.95% vs 4.33% for worst) with superior Calmar (12.17). MomentumMasters surprisingly effective (#2, 8.91%) through volatility-enabled range navigation. MOM_v1 provides steady extraction (7.92%, #3). CL strategies systematically fail in chop (4.33-5.39%, bottom 4) - excluded entirely."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Selected based on highest Sortino Ratio for consistency."
                 }
             }
         }
