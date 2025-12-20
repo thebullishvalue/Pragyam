@@ -34,7 +34,7 @@ try:
         SurgeSentinel, MicrowaveCosmic, FractalWhisper, HolographicMomentum, ReturnPyramid,
         HyperAlphaIgniter, AlphaSurge, ExtremeMomentumBlitz, MultiverseAlpha, DivineMomentumOracle, 
         PantheonAlphaRealm, InfiniteMomentumLoop, OmniscienceReturn, CelestialAlphaForge, EternalReturnCycle,
-        GameTheoreticStrategy, MomentumAccelerator 
+        GameTheoreticStrategy, MomentumAccelerator, RegimeAdaptiveAlpha 
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -1101,16 +1101,10 @@ def main():
         'DivineMomentumOracle': DivineMomentumOracle(),
         'PantheonAlphaRealm': PantheonAlphaRealm(),
         'RegimeAdaptiveAlpha': RegimeAdaptiveAlpha(),
-        'StatisticalEdgeHunter': StatisticalEdgeHunter(),
-        'MultiTimeframeSynergy': MultiTimeframeSynergy(),
-        'AdaptiveRiskParity': AdaptiveRiskParity(),
-        'MeanReversionMaster': MeanReversionMaster(),
         'GameTheoreticStrategy': GameTheoreticStrategy(),
         'StochasticDominance': StochasticDominance(),
-        'KalmanFilterMomentum': KalmanFilterMomentum(),
         'CelestialAlphaForge': CelestialAlphaForge(),
         'MomentumAccelerator': MomentumAccelerator(),
-        'OmniscienceReturn': OmniscienceReturn(),
     }
 
     PORTFOLIO_STYLES = {
