@@ -198,7 +198,7 @@ st.markdown("""
     .info-box {
         background: var(--secondary-background-color);
         border: 1px solid var(--border-color);
-        border-left: 4px solid var(--primary-color);
+        border-left: 0px solid var(--primary-color);
         padding: 1.25rem;
         border-radius: 12px;
         margin: 0.5rem 0;
@@ -1152,7 +1152,7 @@ def main():
             data = st.session_state.regime_display
             # Using HTML/CSS to blend with the existing sidebar UI (metric-card/info-box style)
             st.markdown(f"""
-            <div style="background-color: var(--secondary-background-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin: 10px 0 20px 0; border-left: 3px solid var(--primary-color); box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <div style="background-color: var(--secondary-background-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin: 10px 0 20px 0; border-left: 0px solid var(--primary-color); box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                 <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 4px;">Market Regime</div>
                 <div style="color: var(--text-primary); font-size: 1.1rem; font-weight: 700; line-height: 1.2;">{data['mix']}</div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
