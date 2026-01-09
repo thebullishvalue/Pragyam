@@ -47,7 +47,7 @@ except ImportError:
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
-st.set_page_config(page_title="Pragyam : Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Pragyam | Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 VERSION = "v1.1.0 - Curation Engine"
 
 # --- CSS Styling ---
@@ -1259,7 +1259,7 @@ def main():
 
     st.markdown(f"""
     <div class="premium-header">
-        <h1>Pragyam : Quantitative Portfolio Curation System</h1>
+        <h1>Pragyam | Quantitative Portfolio Curation System</h1>
     </div>
     """, unsafe_allow_html=True)
 
