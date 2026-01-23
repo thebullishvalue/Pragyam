@@ -1346,14 +1346,15 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown(f"""
-    <div class="premium-header">
-        <h1>PRAGYAM : Portfolio Intelligence</h1>
-        <div class="tagline">Walk-Forward Curation with Regime-Aware Strategy Allocation</div>
-    </div>
-    """, unsafe_allow_html=True)
-
     if st.session_state.portfolio is None or st.session_state.performance is None:
+        # Show header only on landing page
+        st.markdown(f"""
+        <div class="premium-header">
+            <h1>PRAGYAM : Portfolio Intelligence</h1>
+            <div class="tagline">Walk-Forward Curation with Regime-Aware Strategy Allocation</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
         st.markdown("""
         <div class='info-box welcome'>
             <h4>Welcome to the Pragyam Curation System</h4>
