@@ -1,3 +1,10 @@
+"""
+PRAGYAM (प्रज्ञम) - Portfolio Intelligence | A Hemrek Capital Product
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Walk-forward portfolio curation with regime-aware strategy allocation.
+Multi-strategy backtesting and capital optimization engine.
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -47,10 +54,14 @@ except ImportError:
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
-st.set_page_config(page_title="Pragyam | Quantitative Portfolio Curation System", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
-VERSION = "v1.1.0 - Curation Engine"
+st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
-# --- CSS Styling ---
+# --- Constants ---
+VERSION = "v1.1.0"
+PRODUCT_NAME = "Pragyam"
+COMPANY = "Hemrek Capital"
+
+# --- CSS Styling (Hemrek Capital Design System) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -88,9 +99,64 @@ st.markdown("""
         background-color: transparent;
     }
     
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
+    
     .block-container {
-        padding-top: 1rem;
-        max-width: 1400px;
+        padding-top: 3.5rem;
+        max-width: 90%;
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+    
+    /* Sidebar toggle button - always visible */
+    [data-testid="collapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        background-color: var(--secondary-background-color) !important;
+        border: 2px solid var(--primary-color) !important;
+        border-radius: 8px !important;
+        padding: 10px !important;
+        margin: 12px !important;
+        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.4) !important;
+        z-index: 999999 !important;
+        position: fixed !important;
+        top: 14px !important;
+        left: 14px !important;
+        width: 40px !important;
+        height: 40px !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    
+    [data-testid="collapsedControl"]:hover {
+        background-color: rgba(var(--primary-rgb), 0.2) !important;
+        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.6) !important;
+        transform: scale(1.05);
+    }
+    
+    [data-testid="collapsedControl"] svg {
+        stroke: var(--primary-color) !important;
+        width: 20px !important;
+        height: 20px !important;
+    }
+    
+    [data-testid="stSidebar"] button[kind="header"] {
+        background-color: transparent !important;
+        border: none !important;
+    }
+    
+    [data-testid="stSidebar"] button[kind="header"] svg {
+        stroke: var(--primary-color) !important;
+    }
+    
+    button[kind="header"] {
+        z-index: 999999 !important;
+    }
+    
+    [data-testid="stSidebar"] { 
+        background: var(--secondary-background-color); 
+        border-right: 1px solid var(--border-color); 
     }
     
     .premium-header {
@@ -102,7 +168,7 @@ st.markdown("""
         border: 1px solid var(--border-color);
         position: relative;
         overflow: hidden;
-        margin-top: 2.5rem;
+        margin-top: 1rem;
     }
     
     .premium-header::before {
@@ -118,7 +184,7 @@ st.markdown("""
     
     .premium-header h1 {
         margin: 0;
-        font-size: 2.50rem;
+        font-size: 2rem;
         font-weight: 700;
         color: var(--text-primary);
         letter-spacing: -0.50px;
@@ -127,7 +193,7 @@ st.markdown("""
     
     .premium-header .tagline {
         color: var(--text-muted);
-        font-size: 1rem;
+        font-size: 0.9rem;
         margin-top: 0.25rem;
         font-weight: 400;
         position: relative;
@@ -153,7 +219,7 @@ st.markdown("""
     
     .metric-card h4 {
         color: var(--text-muted);
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         margin-bottom: 0.5rem;
         font-weight: 600;
         text-transform: uppercase;
@@ -162,14 +228,14 @@ st.markdown("""
     
     .metric-card h2 {
         color: var(--text-primary);
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
         margin: 0;
         line-height: 1;
     }
     
     .metric-card .sub-metric {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         color: var(--text-muted);
         margin-top: 0.5rem;
         font-weight: 500;
@@ -291,15 +357,18 @@ st.markdown("""
         background-color: var(--bg-elevated);
     }
     
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; background: transparent; }
     .stTabs [data-baseweb="tab"] {
         color: var(--text-muted);
         border-bottom: 2px solid transparent;
         transition: color 0.3s, border-bottom 0.3s;
+        background: transparent;
+        font-weight: 600;
     }
     .stTabs [aria-selected="true"] {
         color: var(--primary-color);
         border-bottom: 2px solid var(--primary-color);
+        background: transparent !important;
     }
     .stPlotlyChart, .stDataFrame {
         border-radius: 12px;
@@ -315,8 +384,22 @@ st.markdown("""
     .section-divider {
         height: 1px;
         background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%);
-        margin: 1rem 0;
+        margin: 1.5rem 0;
     }
+    
+    .sidebar-title { 
+        font-size: 0.75rem; 
+        font-weight: 700; 
+        color: var(--primary-color); 
+        text-transform: uppercase; 
+        letter-spacing: 1px; 
+        margin-bottom: 0.75rem; 
+    }
+    
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--background-color); }
+    ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1129,8 +1212,15 @@ def main():
 
 
     with st.sidebar:
-        st.markdown("# Configuration")
-        st.markdown("### Analysis Configuration")
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
+            <div style="font-size: 1.75rem; font-weight: 800; color: #FFC300;">PRAGYAM</div>
+            <div style="color: #888888; font-size: 0.75rem; margin-top: 0.25rem;">प्रज्ञम | Portfolio Intelligence</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="sidebar-title">📅 Analysis Configuration</div>', unsafe_allow_html=True)
         
         today = datetime.now()
         selected_date_str = st.date_input(
@@ -1163,7 +1253,7 @@ def main():
             """, unsafe_allow_html=True)
         # --- END NEW CARD ---
         
-        st.markdown("### Portfolio Style Selection")
+        st.markdown('<div class="sidebar-title">💼 Portfolio Style</div>', unsafe_allow_html=True)
 
         options_list = list(PORTFOLIO_STYLES.keys())
         default_index = 0 
@@ -1179,7 +1269,7 @@ def main():
         
         mix_options = list(PORTFOLIO_STYLES[selected_main_branch]["mixes"].keys())
         
-        st.markdown("### Portfolio Parameters")
+        st.markdown('<div class="sidebar-title">⚙️ Portfolio Parameters</div>', unsafe_allow_html=True)
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
@@ -1243,14 +1333,13 @@ def main():
                     st.session_state.min_pos_pct,
                     st.session_state.max_pos_pct
                 )
-                st.success("✅ Analysis Complete!")
+                st.toast("Analysis Complete!", icon="✅")
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        st.markdown("### Platform Info")
         st.markdown(f"""
         <div class='info-box'>
-            <p style='font-size: 0.85rem; margin: 0; color: var(--text-muted); line-height: 1.6;'>
-                <strong>Version:</strong> v1.0.0 - Pragyam<br>
+            <p style='font-size: 0.8rem; margin: 0; color: var(--text-muted); line-height: 1.5;'>
+                <strong>Version:</strong> {VERSION}<br>
                 <strong>Engine:</strong> Walk-Forward Curation<br> 
                 <strong>Data:</strong> Live Generated
             </p>
@@ -1259,7 +1348,8 @@ def main():
 
     st.markdown(f"""
     <div class="premium-header">
-        <h1>Pragyam | Quantitative Portfolio Curation System</h1>
+        <h1>PRAGYAM : Portfolio Intelligence</h1>
+        <div class="tagline">Walk-Forward Curation with Regime-Aware Strategy Allocation</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1380,7 +1470,12 @@ def main():
             st.plotly_chart(heatmap_fig, width='stretch')
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© {datetime.now().year} Pragyam | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    
+    # Dynamic footer with IST time
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
+    st.caption(f"© 2026 {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
 
 if __name__ == "__main__":
     main()
