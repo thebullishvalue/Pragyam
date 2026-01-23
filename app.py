@@ -1472,8 +1472,9 @@ def main():
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
-    # Dynamic footer with IST time
-    utc_now = datetime.utcnow()
+    # Dynamic footer with IST time (timezone-aware)
+    from datetime import timezone
+    utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
     st.caption(f"© 2026 {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
