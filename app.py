@@ -1350,7 +1350,7 @@ def main():
         # Show header only on landing page
         st.markdown(f"""
         <div class="premium-header">
-            <h1>PRAGYAM : Portfolio Intelligence</h1>
+            <h1>PRAGYAM | Portfolio Intelligence</h1>
             <div class="tagline">Walk-Forward Curation with Regime-Aware Strategy Allocation</div>
         </div>
         """, unsafe_allow_html=True)
