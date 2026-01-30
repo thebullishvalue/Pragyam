@@ -40,7 +40,7 @@ logger = logging.getLogger("BacktestEngine")
 class PerformanceMetrics:
     """
     Institutional-grade performance metrics calculator.
-    Computes all major risk-adjusted return metrics.
+    Computes all major risk-adjusted return metrics with proper bounds checking.
     """
     
     @staticmethod
@@ -68,53 +68,77 @@ class PerformanceMetrics:
         initial_value = daily_values['investment'].iloc[0]
         final_value = values[-1]
         
-        # Calculate returns
-        returns = pd.Series(values).pct_change().dropna()
-        returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
-        
-        if returns.empty or len(returns) < 2:
+        # Sanity check: values should not be zero or negative
+        if initial_value <= 0 or final_value <= 0:
             return PerformanceMetrics._empty_metrics()
         
-        # Basic metrics
-        total_return = (final_value - initial_value) / initial_value if initial_value > 0 else 0
+        # Sanity check: values should not have wild swings (>99% single-day moves indicate data issues)
+        values_series = pd.Series(values)
+        daily_returns = values_series.pct_change().dropna()
+        
+        # Filter out invalid returns
+        daily_returns = daily_returns.replace([np.inf, -np.inf], np.nan).dropna()
+        
+        # Cap extreme returns at +/- 50% per day (anything beyond indicates data error)
+        daily_returns = daily_returns.clip(-0.5, 0.5)
+        
+        if daily_returns.empty or len(daily_returns) < 2:
+            return PerformanceMetrics._empty_metrics()
+        
+        # Basic metrics - calculate from actual values, not returns
+        total_return = (final_value - initial_value) / initial_value
         
         # Time-adjusted metrics
         n_periods = len(daily_values)
         years = n_periods / periods_per_year
         
-        # CAGR
-        cagr = ((final_value / initial_value) ** (1 / years) - 1) if years > 0 and initial_value > 0 else 0
+        # CAGR - use this for annualized return (more stable than compounding daily)
+        if years > 0 and initial_value > 0 and final_value > 0:
+            cagr = (final_value / initial_value) ** (1 / years) - 1
+        else:
+            cagr = 0
         
-        # Annualized metrics
+        # Use CAGR as annualized return (more stable)
+        ann_return = cagr
+        
+        # Volatility
         ann_factor = np.sqrt(periods_per_year)
-        mean_return = returns.mean()
-        volatility = returns.std() * ann_factor
-        ann_return = (1 + mean_return) ** periods_per_year - 1
+        volatility = daily_returns.std() * ann_factor
         
         # Sharpe Ratio
         excess_return = ann_return - risk_free_rate
-        sharpe = excess_return / volatility if volatility > 0 else 0
+        sharpe = excess_return / volatility if volatility > 0.001 else 0
         
         # Sortino Ratio (downside deviation)
-        downside_returns = returns[returns < 0]
-        downside_std = downside_returns.std() * ann_factor if len(downside_returns) > 0 else 0
-        sortino = excess_return / downside_std if downside_std > 0 else 0
+        downside_returns = daily_returns[daily_returns < 0]
+        if len(downside_returns) > 0:
+            downside_std = downside_returns.std() * ann_factor
+            sortino = excess_return / downside_std if downside_std > 0.001 else 0
+        else:
+            sortino = 0
         
-        # Maximum Drawdown
-        cumulative = (1 + returns).cumprod()
-        running_max = cumulative.expanding(min_periods=1).max()
-        drawdown = (cumulative / running_max) - 1
-        max_drawdown = drawdown.min()
+        # Maximum Drawdown - calculate from values directly
+        cumulative_max = values_series.expanding(min_periods=1).max()
+        drawdown_series = (values_series - cumulative_max) / cumulative_max
+        max_drawdown = drawdown_series.min()
         
-        # Calmar Ratio
-        calmar = ann_return / abs(max_drawdown) if max_drawdown != 0 else 0
+        # Calmar Ratio - annual return / max drawdown
+        if max_drawdown < -0.001:  # At least 0.1% drawdown
+            calmar = ann_return / abs(max_drawdown)
+        else:
+            calmar = 0
+        
+        # Sanity bounds on ratios (realistic range: -10 to +10)
+        sharpe = np.clip(sharpe, -10, 10)
+        sortino = np.clip(sortino, -10, 10)
+        calmar = np.clip(calmar, -10, 10)
         
         # Win Rate
-        win_rate = (returns > 0).mean()
+        win_rate = (daily_returns > 0).mean()
         
         # Best/Worst Days
-        best_day = returns.max()
-        worst_day = returns.min()
+        best_day = daily_returns.max()
+        worst_day = daily_returns.min()
         
         return {
             'total_return': total_return,

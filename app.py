@@ -1143,24 +1143,87 @@ def create_conviction_heatmap(strategies, current_df):
     fig.update_layout(template='plotly_dark', height=600)
     return fig
 
-# --- Dynamic Strategy Selection with Full Logging ---
+# ═══════════════════════════════════════════════════════════════════════════
+# DYNAMIC STRATEGY SELECTION ENGINE
+# ═══════════════════════════════════════════════════════════════════════════
+
 if 'dynamic_strategies_cache' not in st.session_state:
     st.session_state.dynamic_strategies_cache = None
 
-# Create a dedicated logger for dynamic selection
-dynamic_logger = logging.getLogger("DynamicSelection")
-dynamic_logger.setLevel(logging.INFO)
 
-# Add console handler if not already present
-if not dynamic_logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-        datefmt='%H:%M:%S'
-    )
-    console_handler.setFormatter(formatter)
-    dynamic_logger.addHandler(console_handler)
+def _calculate_metrics_simple(daily_values: List[float], periods_per_year: float = 252.0) -> Dict[str, float]:
+    """
+    Calculate performance metrics from a list of daily portfolio values.
+    Returns bounded, sensible metrics.
+    """
+    if len(daily_values) < 2:
+        return {'total_return': 0, 'sharpe': 0, 'sortino': 0, 'calmar': 0, 'max_dd': 0, 'volatility': 0}
+    
+    values = np.array(daily_values)
+    initial = values[0]
+    final = values[-1]
+    
+    # Total return
+    total_return = (final - initial) / initial if initial > 0 else 0
+    
+    # Daily returns
+    daily_returns = np.diff(values) / values[:-1]
+    daily_returns = daily_returns[np.isfinite(daily_returns)]
+    daily_returns = np.clip(daily_returns, -0.20, 0.20)  # Cap at ±20% daily
+    
+    if len(daily_returns) < 2:
+        return {'total_return': total_return, 'sharpe': 0, 'sortino': 0, 'calmar': 0, 'max_dd': 0, 'volatility': 0}
+    
+    # Annualization factor
+    n_days = len(daily_values)
+    years = n_days / periods_per_year
+    
+    # CAGR (use this as annualized return - more stable)
+    if years > 0 and initial > 0 and final > 0:
+        ann_return = (final / initial) ** (1 / years) - 1
+    else:
+        ann_return = 0
+    
+    # Volatility
+    vol_daily = np.std(daily_returns)
+    volatility = vol_daily * np.sqrt(periods_per_year)
+    
+    # Sharpe (assume 0 risk-free rate)
+    sharpe = ann_return / volatility if volatility > 0.01 else 0
+    
+    # Sortino (downside deviation)
+    negative_returns = daily_returns[daily_returns < 0]
+    if len(negative_returns) > 0:
+        downside_vol = np.std(negative_returns) * np.sqrt(periods_per_year)
+        sortino = ann_return / downside_vol if downside_vol > 0.01 else 0
+    else:
+        sortino = sharpe  # No negative returns = use sharpe
+    
+    # Max Drawdown (from cumulative values, not returns)
+    running_max = np.maximum.accumulate(values)
+    drawdowns = (values - running_max) / running_max
+    max_dd = np.min(drawdowns)
+    
+    # Calmar = Annual Return / |Max Drawdown|
+    if max_dd < -0.01:  # At least 1% drawdown
+        calmar = ann_return / abs(max_dd)
+    else:
+        calmar = ann_return * 10 if ann_return > 0 else 0  # Cap at 10x if no meaningful drawdown
+    
+    # Bound all ratios to sensible range [-5, 5]
+    sharpe = np.clip(sharpe, -5, 5)
+    sortino = np.clip(sortino, -5, 5)
+    calmar = np.clip(calmar, -5, 5)
+    
+    return {
+        'total_return': total_return,
+        'ann_return': ann_return,
+        'sharpe': sharpe,
+        'sortino': sortino,
+        'calmar': calmar,
+        'max_dd': max_dd,
+        'volatility': volatility
+    }
 
 
 def _run_dynamic_strategy_selection(
@@ -1169,219 +1232,249 @@ def _run_dynamic_strategy_selection(
     selected_style: str,
     progress_bar=None,
     status_text=None
-) -> Tuple[List[str], Dict[str, float]]:
+) -> Tuple[Optional[List[str]], Dict[str, Dict]]:
     """
-    Run backtest to select top strategies based on mode.
-    - SIP Investment: Top 4 by Calmar Ratio
-    - Swing Trading: Top 4 by Sortino Ratio
+    Backtest all strategies and select top 4 based on performance metric.
     
-    Returns:
-        Tuple of (list of strategy names, dict of all scores)
+    Selection:
+    - SIP Investment → Top 4 by Calmar Ratio (drawdown recovery)
+    - Swing Trading → Top 4 by Sortino Ratio (risk-adjusted returns)
     """
     
-    print("\n" + "="*70)
-    print("🎯 DYNAMIC STRATEGY SELECTION - STARTING")
-    print("="*70)
-    dynamic_logger.info("="*50)
-    dynamic_logger.info("DYNAMIC STRATEGY SELECTION INITIATED")
-    dynamic_logger.info("="*50)
+    # ───────────────────────────────────────────────────────────────────────
+    # INITIALIZATION
+    # ───────────────────────────────────────────────────────────────────────
     
-    # --- Pre-flight checks ---
+    print("\n")
+    print("╔══════════════════════════════════════════════════════════════════════╗")
+    print("║              PRAGYAM DYNAMIC STRATEGY SELECTION v2.0                 ║")
+    print("╚══════════════════════════════════════════════════════════════════════╝")
+    
+    # Validation
     if not DYNAMIC_SELECTION_AVAILABLE:
-        msg = "❌ backtest_engine.py not available - falling back to static selection"
-        print(msg)
-        dynamic_logger.warning(msg)
+        print("\n  [SKIP] backtest_engine.py not found → Using static selection")
         return None, {}
     
-    if not historical_data:
-        msg = "❌ No historical data provided - falling back to static selection"
-        print(msg)
-        dynamic_logger.warning(msg)
+    if not historical_data or len(historical_data) < 10:
+        days = len(historical_data) if historical_data else 0
+        print(f"\n  [SKIP] Insufficient data: {days} days (need ≥10) → Using static selection")
         return None, {}
     
-    if len(historical_data) < 10:
-        msg = f"❌ Insufficient data: {len(historical_data)} days (need >= 10) - falling back to static"
-        print(msg)
-        dynamic_logger.warning(msg)
-        return None, {}
+    # Configuration
+    is_sip = "SIP" in selected_style
+    metric_key = 'calmar' if is_sip else 'sortino'
+    metric_label = "Calmar" if is_sip else "Sortino"
     
-    # --- Configuration ---
-    if "SIP" in selected_style:
-        metric_key = 'calmar_ratio'
-        metric_name = "Calmar Ratio"
-    else:  # Swing Trading
-        metric_key = 'sortino_ratio'
-        metric_name = "Sortino Ratio"
-    
-    print(f"\n📊 Configuration:")
-    print(f"   • Investment Style: {selected_style}")
-    print(f"   • Selection Metric: {metric_name} ({metric_key})")
-    print(f"   • Historical Data: {len(historical_data)} trading days")
-    print(f"   • Date Range: {historical_data[0][0].strftime('%Y-%m-%d')} to {historical_data[-1][0].strftime('%Y-%m-%d')}")
-    print(f"   • Strategies to Test: {len(all_strategies)}")
-    
-    dynamic_logger.info(f"Style: {selected_style} | Metric: {metric_key}")
-    dynamic_logger.info(f"Data: {len(historical_data)} days | Strategies: {len(all_strategies)}")
-    
-    if status_text:
-        status_text.text(f"Running dynamic strategy selection using {metric_name}...")
-    
-    # --- Run Backtests ---
-    strategy_scores = []
-    strategy_metrics = {}  # Store all metrics for transparency
-    failed_strategies = []
+    date_start = historical_data[0][0].strftime('%d-%b-%Y')
+    date_end = historical_data[-1][0].strftime('%d-%b-%Y')
+    n_days = len(historical_data)
     capital = 10_000_000
     
-    print(f"\n🔄 Running backtests on {len(all_strategies)} strategies...")
-    print("-" * 70)
+    print(f"\n  ┌─────────────────────────────────────────────────────────────────┐")
+    print(f"  │  Configuration                                                  │")
+    print(f"  ├─────────────────────────────────────────────────────────────────┤")
+    print(f"  │  Style:      {selected_style:50s}│")
+    print(f"  │  Metric:     {metric_label + ' Ratio':50s}│")
+    print(f"  │  Period:     {date_start} to {date_end} ({n_days} days){' '*(26-len(str(n_days)))}│")
+    print(f"  │  Capital:    ₹{capital:,}{' '*37}│")
+    print(f"  │  Strategies: {len(all_strategies)}{' '*50}│")
+    print(f"  └─────────────────────────────────────────────────────────────────┘")
     
-    total_strategies = len(all_strategies)
+    if status_text:
+        status_text.text(f"Backtesting {len(all_strategies)} strategies...")
+    
+    # ───────────────────────────────────────────────────────────────────────
+    # BUILD PRICE MATRIX
+    # ───────────────────────────────────────────────────────────────────────
+    
+    print(f"\n  [1/3] Building price matrix...")
+    
+    # Get all unique symbols across all days
+    all_symbols = set()
+    for _, df in historical_data:
+        all_symbols.update(df['symbol'].unique())
+    
+    # Build a price matrix: {symbol: [price_day1, price_day2, ...]}
+    price_matrix = {symbol: [] for symbol in all_symbols}
+    dates = []
+    
+    for date, df in historical_data:
+        dates.append(date)
+        day_prices = dict(zip(df['symbol'], df['price']))
+        for symbol in all_symbols:
+            price_matrix[symbol].append(day_prices.get(symbol, np.nan))
+    
+    # Forward-fill missing prices (use last known price)
+    for symbol in all_symbols:
+        prices = price_matrix[symbol]
+        last_valid = np.nan
+        for i, p in enumerate(prices):
+            if np.isnan(p):
+                prices[i] = last_valid
+            else:
+                last_valid = p
+        price_matrix[symbol] = prices
+    
+    print(f"        → {len(all_symbols)} symbols × {n_days} days")
+    
+    # ───────────────────────────────────────────────────────────────────────
+    # BACKTEST EACH STRATEGY
+    # ───────────────────────────────────────────────────────────────────────
+    
+    print(f"\n  [2/3] Backtesting strategies...\n")
+    print(f"        {'Strategy':<28} │ {'Return':>8} │ {'MaxDD':>8} │ {metric_label:>7} │ {'Sharpe':>7} │ Pos")
+    print(f"        {'─'*28}─┼─{'─'*8}─┼─{'─'*8}─┼─{'─'*7}─┼─{'─'*7}─┼─{'─'*4}")
+    
+    results = {}
+    valid_strategies = []
     
     for idx, (name, strategy) in enumerate(all_strategies.items()):
-        # Update progress
-        progress_pct = (idx + 1) / total_strategies
+        
+        # Update progress bar
         if progress_bar:
-            progress_bar.progress(progress_pct, text=f"Backtesting: {name} ({idx+1}/{total_strategies})")
+            pct = 0.25 + (idx / len(all_strategies)) * 0.35
+            progress_bar.progress(pct, text=f"Backtesting: {name}")
         
         try:
+            # Get first day's data to generate portfolio
+            first_df = historical_data[0][1].copy()
+            
+            # Generate portfolio
+            port_df = strategy.generate_portfolio(first_df, capital)
+            
+            if port_df is None or port_df.empty:
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: No portfolio")
+                results[name] = {'status': 'skip', 'reason': 'No portfolio generated'}
+                continue
+            
+            if 'units' not in port_df.columns or 'symbol' not in port_df.columns:
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: Bad columns")
+                results[name] = {'status': 'skip', 'reason': 'Missing columns'}
+                continue
+            
+            # Build holdings: {symbol: units}
+            holdings = {}
+            for _, row in port_df.iterrows():
+                sym = row['symbol']
+                units = row.get('units', 0)
+                if units > 0 and sym in price_matrix:
+                    # Verify we have valid prices for this symbol
+                    sym_prices = price_matrix[sym]
+                    if not np.isnan(sym_prices[0]):  # Has valid first day price
+                        holdings[sym] = units
+            
+            if len(holdings) == 0:
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: No valid holdings")
+                results[name] = {'status': 'skip', 'reason': 'No valid holdings'}
+                continue
+            
+            # Calculate initial investment
+            initial_investment = sum(
+                units * price_matrix[sym][0] 
+                for sym, units in holdings.items()
+            )
+            
+            if initial_investment <= 0:
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: Zero investment")
+                results[name] = {'status': 'skip', 'reason': 'Zero investment'}
+                continue
+            
+            cash = capital - initial_investment
+            
+            # Calculate daily portfolio values
             daily_values = []
-            portfolio_units = {}
-            current_capital = capital
-            positions_held = 0
+            for day_idx in range(n_days):
+                port_value = sum(
+                    units * price_matrix[sym][day_idx]
+                    for sym, units in holdings.items()
+                    if not np.isnan(price_matrix[sym][day_idx])
+                )
+                total_value = port_value + cash
+                daily_values.append(total_value)
             
-            # Simple buy-and-hold backtest
-            for j, (date, df) in enumerate(historical_data):
-                # Buy on first day
-                if j == 0 and not portfolio_units:
-                    try:
-                        buy_portfolio = strategy.generate_portfolio(df, current_capital)
-                        if not buy_portfolio.empty and 'units' in buy_portfolio.columns:
-                            portfolio_units = pd.Series(
-                                buy_portfolio['units'].values,
-                                index=buy_portfolio['symbol']
-                            ).to_dict()
-                            current_capital -= buy_portfolio['value'].sum()
-                            positions_held = len(portfolio_units)
-                    except Exception as portfolio_err:
-                        dynamic_logger.debug(f"{name}: Portfolio generation error on day 1: {portfolio_err}")
-                
-                # Valuation
-                portfolio_value = 0
-                if portfolio_units:
-                    prices_today = df.set_index('symbol')['price']
-                    portfolio_value = sum(
-                        units * prices_today.get(symbol, 0)
-                        for symbol, units in portfolio_units.items()
-                    )
-                
-                daily_values.append({
-                    'date': date,
-                    'value': portfolio_value + current_capital,
-                    'investment': capital
-                })
-            
-            # Check if we have enough data
+            # Sanity check: values should not have wild swings
             if len(daily_values) < 10:
-                msg = f"   ⚠️  {name}: Insufficient daily values ({len(daily_values)})"
-                print(msg)
-                dynamic_logger.warning(f"{name}: Only {len(daily_values)} daily values")
-                failed_strategies.append((name, "Insufficient data"))
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: Too few days")
+                results[name] = {'status': 'skip', 'reason': 'Insufficient days'}
+                continue
+            
+            # Check for data integrity (no 50%+ single-day drops)
+            values_arr = np.array(daily_values)
+            daily_changes = np.diff(values_arr) / values_arr[:-1]
+            if np.any(daily_changes < -0.50):
+                print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ SKIP: Data anomaly")
+                results[name] = {'status': 'skip', 'reason': 'Data anomaly detected'}
                 continue
             
             # Calculate metrics
-            daily_df = pd.DataFrame(daily_values)
-            metrics = PerformanceMetrics.calculate(daily_df)
+            metrics = _calculate_metrics_simple(daily_values)
             
-            # Extract key metrics
-            score = metrics.get(metric_key, 0)
-            total_return = metrics.get('total_return', 0)
-            sharpe = metrics.get('sharpe_ratio', 0)
-            sortino = metrics.get('sortino_ratio', 0)
-            calmar = metrics.get('calmar_ratio', 0)
-            max_dd = metrics.get('max_drawdown', 0)
+            total_ret = metrics['total_return']
+            max_dd = metrics['max_dd']
+            sharpe = metrics['sharpe']
+            sortino = metrics['sortino']
+            calmar = metrics['calmar']
+            score = metrics[metric_key]
             
-            # Store all metrics
-            strategy_metrics[name] = {
-                'total_return': total_return,
-                'sharpe_ratio': sharpe,
-                'sortino_ratio': sortino,
-                'calmar_ratio': calmar,
-                'max_drawdown': max_dd,
-                'positions': positions_held,
-                'selection_score': score
+            # Store results
+            results[name] = {
+                'status': 'ok',
+                'metrics': metrics,
+                'score': score,
+                'positions': len(holdings)
             }
+            valid_strategies.append((name, score, metrics))
             
-            # Validate score
-            if not np.isfinite(score):
-                msg = f"   ⚠️  {name}: Invalid {metric_key} = {score} (NaN/Inf)"
-                print(msg)
-                dynamic_logger.warning(f"{name}: Invalid score {score}")
-                failed_strategies.append((name, f"Invalid {metric_key}"))
-                continue
-            
-            if score <= -100:
-                msg = f"   ⚠️  {name}: Score too low ({metric_key} = {score:.4f})"
-                print(msg)
-                dynamic_logger.warning(f"{name}: Score {score} below threshold")
-                failed_strategies.append((name, f"Score below threshold: {score:.4f}"))
-                continue
-            
-            # Success - add to candidates
-            strategy_scores.append((name, score))
-            
-            # Print detailed results
-            print(f"   ✓  {name:30s} | {metric_name}: {score:8.4f} | Return: {total_return:7.2%} | MaxDD: {max_dd:7.2%} | Positions: {positions_held}")
-            dynamic_logger.info(f"{name}: {metric_key}={score:.4f}, return={total_return:.2%}, maxDD={max_dd:.2%}")
+            # Print row
+            print(f"        {name:<28} │ {total_ret:>+7.1%} │ {max_dd:>+7.1%} │ {calmar:>+7.2f} │ {sharpe:>+7.2f} │ {len(holdings):>3}")
             
         except Exception as e:
-            msg = f"   ❌  {name}: ERROR - {str(e)}"
-            print(msg)
-            dynamic_logger.error(f"{name}: Backtest failed - {e}")
-            failed_strategies.append((name, str(e)))
+            print(f"        {name:<28} │ {'─':>8} │ {'─':>8} │ {'─':>7} │ {'─':>7} │ ERROR: {str(e)[:20]}")
+            results[name] = {'status': 'error', 'reason': str(e)}
             continue
     
-    print("-" * 70)
+    # ───────────────────────────────────────────────────────────────────────
+    # SELECT TOP 4
+    # ───────────────────────────────────────────────────────────────────────
     
-    # --- Report Failed Strategies ---
-    if failed_strategies:
-        print(f"\n⚠️  Failed/Skipped Strategies ({len(failed_strategies)}):")
-        for name, reason in failed_strategies:
-            print(f"   • {name}: {reason}")
-        dynamic_logger.warning(f"Failed strategies: {len(failed_strategies)}")
+    print(f"\n  [3/3] Selecting top strategies by {metric_label}...")
     
-    # --- Check if we have enough valid strategies ---
-    if len(strategy_scores) < 4:
-        msg = f"\n❌ INSUFFICIENT VALID STRATEGIES: Only {len(strategy_scores)} passed validation (need 4)"
-        print(msg)
-        print("   Falling back to static strategy selection")
-        dynamic_logger.error(f"Only {len(strategy_scores)} valid strategies - falling back to static")
-        return None, strategy_metrics
+    if len(valid_strategies) < 4:
+        print(f"\n        ⚠ Only {len(valid_strategies)} valid strategies (need 4)")
+        print(f"        → Falling back to static selection\n")
+        return None, results
     
-    # --- Sort and Select Top 4 ---
-    strategy_scores.sort(key=lambda x: x[1], reverse=True)
-    top_strategies = [name for name, score in strategy_scores[:4]]
+    # Sort by score descending
+    valid_strategies.sort(key=lambda x: x[1], reverse=True)
     
-    # --- Print Final Selection ---
-    print(f"\n" + "="*70)
-    print(f"🏆 DYNAMIC SELECTION COMPLETE - Top 4 by {metric_name}")
-    print("="*70)
-    print(f"\n   Rank | Strategy                       | {metric_name:>12}")
-    print("   " + "-"*55)
+    # Select top 4
+    top_4 = valid_strategies[:4]
+    selected = [name for name, _, _ in top_4]
     
-    for rank, (name, score) in enumerate(strategy_scores[:4], 1):
-        print(f"   #{rank}   | {name:30s} | {score:12.4f}")
-        dynamic_logger.info(f"SELECTED #{rank}: {name} ({metric_key}={score:.4f})")
+    # Print selection
+    print(f"\n  ┌─────────────────────────────────────────────────────────────────┐")
+    print(f"  │  SELECTED STRATEGIES (by {metric_label} Ratio){' '*(35-len(metric_label))}│")
+    print(f"  ├─────────────────────────────────────────────────────────────────┤")
     
-    print("\n   --- Other Candidates ---")
-    for rank, (name, score) in enumerate(strategy_scores[4:], 5):
-        print(f"   #{rank}   | {name:30s} | {score:12.4f}")
+    for rank, (name, score, metrics) in enumerate(top_4, 1):
+        ret = metrics['total_return']
+        print(f"  │  #{rank}  {name:<32} {metric_label}: {score:>+5.2f}  Ret: {ret:>+6.1%}  │")
     
-    print("="*70 + "\n")
+    print(f"  └─────────────────────────────────────────────────────────────────┘")
+    
+    if len(valid_strategies) > 4:
+        print(f"\n        Other candidates: ", end="")
+        others = [f"{name} ({score:+.2f})" for name, score, _ in valid_strategies[4:]]
+        print(", ".join(others))
+    
+    print("\n╔══════════════════════════════════════════════════════════════════════╗")
+    print(f"║  SELECTION COMPLETE: {', '.join(selected):<47}║")
+    print("╚══════════════════════════════════════════════════════════════════════╝\n")
     
     if status_text:
-        status_text.text(f"✅ Selected: {', '.join(top_strategies)}")
+        status_text.text(f"Selected: {', '.join(selected)}")
     
-    return top_strategies, strategy_metrics
+    return selected, results
 
 
 # --- Main Application ---
@@ -1547,10 +1640,19 @@ def main():
             total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30
             fetch_start_date = selected_date_dt - timedelta(days=total_days_to_fetch)
             
-            # --- PHASE 1: Data Fetching ---
-            progress_bar.progress(0.05, text="📡 Fetching market data...")
-            status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols from {fetch_start_date.date()} to {selected_date_dt.date()}")
-            print(f"\n📡 Fetching data for {len(SYMBOLS_UNIVERSE)} symbols...")
+            # ═══════════════════════════════════════════════════════════════════
+            # PHASE 1: DATA FETCHING
+            # ═══════════════════════════════════════════════════════════════════
+            progress_bar.progress(0.05, text="Fetching market data...")
+            status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols")
+            
+            print("\n")
+            print("╔══════════════════════════════════════════════════════════════════════╗")
+            print("║                    PRAGYAM ANALYSIS ENGINE v2.0                      ║")
+            print("╚══════════════════════════════════════════════════════════════════════╝")
+            print(f"\n  [1/4] Fetching market data...")
+            print(f"        Symbols: {len(SYMBOLS_UNIVERSE)}")
+            print(f"        Period:  {fetch_start_date.date()} to {selected_date_dt.date()}")
             
             all_historical_data = load_historical_data(selected_date_dt, lookback_files)
             
@@ -1560,8 +1662,8 @@ def main():
                 st.error("Application cannot start: No historical data could be loaded or generated.")
                 st.stop()
 
-            progress_bar.progress(0.20, text="✓ Data loaded. Preparing training window...")
-            print(f"✓ Loaded {len(all_historical_data)} days of historical data")
+            progress_bar.progress(0.20, text="Data loaded. Preparing...")
+            print(f"        → Loaded {len(all_historical_data)} trading days")
 
             current_date, current_df = all_historical_data[-1]
             training_data = all_historical_data[:-1]
@@ -1590,33 +1692,30 @@ def main():
                 
             final_mix_to_use = st.session_state.suggested_mix
             
-            # --- PHASE 2: Dynamic Strategy Selection ---
-            progress_bar.progress(0.25, text="🧠 Running dynamic strategy selection...")
-            status_text.text(f"Backtesting strategies for {selected_main_branch} mode...")
+            # ═══════════════════════════════════════════════════════════════════
+            # PHASE 2: DYNAMIC STRATEGY SELECTION
+            # ═══════════════════════════════════════════════════════════════════
+            progress_bar.progress(0.25, text="Running strategy selection...")
+            status_text.text(f"Analyzing {len(strategies)} strategies...")
             
             dynamic_strategies, strategy_metrics = _run_dynamic_strategy_selection(
                 training_data_window_with_current, 
                 strategies, 
                 selected_main_branch,
-                progress_bar=None,  # We'll use our own progress
+                progress_bar=progress_bar,
                 status_text=status_text
             )
             
-            # --- Determine which strategies to use ---
+            # Determine which strategies to use
             if dynamic_strategies and len(dynamic_strategies) >= 4:
-                # Use dynamically selected strategies
                 style_strategies = dynamic_strategies
                 selection_mode = "DYNAMIC"
-                print(f"\n✅ Using DYNAMICALLY selected strategies: {style_strategies}")
-                logging.info(f"Using dynamically selected strategies: {style_strategies}")
-                st.toast(f"🎯 Dynamic Selection: {', '.join(style_strategies)}", icon="✅")
+                st.toast(f"Selected: {', '.join(style_strategies[:2])}...", icon="✅")
             else:
-                # Fall back to static PORTFOLIO_STYLES
                 style_strategies = PORTFOLIO_STYLES[selected_main_branch]["mixes"][final_mix_to_use]['strategies']
-                selection_mode = "STATIC (fallback)"
-                print(f"\n⚠️ Using STATIC strategies (fallback): {style_strategies}")
-                logging.warning(f"Using static strategies (fallback): {style_strategies}")
-                st.toast(f"⚠️ Using static strategies: {', '.join(style_strategies)}", icon="⚠️")
+                selection_mode = "STATIC"
+                print(f"\n  [!] Dynamic selection unavailable → Using static strategies")
+                st.toast(f"Using default strategies", icon="ℹ️")
             
             # Filter to only available strategies
             strategies_to_run = {name: strategies[name] for name in style_strategies if name in strategies}
@@ -1627,19 +1726,28 @@ def main():
                 st.error(f"None of the selected strategies are available: {style_strategies}")
                 st.stop()
             
-            print(f"\n📊 Strategy Selection Mode: {selection_mode}")
-            print(f"   Strategies for execution: {list(strategies_to_run.keys())}")
-            
-            # --- PHASE 3: Walk-Forward Performance Evaluation ---
-            progress_bar.progress(0.60, text="📈 Running walk-forward evaluation...")
+            # ═══════════════════════════════════════════════════════════════════
+            # PHASE 3: WALK-FORWARD EVALUATION
+            # ═══════════════════════════════════════════════════════════════════
+            progress_bar.progress(0.65, text="Running walk-forward evaluation...")
             status_text.text(f"Evaluating {len(strategies_to_run)} strategies...")
+            
+            print(f"\n  [3/4] Walk-forward evaluation...")
+            print(f"        Strategies: {list(strategies_to_run.keys())}")
+            print(f"        Window:     {len(training_data_window_with_current)} days")
             
             st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
             
-            # --- PHASE 4: Portfolio Curation ---
+            # ═══════════════════════════════════════════════════════════════════
+            # PHASE 4: PORTFOLIO CURATION
+            # ═══════════════════════════════════════════════════════════════════
             if st.session_state.performance:
-                progress_bar.progress(0.90, text="💼 Curating final portfolio...")
+                progress_bar.progress(0.90, text="Curating final portfolio...")
                 status_text.text("Optimizing position weights...")
+                
+                print(f"\n  [4/4] Portfolio curation...")
+                print(f"        Capital:   ₹{capital:,}")
+                print(f"        Max Pos:   {num_positions}")
                 
                 st.session_state.portfolio, _, _ = curate_final_portfolio(
                     strategies_to_run,
@@ -1651,15 +1759,16 @@ def main():
                     st.session_state.max_pos_pct
                 )
                 
-                progress_bar.progress(1.0, text="✅ Analysis Complete!")
-                status_text.text(f"Portfolio curated with {len(st.session_state.portfolio)} positions")
+                progress_bar.progress(1.0, text="Complete!")
+                status_text.text(f"Portfolio: {len(st.session_state.portfolio)} positions")
                 
-                print(f"\n✅ ANALYSIS COMPLETE")
-                print(f"   • Selection Mode: {selection_mode}")
-                print(f"   • Strategies Used: {list(strategies_to_run.keys())}")
-                print(f"   • Portfolio Positions: {len(st.session_state.portfolio)}")
+                print(f"        → {len(st.session_state.portfolio)} positions curated")
+                print("\n╔══════════════════════════════════════════════════════════════════════╗")
+                print(f"║  ANALYSIS COMPLETE                                                   ║")
+                print(f"║  Mode: {selection_mode:<10} │ Strategies: {len(strategies_to_run)} │ Positions: {len(st.session_state.portfolio):<4}         ║")
+                print("╚══════════════════════════════════════════════════════════════════════╝\n")
                 
-                time.sleep(1)  # Brief pause to show completion
+                time.sleep(0.5)
                 progress_bar.empty()
                 status_text.empty()
                 
