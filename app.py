@@ -29,23 +29,14 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 # --- End suppression ---
 
 
-# --- Import Strategies from strategies.py (Auto-Discovery) ---
-import inspect
-import strategies as strategies_module
-
+# --- Import Strategies from strategies.py ---
 try:
-    from strategies import BaseStrategy
-    
-    # Auto-discover all strategy classes that inherit from BaseStrategy
-    ALL_STRATEGY_CLASSES = {}
-    for name, obj in inspect.getmembers(strategies_module, inspect.isclass):
-        if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-            ALL_STRATEGY_CLASSES[name] = obj
-    
-    logging.info(f"Auto-discovered {len(ALL_STRATEGY_CLASSES)} strategy classes from strategies.py")
-    
-except ImportError as e:
-    st.error(f"Fatal Error: `strategies.py` not found or invalid. Error: {e}")
+    from strategies import (
+        BaseStrategy, GameTheoreticStrategy, MomentumAccelerator, VolatilitySurfer, 
+        DivineMomentumOracle, AdaptiveVolBreakout, NebulaMomentumStorm, CelestialAlphaForge
+    )
+except ImportError:
+    st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
     st.stop()
 
 # --- Import Live Data Generation from backdata.py ---
@@ -62,7 +53,11 @@ except ImportError:
 
 # --- Import Unified Backtest Engine for Dynamic Strategy Selection ---
 try:
-    from backtest_engine import PerformanceMetrics
+    from backtest_engine import (
+        UnifiedBacktestEngine,
+        DynamicPortfolioStylesGenerator,
+        PerformanceMetrics
+    )
     DYNAMIC_SELECTION_AVAILABLE = True
 except ImportError:
     DYNAMIC_SELECTION_AVAILABLE = False
@@ -1472,41 +1467,34 @@ def _run_dynamic_strategy_selection(
 
 # --- Main Application ---
 def main():
-    # ═══════════════════════════════════════════════════════════════════════════
-    # AUTO-INSTANTIATE ALL STRATEGIES
-    # ═══════════════════════════════════════════════════════════════════════════
-    strategies = {}
-    failed_strategies = []
-    
-    for name, cls in ALL_STRATEGY_CLASSES.items():
-        try:
-            strategies[name] = cls()
-        except Exception as e:
-            failed_strategies.append((name, str(e)))
-    
-    logging.info(f"Instantiated {len(strategies)} strategies successfully")
-    if failed_strategies:
-        logging.warning(f"Failed to instantiate {len(failed_strategies)} strategies: {[n for n, _ in failed_strategies]}")
+    strategies = {
+        'VolatilitySurfer': VolatilitySurfer(),
+        'GameTheoreticStrategy': GameTheoreticStrategy(),
+        'CelestialAlphaForge': CelestialAlphaForge(),
+        'MomentumAccelerator': MomentumAccelerator(),
+        'NebulaMomentumStorm': NebulaMomentumStorm(),
+        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
+        'DivineMomentumOracle': DivineMomentumOracle(),
+    }
 
     # Fallback static PORTFOLIO_STYLES (used if dynamic selection fails)
-    # These are default strategies known to work well
     PORTFOLIO_STYLES = {
         "Swing Trading": {
             "description": "Short-term (3-21 day) holds to capture rapid momentum and volatility.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['CelestialAlphaForge', 'MomentumAccelerator', 'AdaptiveVolBreakout', 'VolatilitySurfer'],
-                    "rationale": "Fallback: High-momentum strategies for bull conditions."
+                    "strategies": ['GameTheoreticStrategy', 'NebulaMomentumStorm', 'VolatilitySurfer', 'CelestialAlphaForge'],
+                    "rationale": "Dynamically selected based on highest Sortino Ratio from backtest results."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['VolatilitySurfer', 'AdaptiveVolBreakout', 'PRStrategy', 'MomentumMasters'],
-                    "rationale": "Fallback: Defensive strategies for bear conditions."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Dynamically selected based on highest Sortino Ratio from backtest results."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['PRStrategy', 'CL1Strategy', 'MOM1Strategy', 'VolatilitySurfer'],
-                    "rationale": "Fallback: Range-trading strategies for sideways markets."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Dynamically selected based on highest Sortino Ratio from backtest results."
                 }
             }
         },
@@ -1515,18 +1503,18 @@ def main():
             "description": "Systematic long-term (3-12+ months) wealth accumulation. Focus on consistency and drawdown protection.",
             "mixes": {
                 "Bull Market Mix": {
-                    "strategies": ['PRStrategy', 'CL1Strategy', 'MOM1Strategy', 'DivineMomentumOracle'],
-                    "rationale": "Fallback: Stable strategies for long-term accumulation."
+                    "strategies": ['GameTheoreticStrategy', 'MomentumAccelerator', 'VolatilitySurfer', 'DivineMomentumOracle'],
+                    "rationale": "Dynamically selected based on highest Calmar Ratio from backtest results."
                 },
                 
                 "Bear Market Mix": {
-                    "strategies": ['PRStrategy', 'VolatilitySurfer', 'CL2Strategy', 'MomentumMasters'],
-                    "rationale": "Fallback: Conservative strategies for protection."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Dynamically selected based on highest Calmar Ratio from backtest results."
                 },
                 
                 "Chop/Consolidate Mix": {
-                    "strategies": ['PRStrategy', 'CL1Strategy', 'CL2Strategy', 'MOM1Strategy'],
-                    "rationale": "Fallback: Diversified strategies for uncertain markets."
+                    "strategies": ['MomentumAccelerator', 'VolatilitySurfer', 'AdaptiveVolBreakout', 'GameTheoreticStrategy'],
+                    "rationale": "Dynamically selected based on highest Calmar Ratio from backtest results."
                 }
             }
         }
@@ -1714,21 +1702,13 @@ def main():
             if dynamic_strategies and len(dynamic_strategies) >= 4:
                 style_strategies = dynamic_strategies
                 selection_mode = "DYNAMIC"
-                logging.info(f"  Mode: DYNAMIC - Selected {len(dynamic_strategies)} strategies from {len(strategies)} total")
-                st.toast(f"✅ Dynamically selected: {', '.join(style_strategies[:2])}...", icon="✅")
+                logging.info(f"  Mode: DYNAMIC - Selected {len(dynamic_strategies)} strategies")
+                st.toast(f"Selected: {', '.join(style_strategies[:2])}...", icon="✅")
             else:
                 style_strategies = PORTFOLIO_STYLES[selected_main_branch]["mixes"][final_mix_to_use]['strategies']
-                selection_mode = "STATIC (FALLBACK)"
-                logging.warning(f"  Mode: STATIC FALLBACK - Dynamic selection failed, using predefined strategies")
-                logging.warning(f"  Fallback strategies: {style_strategies}")
-                
-                # Show a prominent warning that stays longer
-                st.warning(
-                    f"⚠️ **FALLBACK MODE**: Dynamic strategy selection failed. "
-                    f"Using predefined {final_mix_to_use} strategies: {', '.join(style_strategies)}",
-                    icon="⚠️"
-                )
-                time.sleep(2)  # Give user time to notice the warning
+                selection_mode = "STATIC"
+                logging.info(f"  Mode: STATIC (fallback) - Using predefined strategies")
+                st.toast(f"Using default strategies", icon="ℹ️")
             
             # Filter to only available strategies
             strategies_to_run = {name: strategies[name] for name in style_strategies if name in strategies}
