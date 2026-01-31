@@ -1,24 +1,26 @@
 """
-Backtest Engine - Unified Integration Module for Pragyam
-=========================================================
+Backtest Engine - Unified Integration Module for Pragyam v3.0
+==============================================================
 
 This module provides institutional-grade backtesting capabilities that integrate
 seamlessly with Pragyam's data pipeline and strategy ecosystem.
 
-Key Features:
-- Unified data fetching through backdata.py (shared resources)
-- Dynamic strategy selection based on performance metrics
-- SIP Mode: Top 4 strategies by Calmar Ratio
-- Swing Mode: Top 4 strategies by Sortino Ratio
-- Performance-optimized with intelligent caching
+Key Features (v3.0):
+- Advanced multi-criteria strategy selection (TOPSIS)
+- Market regime detection and conditional allocation
+- Maximum diversification and risk parity optimization
+- Bootstrap confidence intervals and statistical validation
+- Bayesian shrinkage for noise reduction
+- Comprehensive tail risk analysis
 
 Author: Hemrek Capital
+Version: 3.0.0 (Advanced Mathematical Implementation)
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import List, Tuple, Dict, Optional, Any
+from typing import List, Tuple, Dict, Optional, Any, Callable
 import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,13 +36,16 @@ logger = logging.getLogger("BacktestEngine")
 
 
 # ============================================================================
-# PERFORMANCE METRICS CALCULATOR
+# PERFORMANCE METRICS CALCULATOR (LEGACY - kept for backward compatibility)
 # ============================================================================
 
 class PerformanceMetrics:
     """
     Institutional-grade performance metrics calculator.
     Computes all major risk-adjusted return metrics with proper bounds checking.
+    
+    Note: For advanced metrics, use AdvancedMetricsCalculator from 
+    advanced_strategy_selector module.
     """
     
     @staticmethod
@@ -588,6 +593,9 @@ class UnifiedBacktestEngine:
         """
         Select top strategies based on mode-specific metrics.
         
+        DEPRECATED: Use AdvancedStrategySelector for better selection.
+        This method is kept for backward compatibility.
+        
         Args:
             results: Backtest results dictionary
             mode: 'sip' for Calmar-based selection, 'swing' for Sortino-based
@@ -631,13 +639,19 @@ class UnifiedBacktestEngine:
 
 
 # ============================================================================
-# DYNAMIC PORTFOLIO STYLES GENERATOR
+# DYNAMIC PORTFOLIO STYLES GENERATOR (LEGACY)
 # ============================================================================
 
 class DynamicPortfolioStylesGenerator:
     """
     Generates PORTFOLIO_STYLES dictionary dynamically based on backtest results.
-    Replaces hardcoded strategy selections with data-driven choices.
+    
+    DEPRECATED: Use EnhancedDynamicPortfolioStylesGenerator from 
+    advanced_strategy_selector for better selection with:
+    - Multi-criteria optimization (TOPSIS)
+    - Regime-aware allocation
+    - Diversification optimization
+    - Statistical validation
     """
     
     def __init__(self, engine: UnifiedBacktestEngine):
@@ -820,8 +834,9 @@ def initialize_backtest_engine(
     start_date: datetime,
     end_date: datetime,
     capital: float = 10_000_000,
-    progress_callback: Optional[callable] = None
-) -> Tuple[UnifiedBacktestEngine, DynamicPortfolioStylesGenerator]:
+    progress_callback: Optional[callable] = None,
+    use_advanced_selection: bool = True
+) -> Tuple[UnifiedBacktestEngine, Any]:
     """
     Initialize and configure the backtest engine with data.
     
@@ -833,6 +848,7 @@ def initialize_backtest_engine(
         end_date: Backtest end date
         capital: Initial capital
         progress_callback: Optional progress callback
+        use_advanced_selection: Whether to use advanced selection (default True)
         
     Returns:
         Tuple of (engine, generator) ready for use
@@ -845,8 +861,17 @@ def initialize_backtest_engine(
     # Load all strategies
     engine.load_strategies()
     
-    # Create generator
-    generator = DynamicPortfolioStylesGenerator(engine)
+    # Create generator (use advanced if available and requested)
+    if use_advanced_selection:
+        try:
+            from advanced_strategy_selector import EnhancedDynamicPortfolioStylesGenerator
+            generator = EnhancedDynamicPortfolioStylesGenerator(engine)
+            logger.info("Using EnhancedDynamicPortfolioStylesGenerator (Advanced Selection)")
+        except ImportError:
+            generator = DynamicPortfolioStylesGenerator(engine)
+            logger.warning("Advanced selector not available, using legacy generator")
+    else:
+        generator = DynamicPortfolioStylesGenerator(engine)
     
     return engine, generator
 
@@ -860,7 +885,8 @@ def get_dynamic_portfolio_styles(
     buy_col: Optional[str] = None,
     sell_col: Optional[str] = None,
     n_strategies: int = 4,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[callable] = None,
+    use_advanced_selection: bool = True
 ) -> Dict[str, Dict]:
     """
     Main entry point: Generate dynamic PORTFOLIO_STYLES based on backtest.
@@ -877,6 +903,7 @@ def get_dynamic_portfolio_styles(
         sell_col: Sell trigger column name
         n_strategies: Number of strategies to select per mode
         progress_callback: Optional callback for progress updates
+        use_advanced_selection: Use advanced multi-criteria selection (default True)
         
     Returns:
         PORTFOLIO_STYLES dictionary with dynamically selected strategies
@@ -884,7 +911,8 @@ def get_dynamic_portfolio_styles(
     # Initialize engine
     engine, generator = initialize_backtest_engine(
         symbols, start_date, end_date, capital,
-        progress_callback=lambda p, m: progress_callback(p * 0.3, m) if progress_callback else None
+        progress_callback=lambda p, m: progress_callback(p * 0.3, m) if progress_callback else None,
+        use_advanced_selection=use_advanced_selection
     )
     
     # Run comprehensive backtest
@@ -928,8 +956,8 @@ def run_streamlit_ui():
         layout="wide"
     )
     
-    st.title("⚙️ Unified Backtest Engine")
-    st.markdown("*Dynamic Strategy Selection for Pragyam*")
+    st.title("⚙️ Unified Backtest Engine v3.0")
+    st.markdown("*Advanced Dynamic Strategy Selection for Pragyam*")
     
     # Sidebar configuration
     with st.sidebar:
@@ -949,6 +977,8 @@ def run_streamlit_ui():
             max_value=8,
             value=4
         )
+        
+        use_advanced = st.checkbox("Use Advanced Selection", value=True)
         
         run_button = st.button("🚀 Run Backtest", type="primary", use_container_width=True)
     
@@ -980,7 +1010,8 @@ def run_streamlit_ui():
             end_date=end_date,
             capital=capital,
             n_strategies=n_strategies,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            use_advanced_selection=use_advanced
         )
         
         progress_bar.empty()
@@ -992,6 +1023,15 @@ def run_streamlit_ui():
         for style_name, style_data in portfolio_styles.items():
             with st.expander(f"**{style_name}**", expanded=True):
                 st.markdown(f"*{style_data['description']}*")
+                
+                # Show meta info if available (from advanced selection)
+                if 'meta' in style_data:
+                    meta = style_data['meta']
+                    cols = st.columns(3)
+                    with cols[0]:
+                        st.metric("Diversification Ratio", f"{meta.get('diversification_ratio', 1.0):.2f}")
+                    with cols[1]:
+                        st.metric("Expected Portfolio Sharpe", f"{meta.get('expected_portfolio_sharpe', 0):.2f}")
                 
                 for mix_name, mix_data in style_data['mixes'].items():
                     st.subheader(mix_name)

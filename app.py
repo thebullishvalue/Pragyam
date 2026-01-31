@@ -83,6 +83,17 @@ try:
 except ImportError:
     DYNAMIC_SELECTION_AVAILABLE = False
     logging.warning("backtest_engine.py not found. Using static strategy selection.")
+# --- Import Advanced Strategy Selector (v3.0) ---
+try:
+    from advanced_strategy_selector import (
+        AdvancedStrategySelector,
+        EnhancedDynamicPortfolioStylesGenerator,
+        MarketRegime
+    )
+    ADVANCED_SELECTION_AVAILABLE = True
+except ImportError:
+    ADVANCED_SELECTION_AVAILABLE = False
+    logging.warning("advanced_strategy_selector.py not found. Using legacy selection.")
 
 
 # --- System Configuration ---
@@ -90,7 +101,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "v2.0.0"  # Dynamic Strategy Selection
+VERSION = "v3.0.0"  # Dynamic Strategy Selection
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
@@ -1293,10 +1304,189 @@ def _run_dynamic_strategy_selection(
     metric_label = "Calmar" if is_sip else "Sortino"
     
     _dss_logger.info("=" * 70)
-    _dss_logger.info("DYNAMIC STRATEGY SELECTION")
+    _dss_logger.info("DYNAMIC STRATEGY SELECTION v3.0")
     _dss_logger.info("=" * 70)
     _dss_logger.info(f"Investment Style: {selected_style}")
     _dss_logger.info(f"Selection Metric: {metric_label} Ratio")
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # ADVANCED SELECTION (v3.0) - Multi-Criteria Optimization
+    # ─────────────────────────────────────────────────────────────────────
+    
+    if ADVANCED_SELECTION_AVAILABLE and historical_data and len(historical_data) >= 20:
+        try:
+            _dss_logger.info("Using ADVANCED Multi-Criteria Selection (TOPSIS + Diversification)")
+            
+            if status_text:
+                status_text.text("Running advanced multi-criteria analysis...")
+            
+            # Prepare backtest results in expected format
+            capital = 10_000_000
+            advanced_results = {}
+            
+            # Collect all symbols and build price matrix
+            all_symbols = set()
+            for _, df in historical_data:
+                all_symbols.update(df['symbol'].tolist())
+            all_symbols = sorted(all_symbols)
+            
+            price_matrix = {}
+            for symbol in all_symbols:
+                prices = []
+                last_valid = np.nan
+                for _, df in historical_data:
+                    sym_df = df[df['symbol'] == symbol]
+                    if not sym_df.empty and 'price' in sym_df.columns:
+                        price = sym_df['price'].iloc[0]
+                        if pd.notna(price) and price > 0:
+                            last_valid = price
+                    prices.append(last_valid)
+                price_matrix[symbol] = prices
+            
+            n_days = len(historical_data)
+            dates = [d for d, _ in historical_data]
+            
+            # Backtest each strategy
+            for idx, (name, strategy) in enumerate(all_strategies.items()):
+                if progress_bar:
+                    pct = 0.1 + (idx / len(all_strategies)) * 0.5
+                    progress_bar.progress(pct, text=f"Backtesting: {name}")
+                
+                try:
+                    first_df = historical_data[0][1].copy()
+                    port_df = strategy.generate_portfolio(first_df, capital)
+                    
+                    if port_df is None or port_df.empty or 'units' not in port_df.columns:
+                        continue
+                    
+                    holdings = {}
+                    for _, row in port_df.iterrows():
+                        sym = row['symbol']
+                        units = row.get('units', 0)
+                        if units > 0 and sym in price_matrix:
+                            first_price = price_matrix[sym][0]
+                            if pd.notna(first_price) and first_price > 0:
+                                holdings[sym] = units
+                    
+                    if len(holdings) == 0:
+                        continue
+                    
+                    initial_investment = sum(
+                        units * price_matrix[sym][0]
+                        for sym, units in holdings.items()
+                    )
+                    cash = capital - initial_investment
+                    
+                    daily_values = []
+                    for day_idx in range(n_days):
+                        port_value = sum(
+                            units * price_matrix[sym][day_idx]
+                            for sym, units in holdings.items()
+                            if pd.notna(price_matrix[sym][day_idx])
+                        )
+                        daily_values.append({
+                            'date': dates[day_idx],
+                            'value': port_value + cash,
+                            'investment': capital
+                        })
+                    
+                    if len(daily_values) >= 20:
+                        advanced_results[name] = {
+                            'daily_data': pd.DataFrame(daily_values),
+                            'metrics': {}
+                        }
+                        
+                except Exception as e:
+                    _dss_logger.debug(f"Strategy {name} failed: {e}")
+                    continue
+            
+            if len(advanced_results) >= 4:
+                # Run advanced selection
+                if progress_bar:
+                    progress_bar.progress(0.7, text="Running multi-criteria optimization...")
+                
+                selector = AdvancedStrategySelector(
+                    risk_free_rate=0.0,
+                    bootstrap_samples=200,
+                    min_observations=20,
+                    diversification_weight=0.3
+                )
+                
+                mode = 'sip' if is_sip else 'swing'
+                
+                # Extract market returns for regime detection
+                market_returns = None
+                if advanced_results:
+                    all_returns = []
+                    for data in advanced_results.values():
+                        daily_df = data.get('daily_data')
+                        if daily_df is not None and not daily_df.empty:
+                            values = daily_df['value'].values
+                            rets = pd.Series(values).pct_change().dropna().values
+                            if len(rets) > 0:
+                                all_returns.append(rets)
+                    if all_returns:
+                        min_len = min(len(r) for r in all_returns)
+                        market_returns = np.mean([r[-min_len:] for r in all_returns], axis=0)
+                
+                result = selector.select_strategies(
+                    advanced_results,
+                    market_returns=market_returns,
+                    mode=mode,
+                    n_strategies=4,
+                    regime_aware=True
+                )
+                
+                if result.selected_strategies and len(result.selected_strategies) >= 4:
+                    if progress_bar:
+                        progress_bar.progress(0.95, text="Selection complete")
+                    
+                    # Log advanced selection results
+                    _dss_logger.info("-" * 70)
+                    _dss_logger.info("ADVANCED SELECTION RESULTS")
+                    _dss_logger.info("-" * 70)
+                    _dss_logger.info(f"Diversification Ratio: {result.diversification_benefit:.2f}")
+                    _dss_logger.info(f"Expected Portfolio Sharpe: {result.expected_portfolio_sharpe:.2f}")
+                    
+                    for name in result.selected_strategies:
+                        score = result.selection_scores.get(name, 0)
+                        ci = result.confidence_intervals.get(name, (0, 0))
+                        _dss_logger.info(f"  >>> {name}: MCO={score:.3f}, CI=[{ci[0]:.2f}, {ci[1]:.2f}]")
+                    
+                    _dss_logger.info("=" * 70)
+                    
+                    # Build compatible results dict
+                    compat_results = {}
+                    for name, data in advanced_results.items():
+                        if name in result.selection_scores:
+                            breakdown = result.meta_score_breakdown.get(name, {})
+                            compat_results[name] = {
+                                'status': 'ok',
+                                'metrics': {
+                                    'total_return': breakdown.get('cagr', 0),
+                                    'sharpe': breakdown.get('sharpe_ratio', 0),
+                                    'sortino': breakdown.get('sortino_ratio', 0),
+                                    'calmar': breakdown.get('calmar_ratio', 0),
+                                    'max_dd': breakdown.get('max_drawdown', 0),
+                                },
+                                'score': result.selection_scores.get(name, 0),
+                                'mco_score': result.selection_scores.get(name, 0),
+                                'diversification_ratio': result.diversification_benefit,
+                                'expected_portfolio_sharpe': result.expected_portfolio_sharpe
+                            }
+                    
+                    return result.selected_strategies, compat_results
+                    
+        except Exception as e:
+            _dss_logger.warning(f"Advanced selection failed: {e}, falling back to legacy")
+            import traceback
+            _dss_logger.debug(traceback.format_exc())
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # LEGACY SELECTION (Fallback)
+    # ─────────────────────────────────────────────────────────────────────
+    
+    _dss_logger.info("Using LEGACY single-metric selection")
     
     # Validation
     if not DYNAMIC_SELECTION_AVAILABLE:

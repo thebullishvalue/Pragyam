@@ -1,230 +1,257 @@
-# PRAGYAM v2.0 - Dynamic Strategy Selection Integration
+# PRAGYAM (प्रज्ञम) v3.0 - Advanced Portfolio Intelligence
 
-## Overview
+<p align="center">
+  <strong>Walk-forward portfolio curation with advanced multi-criteria strategy selection</strong>
+</p>
 
-This update transforms Pragyam from using hardcoded strategy dictionaries to **dynamically selecting strategies based on backtest performance**.
+<p align="center">
+  <em>A Hemrek Capital Product</em>
+</p>
 
-### Key Changes
+---
 
-| Mode | Selection Criteria | Rationale |
-|------|-------------------|-----------|
-| **SIP Investment** | Top 4 by **Calmar Ratio** | Best drawdown recovery for long-term wealth accumulation |
-| **Swing Trading** | Top 4 by **Sortino Ratio** | Best risk-adjusted returns for short-term holds |
+## 🚀 What's New in v3.0
 
-## Architecture
+### Advanced Multi-Criteria Strategy Selection
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         PRAGYAM v2.0                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────┐    ┌──────────────────┐    ┌───────────────┐  │
-│  │  backdata   │───▶│ backtest_engine  │───▶│  Dynamic      │  │
-│  │  (data API) │    │ (unified engine) │    │  PORTFOLIO    │  │
-│  └─────────────┘    └──────────────────┘    │  _STYLES      │  │
-│         │                    │              └───────────────┘  │
-│         │                    │                      │          │
-│         ▼                    ▼                      ▼          │
-│  ┌─────────────┐    ┌──────────────────┐    ┌───────────────┐  │
-│  │ DataCache   │    │   95 Strategies  │    │   Portfolio   │  │
-│  │  Manager    │    │  (strategies.py) │    │   Curation    │  │
-│  └─────────────┘    └──────────────────┘    └───────────────┘  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+The v3.0 release introduces a mathematically rigorous strategy selection framework that goes far beyond simple single-metric ranking:
 
-## Files
+| Feature | v2.0 (Legacy) | v3.0 (Advanced) |
+|---------|---------------|-----------------|
+| Selection Criteria | Single metric (Calmar/Sortino) | 12+ criteria with TOPSIS optimization |
+| Regime Awareness | None | HMM-based market regime detection |
+| Diversification | None | Maximum diversification + risk parity |
+| Statistical Rigor | None | Bootstrap CI + significance testing |
+| Tail Risk | Ignored | CVaR, Expected Shortfall analysis |
+| Noise Handling | None | Bayesian shrinkage estimation |
 
-### New Files
+### Key Components
 
-1. **`backtest_engine.py`** - Unified backtesting engine
-   - `UnifiedBacktestEngine` - Core backtesting class
-   - `DynamicPortfolioStylesGenerator` - Generates PORTFOLIO_STYLES
-   - `DataCacheManager` - Shared data caching
-   - `PerformanceMetrics` - Institutional-grade metrics calculator
+1. **Multi-Criteria Optimization (TOPSIS)** - Combines 12+ metrics using Technique for Order Preference by Similarity to Ideal Solution
 
-2. **`app_updated.py`** - Updated main application
-   - Integrates dynamic strategy selection
-   - Toggle between dynamic/static modes
-   - Strategy leaderboard display
+2. **Market Regime Detection** - Identifies Bull, Bear, High/Low Volatility, Trending, Mean-Reverting, Crisis, and Recovery regimes
 
-### Modified Files
+3. **Maximum Diversification Selection** - Selects strategies that maximize portfolio diversification benefit
 
-- `backdata.py` - No changes needed (already exports required functions)
-- `strategies.py` - No changes needed (all 95 strategies loaded automatically)
+4. **Risk Parity Allocation** - Equal risk contribution portfolio construction
 
-## Integration Flow
+5. **Bootstrap Confidence Intervals** - 95% CI for Sharpe ratio estimates
+
+6. **Bayesian Shrinkage** - Reduces noise in short backtest periods
+
+---
+
+## 📁 Repository Structure
 
 ```
-1. User clicks "Run Analysis"
-         │
-         ▼
-2. If Dynamic Mode enabled:
-   ┌─────────────────────────────────┐
-   │ Run Backtest Engine             │
-   │   • Fetch 365 days of data      │
-   │   • Load all 95 strategies      │
-   │   • Run SIP backtest            │
-   │   • Run Swing backtest          │
-   │   • Calculate metrics           │
-   │   • Select top 4 by mode        │
-   └─────────────────────────────────┘
-         │
-         ▼
-3. Generate Dynamic PORTFOLIO_STYLES
-         │
-         ▼
-4. Continue with normal portfolio curation
+Pragyam-main/
+├── app.py                          # Main Streamlit application (v3.0)
+├── backtest_engine.py              # Unified backtest engine with advanced selection
+├── advanced_strategy_selector.py   # Advanced multi-criteria selection module
+├── backtest_integration_patch.py   # Integration utilities
+├── strategies.py                   # 80+ trading strategies
+├── backdata.py                     # Historical data generation
+├── pragati.py                      # Core portfolio logic
+├── symbols.txt                     # Stock universe
+├── requirements.txt                # Python dependencies
+├── ADVANCED_SELECTION_DOCUMENTATION.md  # Mathematical documentation
+└── README.md                       # This file
 ```
 
-## Usage
+---
 
-### Running the Application
+## 🔧 Installation
 
 ```bash
-# Navigate to project directory
+# Clone or download the repository
 cd Pragyam-main
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Run the application
-streamlit run app_updated.py
+streamlit run app.py
 ```
-
-### Dynamic vs Static Mode
-
-The sidebar includes a toggle to switch between:
-
-- **Dynamic Mode**: Strategies selected based on live backtest results
-- **Static Mode**: Uses predefined strategy selections (fallback)
-
-### Strategy Selection Criteria
-
-**SIP Investment Mode (Calmar Ratio)**:
-- Calmar = Annual Return / Max Drawdown
-- Prioritizes strategies that recover quickly from drawdowns
-- Better for long-term systematic investing
-
-**Swing Trading Mode (Sortino Ratio)**:
-- Sortino = Excess Return / Downside Deviation
-- Prioritizes strategies with good upside, limited downside
-- Better for short-term momentum capture
-
-## Performance Optimizations
-
-1. **Shared Data Cache**
-   - `DataCacheManager` singleton prevents duplicate API calls
-   - 30-minute TTL for cached data
-   - Automatic key generation based on symbols and dates
-
-2. **Strategy Caching**
-   - Strategies loaded once per session
-   - Reused across multiple backtest runs
-
-3. **Parallel Processing Ready**
-   - Engine architecture supports ThreadPoolExecutor
-   - Can be enabled for larger universes
-
-## API Reference
-
-### UnifiedBacktestEngine
-
-```python
-engine = UnifiedBacktestEngine(capital=10_000_000)
-
-# Load data
-engine.load_data(symbols, start_date, end_date)
-
-# Load strategies
-engine.load_strategies()
-
-# Run backtest
-results = engine.run_backtest(mode='sip')
-
-# Select top strategies
-top_strategies = engine.select_top_strategies(results, mode='sip', n_strategies=4)
-```
-
-### DynamicPortfolioStylesGenerator
-
-```python
-generator = DynamicPortfolioStylesGenerator(engine)
-
-# Run comprehensive backtest
-sip_results, swing_results = generator.run_comprehensive_backtest()
-
-# Generate PORTFOLIO_STYLES
-portfolio_styles = generator.generate_portfolio_styles(n_strategies=4)
-
-# Get leaderboard
-leaderboard = generator.get_strategy_leaderboard('sip')
-```
-
-### Quick Integration
-
-```python
-from backtest_engine import get_dynamic_portfolio_styles
-
-# One-liner to get dynamic styles
-portfolio_styles = get_dynamic_portfolio_styles(
-    symbols=SYMBOLS_UNIVERSE,
-    start_date=start_date,
-    end_date=end_date,
-    n_strategies=4
-)
-```
-
-## Metrics Calculated
-
-| Metric | Description |
-|--------|-------------|
-| Total Return | Overall return from start to end |
-| CAGR | Compound Annual Growth Rate |
-| Volatility | Annualized standard deviation |
-| Sharpe Ratio | Risk-adjusted return (vs risk-free) |
-| Sortino Ratio | Return vs downside deviation |
-| Max Drawdown | Largest peak-to-trough decline |
-| Calmar Ratio | Annual return / Max drawdown |
-| Win Rate | Percentage of positive days |
-
-## Error Handling
-
-- Graceful fallback to static mode if backtest fails
-- Automatic retry with cached data
-- Detailed logging for debugging
-
-## File Structure
-
-```
-Pragyam-main/
-├── app_updated.py          # Updated main app with dynamic selection
-├── backtest_engine.py      # New unified backtest engine
-├── backdata.py             # Data fetching module (unchanged)
-├── strategies.py           # 95 trading strategies (unchanged)
-├── pragati.py              # Original app (preserved)
-├── symbols.txt             # Stock universe
-├── requirements.txt        # Dependencies
-└── README.md               # This file
-```
-
-## Migration Notes
-
-To migrate from the original `app.py`:
-
-1. Copy `backtest_engine.py` to your project
-2. Replace `app.py` with `app_updated.py`
-3. Ensure `strategies.py` and `backdata.py` are in the same directory
-4. Run: `streamlit run app_updated.py`
-
-The original files (`app.py`, `pragati.py`) are preserved and can be used as fallback.
-
-## Support
-
-For issues or questions, check:
-- System logs: `system.log`
-- Enable debug logging in `backtest_engine.py`
 
 ---
 
-*Hemrek Capital - Institutional Portfolio Intelligence*
+## 📊 How It Works
+
+### Strategy Selection Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Backtest All Strategies                    │
+│               (80+ strategies × historical data)             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Calculate Comprehensive Metrics                 │
+│   • Risk-Adjusted (Sharpe, Sortino, Calmar, Omega)          │
+│   • Tail Risk (VaR, CVaR, Expected Shortfall)               │
+│   • Distribution (Skewness, Kurtosis, Hurst)                │
+│   • Consistency (Win Rate, Profit Factor)                   │
+│   • Stability (Rolling Sharpe Std, Return CV)               │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Apply Bayesian Shrinkage                      │
+│            (Reduce noise in short samples)                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Detect Market Regime                          │
+│     (Bull/Bear/HighVol/LowVol/Trending/MeanReverting)       │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Multi-Criteria Optimization (TOPSIS)              │
+│         Mode-specific weights for SIP vs Swing              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│            Apply Diversification Constraints                 │
+│      (Correlation-aware selection, Risk Parity)             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Final Selection (Top 4 Strategies)              │
+│         with Confidence Intervals & Regime Allocations      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Mode-Specific Selection
+
+**SIP Mode** (Long-term wealth accumulation):
+- Prioritizes Calmar Ratio (+50% weight)
+- Higher weight on drawdown protection
+- Focus on CVaR and stability metrics
+
+**Swing Mode** (Short-term trading):
+- Prioritizes Sortino Ratio (+50% weight)
+- Higher weight on Omega Ratio
+- Focus on win rate and profit factor
+
+---
+
+## 📈 Usage
+
+### Basic Usage
+
+1. Run the Streamlit app: `streamlit run app.py`
+2. Select investment style (SIP or Swing Trading)
+3. Choose market regime expectation
+4. Generate portfolio
+
+### Programmatic Usage
+
+```python
+from advanced_strategy_selector import AdvancedStrategySelector
+
+# Initialize selector
+selector = AdvancedStrategySelector(
+    risk_free_rate=0.0,
+    bootstrap_samples=500,
+    diversification_weight=0.3
+)
+
+# Run selection
+result = selector.select_strategies(
+    backtest_results=results,
+    market_returns=market_returns,
+    mode='sip',
+    n_strategies=4,
+    regime_aware=True
+)
+
+# Access results
+print(f"Selected: {result.selected_strategies}")
+print(f"Diversification Ratio: {result.diversification_benefit:.2f}")
+print(f"Expected Portfolio Sharpe: {result.expected_portfolio_sharpe:.2f}")
+
+# View confidence intervals
+for strategy, (low, high) in result.confidence_intervals.items():
+    print(f"{strategy}: Sharpe 95% CI [{low:.2f}, {high:.2f}]")
+```
+
+---
+
+## 🔬 Mathematical Details
+
+### TOPSIS (Multi-Criteria Optimization)
+
+The TOPSIS method identifies strategies closest to the ideal solution:
+
+1. **Normalize** criteria matrix (min-max scaling)
+2. **Weight** by mode-specific importance
+3. Calculate distance to **ideal** (best values) and **anti-ideal** (worst values)
+4. **Score** = D⁻ / (D⁺ + D⁻)
+
+### Hurst Exponent
+
+Characterizes time series behavior:
+- H > 0.5: Trending (persistent)
+- H = 0.5: Random walk
+- H < 0.5: Mean-reverting
+
+Calculated via R/S (Rescaled Range) analysis.
+
+### Bayesian Shrinkage
+
+Reduces noise in short samples:
+
+```
+θ_shrunk = λ × prior + (1-λ) × observed
+where λ = n_prior / (n_prior + n_effective)
+```
+
+### Risk Parity
+
+Equal risk contribution optimization:
+
+```
+minimize Σ(RC_i - σ_p/n)²
+subject to: Σw_i = 1, w_i ≥ 0
+```
+
+---
+
+## 📋 Strategies Included
+
+The system includes 80+ trading strategies across categories:
+
+- **Momentum**: MomentumMasters, VelocityVortex, AlphaSurge, etc.
+- **Volatility**: VolatilitySurfer, AdaptiveVolBreakout, etc.
+- **Statistical**: KalmanFilterMomentum, BayesianMomentumUpdater, etc.
+- **ML-Inspired**: NeuralNetworkInspired, GraphNeuralInspired, etc.
+- **Regime-Based**: RegimeSwitchingStrategy, HiddenMarkovModel, etc.
+
+---
+
+## ⚠️ Disclaimer
+
+This software is for educational and research purposes only. Past performance does not guarantee future results. Always consult a qualified financial advisor before making investment decisions.
+
+---
+
+## 📄 License
+
+Proprietary - Hemrek Capital
+
+---
+
+## 🤝 Support
+
+For questions or issues, please contact Hemrek Capital.
+
+---
+
+<p align="center">
+  <strong>Built with ❤️ by Hemrek Capital</strong>
+</p>
