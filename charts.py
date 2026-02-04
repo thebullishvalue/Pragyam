@@ -122,8 +122,7 @@ def get_axis_config(
         'zerolinecolor': COLORS['muted'],
         'zerolinewidth': 1,
         'linecolor': COLORS['border'],
-        'tickfont': dict(color=COLORS['muted'], size=11),
-        'titlefont': dict(color=COLORS['text'], size=12)
+        'tickfont': dict(color=COLORS['muted'], size=11)
     }
     
     if title:
@@ -227,8 +226,7 @@ def create_equity_drawdown_chart(
         gridcolor=COLORS['border'],
         gridwidth=1,
         linecolor=COLORS['border'],
-        tickfont=dict(color=COLORS['muted'], size=11),
-        titlefont=dict(color=COLORS['text'], size=12)
+        tickfont=dict(color=COLORS['muted'], size=11)
     )
     
     fig.update_yaxes(title_text="Portfolio Value (₹)", row=1, col=1, **axis_style)
@@ -312,8 +310,7 @@ def create_rolling_metrics_chart(
         gridcolor=COLORS['border'],
         gridwidth=1,
         linecolor=COLORS['border'],
-        tickfont=dict(color=COLORS['muted'], size=11),
-        titlefont=dict(color=COLORS['text'], size=12)
+        tickfont=dict(color=COLORS['muted'], size=11)
     )
     fig.update_xaxes(title_text="Date", **axis_style)
     fig.update_yaxes(title_text="Ratio (Annualized)", zeroline=True, zerolinecolor=COLORS['muted'], **axis_style)
@@ -563,8 +560,7 @@ def create_risk_return_scatter(
         gridcolor=COLORS['border'],
         gridwidth=1,
         linecolor=COLORS['border'],
-        tickfont=dict(color=COLORS['muted'], size=11),
-        titlefont=dict(color=COLORS['text'], size=12)
+        tickfont=dict(color=COLORS['muted'], size=11)
     )
     fig.update_xaxes(title_text="Annualized Volatility (%)", **axis_style)
     fig.update_yaxes(title_text="CAGR (%)", **axis_style)
@@ -712,13 +708,12 @@ def create_weight_evolution_chart(
         gridcolor=COLORS['border'],
         gridwidth=1,
         linecolor=COLORS['border'],
-        tickfont=dict(color=COLORS['muted'], size=11),
-        titlefont=dict(color=COLORS['text'], size=12)
+        tickfont=dict(color=COLORS['muted'], size=11)
     )
     
-    layout['yaxis'] = dict(title="Weight", tickformat='.0%', **axis_style)
     fig.update_layout(**layout)
     fig.update_xaxes(title_text="Date", **axis_style)
+    fig.update_yaxes(title_text="Weight", tickformat='.0%', **axis_style)
     
     return fig
 
