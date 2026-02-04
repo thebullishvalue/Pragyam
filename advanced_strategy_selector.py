@@ -495,22 +495,53 @@ class AdvancedMetricsCalculator:
         metrics: StrategyMetrics,
         returns: np.ndarray
     ):
-        """Calculate statistical significance of performance metrics."""
+        """
+        Calculate statistical significance of performance metrics.
+        
+        Implements Lo (2002) "The Statistics of Sharpe Ratios" adjustment
+        for serial correlation in returns.
+        
+        Standard Error formula (Lo 2002):
+        SE(SR) = sqrt((1 + 2*sum(ρ_k * (1-k/q))) / T)
+        
+        where ρ_k is autocorrelation at lag k, q is truncation lag, T is sample size.
+        """
         n = len(returns)
         if n < 30:
             return
         
-        # T-statistic for Sharpe ratio being different from 0
-        # Using Lo (2002) adjustment for non-iid returns
-        sr = metrics.sharpe_ratio / np.sqrt(self.periods_per_year)  # De-annualize
+        # De-annualized Sharpe for testing
+        daily_sharpe = metrics.sharpe_ratio / np.sqrt(self.periods_per_year)
         
-        # Approximate standard error of Sharpe ratio
-        se_sr = np.sqrt((1 + 0.5 * sr**2) / n)
+        # Lo (2002) adjustment: account for serial correlation
+        # Compute autocorrelations up to lag q = min(10, n/4)
+        q = min(10, n // 4)
         
-        metrics.sharpe_tstat = sr / se_sr if se_sr > 0 else 0
+        autocorr_sum = 0
+        for k in range(1, q + 1):
+            if k < n - 1:
+                rho_k = np.corrcoef(returns[:-k], returns[k:])[0, 1]
+                if np.isfinite(rho_k):
+                    # Bartlett weight: (1 - k/q)
+                    weight = 1 - k / q
+                    autocorr_sum += 2 * rho_k * weight
+        
+        # Adjusted variance multiplier
+        variance_multiplier = 1 + autocorr_sum
+        variance_multiplier = max(variance_multiplier, 0.5)  # Floor to prevent negative variance
+        
+        # Standard error with Lo (2002) adjustment
+        # Base SE: sqrt((1 + SR²/2) / n)
+        base_se = np.sqrt((1 + 0.5 * daily_sharpe**2) / n)
+        adjusted_se = base_se * np.sqrt(variance_multiplier)
+        
+        # T-statistic
+        metrics.sharpe_tstat = daily_sharpe / adjusted_se if adjusted_se > 0 else 0
+        
+        # Two-tailed p-value
         metrics.sharpe_pvalue = 2 * (1 - stats.t.cdf(abs(metrics.sharpe_tstat), df=n-1))
         
-        # Bootstrap confidence intervals
+        # Bootstrap confidence intervals (block bootstrap for serial correlation)
         bootstrap_sharpes = self._bootstrap_sharpe(returns)
         if len(bootstrap_sharpes) > 0:
             alpha = 1 - self.confidence_level

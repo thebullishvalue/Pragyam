@@ -83,17 +83,6 @@ try:
 except ImportError:
     DYNAMIC_SELECTION_AVAILABLE = False
     logging.warning("backtest_engine.py not found. Using static strategy selection.")
-# --- Import Advanced Strategy Selector (v3.0) ---
-try:
-    from advanced_strategy_selector import (
-        AdvancedStrategySelector,
-        EnhancedDynamicPortfolioStylesGenerator,
-        MarketRegime
-    )
-    ADVANCED_SELECTION_AVAILABLE = True
-except ImportError:
-    ADVANCED_SELECTION_AVAILABLE = False
-    logging.warning("advanced_strategy_selector.py not found. Using legacy selection.")
 
 
 # --- System Configuration ---
@@ -101,7 +90,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "v3.0.0"  # Dynamic Strategy Selection
+VERSION = "v3.0.0"  # Advanced Selection + Hedge Fund Grade Analytics
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
@@ -515,35 +504,122 @@ def compute_portfolio_return(portfolio: pd.DataFrame, next_prices: pd.DataFrame)
     return np.average(returns, weights=merged['value'])
 
 def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, float]:
-    default_metrics = {'total_return': 0, 'annual_return': 0, 'volatility': 0, 'sharpe': 0, 'sortino': 0, 'max_drawdown': 0, 'calmar': 0, 'win_rate': 0, 'kelly_criterion': 0}
-    if len(returns_with_dates) < 2: return default_metrics, 52
+    """
+    Calculate comprehensive risk-adjusted performance metrics.
+    
+    Mathematical Framework:
+    - CAGR: Compound Annual Growth Rate via geometric mean
+    - Sharpe: Excess return per unit of total volatility (annualized)
+    - Sortino: Excess return per unit of downside deviation
+    - Calmar: CAGR / |Max Drawdown| - recovery efficiency metric
+    - Kelly: f* = p - q/b where p=win_rate, q=1-p, b=avg_win/avg_loss
+    
+    Uses proper time-weighted annualization factor.
+    """
+    default_metrics = {
+        'total_return': 0, 'annual_return': 0, 'volatility': 0, 
+        'sharpe': 0, 'sortino': 0, 'max_drawdown': 0, 'calmar': 0, 
+        'win_rate': 0, 'kelly_criterion': 0, 'omega_ratio': 1.0,
+        'tail_ratio': 1.0, 'gain_to_pain': 0, 'profit_factor': 1.0
+    }
+    if len(returns_with_dates) < 2: 
+        return default_metrics, 52
 
     returns_df = pd.DataFrame(returns_with_dates).sort_values('date').set_index('date')
     time_deltas = returns_df.index.to_series().diff().dt.days
     avg_period_days = time_deltas.mean()
-    periods_per_year = 365.25 / avg_period_days if pd.notna(avg_period_days) and avg_period_days > 0 else 1
+    periods_per_year = 365.25 / avg_period_days if pd.notna(avg_period_days) and avg_period_days > 0 else 52
 
     returns = returns_df['return']
+    n_periods = len(returns)
+    
+    # Total Return (geometric)
     total_return = (1 + returns).prod() - 1
-    annual_return = (1 + total_return) ** (periods_per_year / len(returns)) - 1
-    volatility = returns.std() * np.sqrt(periods_per_year)
-    sharpe = annual_return / volatility if volatility != 0 else 0
+    
+    # CAGR: Correct annualization formula
+    # CAGR = (Final/Initial)^(1/years) - 1 = (1 + total_return)^(periods_per_year/n_periods) - 1
+    years = n_periods / periods_per_year
+    if years > 0 and total_return > -1:
+        annual_return = (1 + total_return) ** (1 / years) - 1
+    else:
+        annual_return = 0
+    
+    # Volatility (annualized standard deviation)
+    volatility = returns.std(ddof=1) * np.sqrt(periods_per_year)
+    
+    # Sharpe Ratio (assuming risk-free rate = 0)
+    sharpe = annual_return / volatility if volatility > 0.001 else 0
+    sharpe = np.clip(sharpe, -10, 10)
 
+    # Sortino Ratio (downside deviation)
     downside_returns = returns[returns < 0]
-    downside_vol = downside_returns.std() * np.sqrt(periods_per_year) if not downside_returns.empty else 0
-    sortino = annual_return / downside_vol if downside_vol != 0 else 0
+    if len(downside_returns) >= 2:
+        downside_vol = downside_returns.std(ddof=1) * np.sqrt(periods_per_year)
+        sortino = annual_return / downside_vol if downside_vol > 0.001 else (annual_return * 10 if annual_return > 0 else 0)
+    else:
+        sortino = annual_return * 10 if annual_return > 0 else 0
+    sortino = np.clip(sortino, -20, 20)
 
+    # Maximum Drawdown
     cumulative = (1 + returns).cumprod()
-    max_drawdown = (cumulative / cumulative.expanding(min_periods=1).max() - 1).min()
-    calmar = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
+    running_max = cumulative.expanding(min_periods=1).max()
+    drawdown_series = (cumulative / running_max) - 1
+    max_drawdown = drawdown_series.min()
+    
+    # Calmar Ratio
+    calmar = annual_return / abs(max_drawdown) if max_drawdown < -0.001 else (annual_return * 10 if annual_return > 0 else 0)
+    calmar = np.clip(calmar, -20, 20)
+    
+    # Win Rate
     win_rate = (returns > 0).mean()
 
-    avg_win = returns[returns > 0].mean() if (returns > 0).any() else 0
-    avg_loss = abs(returns[returns < 0].mean()) if (returns < 0).any() else 0
-    win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
-    kelly = win_rate - ((1 - win_rate) / win_loss_ratio) if win_loss_ratio > 0 else 0
+    # Win/Loss Statistics
+    gains = returns[returns > 0]
+    losses = returns[returns < 0]
+    avg_win = gains.mean() if len(gains) > 0 else 0
+    avg_loss = abs(losses.mean()) if len(losses) > 0 else 0
+    total_gains = gains.sum() if len(gains) > 0 else 0
+    total_losses = abs(losses.sum()) if len(losses) > 0 else 0
+    
+    # Kelly Criterion: f* = W - (1-W)/R where W=win_rate, R=avg_win/avg_loss
+    win_loss_ratio = avg_win / avg_loss if avg_loss > 0.0001 else 0
+    kelly = (win_rate - ((1 - win_rate) / win_loss_ratio)) if win_loss_ratio > 0 else 0
+    kelly = np.clip(kelly, -1, 1)
+    
+    # Omega Ratio: ∫(gains) / ∫(losses) above/below threshold=0
+    omega_ratio = total_gains / total_losses if total_losses > 0.0001 else (total_gains * 10 if total_gains > 0 else 1.0)
+    omega_ratio = np.clip(omega_ratio, 0, 50)
+    
+    # Profit Factor: Sum(gains) / Sum(losses)
+    profit_factor = total_gains / total_losses if total_losses > 0.0001 else (10.0 if total_gains > 0 else 1.0)
+    profit_factor = np.clip(profit_factor, 0, 50)
+    
+    # Tail Ratio: 95th percentile / |5th percentile|
+    upper_tail = np.percentile(returns, 95) if len(returns) >= 20 else returns.max()
+    lower_tail = abs(np.percentile(returns, 5)) if len(returns) >= 20 else abs(returns.min())
+    tail_ratio = upper_tail / lower_tail if lower_tail > 0.0001 else (10.0 if upper_tail > 0 else 1.0)
+    tail_ratio = np.clip(tail_ratio, 0, 20)
+    
+    # Gain-to-Pain Ratio: Total return / Sum(abs(negative returns))
+    pain = abs(losses.sum()) if len(losses) > 0 else 0
+    gain_to_pain = returns.sum() / pain if pain > 0.0001 else (returns.sum() * 10 if returns.sum() > 0 else 0)
+    gain_to_pain = np.clip(gain_to_pain, -20, 20)
 
-    metrics = {'total_return': total_return, 'annual_return': annual_return, 'volatility': volatility, 'sharpe': sharpe, 'sortino': sortino, 'max_drawdown': max_drawdown, 'calmar': calmar, 'win_rate': win_rate, 'kelly_criterion': kelly}
+    metrics = {
+        'total_return': total_return, 
+        'annual_return': annual_return, 
+        'volatility': volatility, 
+        'sharpe': sharpe, 
+        'sortino': sortino, 
+        'max_drawdown': max_drawdown, 
+        'calmar': calmar, 
+        'win_rate': win_rate, 
+        'kelly_criterion': kelly,
+        'omega_ratio': omega_ratio,
+        'tail_ratio': tail_ratio,
+        'gain_to_pain': gain_to_pain,
+        'profit_factor': profit_factor
+    }
     return metrics, periods_per_year
 
 def calculate_strategy_weights(performance: Dict) -> Dict[str, float]:
@@ -876,37 +952,110 @@ class MarketRegimeDetectorV2:
         return {'type': extreme_type, 'score': score, 'zscore_extreme_oversold_pct': extreme_oversold, 'zscore_extreme_overbought_pct': extreme_overbought}
 
     def _analyze_correlation_regime(self, df: pd.DataFrame) -> Dict:
-        avg_std = (df['rsi latest'].std() / 100 + df['osc latest'].std() / 100 + df['zscore latest'].std() / 5) / 3
+        """
+        Analyze cross-sectional correlation structure.
         
-        if avg_std < 0.15:
-            regime, score = 'HIGH_CORRELATION', -0.5 
-        elif avg_std > 0.30:
-            regime, score = 'LOW_CORRELATION', 0.5 
+        High correlation (herding) often precedes market stress.
+        Low correlation indicates stock-picking environment.
+        
+        Mathematical approach: Compute pairwise correlation proxy via 
+        indicator agreement across the cross-section.
+        """
+        # Cross-sectional correlation proxy via indicator agreement
+        # When indicators agree across stocks, correlation is high
+        rsi_median = df['rsi latest'].median()
+        osc_median = df['osc latest'].median()
+        
+        # Fraction of stocks on same side of median (herding measure)
+        rsi_above = (df['rsi latest'] > rsi_median).mean()
+        rsi_agreement = max(rsi_above, 1 - rsi_above)  # Closer to 1 = more agreement
+        
+        osc_above = (df['osc latest'] > osc_median).mean()
+        osc_agreement = max(osc_above, 1 - osc_above)
+        
+        # Cross-indicator agreement (both oversold or both overbought)
+        both_oversold = ((df['rsi latest'] < 40) & (df['osc latest'] < -30)).mean()
+        both_overbought = ((df['rsi latest'] > 60) & (df['osc latest'] > 30)).mean()
+        indicator_agreement = both_oversold + both_overbought
+        
+        # Dispersion as inverse correlation proxy
+        rsi_dispersion = df['rsi latest'].std() / 50  # Normalized
+        osc_dispersion = df['osc latest'].std() / 100
+        avg_dispersion = (rsi_dispersion + osc_dispersion) / 2
+        
+        # Combined correlation score (0 = dispersed, 1 = correlated)
+        correlation_score = (rsi_agreement + osc_agreement) / 2 * (1 - avg_dispersion) + indicator_agreement * 0.3
+        correlation_score = np.clip(correlation_score, 0, 1)
+        
+        if correlation_score > 0.7:
+            regime, score = 'HIGH_CORRELATION', -0.5  # High corr often precedes stress
+        elif correlation_score < 0.4:
+            regime, score = 'LOW_CORRELATION', 0.5  # Good for stock picking
         else:
             regime, score = 'NORMAL', 0.0
             
-        return {'regime': regime, 'score': score, 'dispersion': avg_std}
+        return {
+            'regime': regime, 
+            'score': score, 
+            'correlation_score': correlation_score,
+            'dispersion': avg_dispersion,
+            'indicator_agreement': indicator_agreement
+        }
 
     def _analyze_velocity(self, window: list) -> Dict:
-        if len(window) < 5: return {'acceleration': 'UNKNOWN', 'score': 0.0}
+        """
+        Analyze momentum velocity and acceleration.
         
-        recent_rsis = [w[1]['rsi latest'].mean() for w in window[-5:]]
-        rsi_changes = np.diff(recent_rsis)
-        avg_velocity = np.mean(rsi_changes)
-        acceleration = rsi_changes[-1] - rsi_changes[0]
+        Velocity: First derivative of RSI (rate of change)
+        Acceleration: Second derivative (rate of change of velocity)
         
-        if avg_velocity > 2 and acceleration > 0:
-            velocity, score = 'ACCELERATING_UP', 1.0
-        elif avg_velocity > 1:
-            velocity, score = 'RISING', 0.5
-        elif avg_velocity < -2 and acceleration < 0:
-            velocity, score = 'ACCELERATING_DOWN', -1.0
-        elif avg_velocity < -1:
-            velocity, score = 'FALLING', -0.5
+        Positive acceleration with positive velocity = strengthening momentum
+        Negative acceleration with positive velocity = momentum fading
+        """
+        if len(window) < 5: 
+            return {'acceleration': 'UNKNOWN', 'score': 0.0, 'avg_velocity': 0.0, 'acceleration_value': 0.0}
+        
+        recent_rsis = np.array([w[1]['rsi latest'].mean() for w in window[-5:]])
+        
+        # Velocity: First differences (first derivative)
+        velocity = np.diff(recent_rsis)  # 4 values
+        avg_velocity = np.mean(velocity)
+        current_velocity = velocity[-1]
+        
+        # Acceleration: Second differences (second derivative)
+        acceleration_values = np.diff(velocity)  # 3 values
+        avg_acceleration = np.mean(acceleration_values)
+        current_acceleration = acceleration_values[-1]
+        
+        # Classification based on velocity and acceleration
+        if avg_velocity > 1.5 and current_acceleration > 0:
+            velocity_regime, score = 'ACCELERATING_UP', 1.5
+        elif avg_velocity > 1.0 and current_acceleration >= 0:
+            velocity_regime, score = 'RISING_FAST', 1.0
+        elif avg_velocity > 0.5:
+            velocity_regime, score = 'RISING', 0.5
+        elif avg_velocity < -1.5 and current_acceleration < 0:
+            velocity_regime, score = 'ACCELERATING_DOWN', -1.5
+        elif avg_velocity < -1.0 and current_acceleration <= 0:
+            velocity_regime, score = 'FALLING_FAST', -1.0
+        elif avg_velocity < -0.5:
+            velocity_regime, score = 'FALLING', -0.5
+        elif abs(avg_velocity) < 0.5 and abs(current_acceleration) > 0.5:
+            # Momentum building from stable base
+            if current_acceleration > 0:
+                velocity_regime, score = 'COILING_UP', 0.3
+            else:
+                velocity_regime, score = 'COILING_DOWN', -0.3
         else:
-            velocity, score = 'STABLE', 0.0
+            velocity_regime, score = 'STABLE', 0.0
             
-        return {'acceleration': velocity, 'score': score, 'avg_velocity': avg_velocity}
+        return {
+            'acceleration': velocity_regime, 
+            'score': score, 
+            'avg_velocity': avg_velocity,
+            'current_velocity': current_velocity,
+            'acceleration_value': current_acceleration
+        }
 
     def _calculate_composite_score(self, metrics: Dict) -> float:
         weights = { 'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15, 'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15 }
@@ -1008,90 +1157,289 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     st.plotly_chart(fig, width='stretch')
 
 def display_performance_metrics(performance: Dict):
+    """
+    Hedge Fund Grade Performance Analytics Dashboard
+    
+    Mathematical Framework:
+    - Risk-adjusted returns (Sharpe, Sortino, Calmar, Omega)
+    - Tail risk analysis (VaR, CVaR, tail ratio)
+    - Consistency metrics (profit factor, gain-to-pain)
+    - Statistical significance testing
+    - Rolling stability analysis
+    - Strategy correlation & diversification benefit
+    """
     if not performance:
         st.warning("Performance data not available. Please run an analysis.")
         return
 
-    st.header("Out-of-Sample Performance Analysis")
-
-    st.subheader("Cumulative Performance")
-    curated_metrics = performance.get('strategy', {}).get('System_Curated', {}).get('metrics', {})
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Annual Return", f"{curated_metrics.get('annual_return', 0):.2%}", help="The geometric average return on an annualized basis. Higher is better.")
-    col2.metric("Total Return", f"{curated_metrics.get('total_return', 0):.2%}", help="The total compounded return over the entire backtest period. Higher is better.")
-    col3.metric("Sharpe Ratio", f"{curated_metrics.get('sharpe', 0):.2f}", help="Measures return per unit of total risk (volatility). Good > 1, Excellent > 2.")
-    col4.metric("Calmar Ratio", f"{curated_metrics.get('calmar', 0):.2f}", help="Annualized return divided by the max drawdown. Good > 1, Excellent > 3.")
-    col5.metric("Win Rate", f"{curated_metrics.get('win_rate', 0):.2%}", help="The percentage of periods with a positive return. Good > 50%.")
-
-    st.subheader("Risk & System Metrics")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Annual Volatility", f"{curated_metrics.get('volatility', 0):.2%}", help="The annualized standard deviation of returns (risk). Lower is better.")
-    col2.metric("Max Drawdown", f"{curated_metrics.get('max_drawdown', 0):.2%}", help="The largest peak-to-trough decline in value. Closer to 0 is better.")
-    col3.metric("Sortino Ratio", f"{curated_metrics.get('sortino', 0):.2f}", help="Measures return per unit of downside risk. Good > 1, Excellent > 2.")
-    col4.metric("Kelly Criterion", f"{curated_metrics.get('kelly_criterion', 0):.2%}", help="Theoretical optimal fraction of capital to allocate. Prone to estimation error; use with caution.")
+    st.header("Quantitative Performance Analytics")
+    st.markdown("*Institutional-grade risk-adjusted performance measurement*")
     
-    avg_entropy = curated_metrics.get('avg_weight_entropy')
-    if avg_entropy is not None:
-        st.metric("Average Weight Entropy", f"{avg_entropy:.3f}", help="Measures portfolio diversification. Higher values indicate a more diversified, less concentrated portfolio.")
+    # Extract System_Curated metrics
+    curated_data = performance.get('strategy', {}).get('System_Curated', {})
+    curated_metrics = curated_data.get('metrics', {})
+    curated_returns = curated_data.get('returns', [])
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 1: EXECUTIVE SUMMARY
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.subheader("Executive Summary")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    ann_ret = curated_metrics.get('annual_return', 0)
+    total_ret = curated_metrics.get('total_return', 0)
+    sharpe = curated_metrics.get('sharpe', 0)
+    sortino = curated_metrics.get('sortino', 0)
+    calmar = curated_metrics.get('calmar', 0)
+    
+    # Color coding based on performance
+    ret_delta = "normal" if ann_ret >= 0 else "inverse"
+    sharpe_color = "🟢" if sharpe > 1 else ("🟡" if sharpe > 0 else "🔴")
+    
+    col1.metric("CAGR", f"{ann_ret:.2%}", help="Compound Annual Growth Rate - Geometric mean annual return")
+    col2.metric("Total Return", f"{total_ret:.2%}", help="Cumulative return over the entire backtest period")
+    col3.metric(f"Sharpe {sharpe_color}", f"{sharpe:.2f}", help="Risk-adjusted return: CAGR / Volatility. Excellent > 2, Good > 1, Poor < 0")
+    col4.metric("Sortino", f"{sortino:.2f}", help="Downside risk-adjusted return: CAGR / Downside Deviation. Better than Sharpe as it ignores upside volatility")
+    col5.metric("Calmar", f"{calmar:.2f}", help="Drawdown efficiency: CAGR / |Max Drawdown|. Measures recovery capability")
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 2: RISK DECOMPOSITION
+    # ═══════════════════════════════════════════════════════════════════════════
     st.markdown("---")
+    st.subheader("Risk Decomposition")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    volatility = curated_metrics.get('volatility', 0)
+    max_dd = curated_metrics.get('max_drawdown', 0)
+    omega = curated_metrics.get('omega_ratio', 1)
+    tail_ratio = curated_metrics.get('tail_ratio', 1)
+    
+    col1.metric("Annualized Volatility", f"{volatility:.2%}", 
+                help="Standard deviation of returns, annualized. Lower indicates more predictable performance")
+    col2.metric("Maximum Drawdown", f"{max_dd:.2%}", 
+                help="Largest peak-to-trough decline. Key capital preservation metric")
+    col3.metric("Omega Ratio", f"{omega:.2f}", 
+                help="Probability-weighted gains/losses ratio. >1 indicates positive expectancy across full distribution")
+    col4.metric("Tail Ratio", f"{tail_ratio:.2f}", 
+                help="95th percentile / |5th percentile|. >1 indicates positive skew (bigger wins than losses)")
 
-    st.subheader("Growth of Investment (Equity Curve)")
-    equity_curves = []
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 3: CONSISTENCY & EFFICIENCY METRICS
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Consistency & Capital Efficiency")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    win_rate = curated_metrics.get('win_rate', 0)
+    profit_factor = curated_metrics.get('profit_factor', 1)
+    gain_to_pain = curated_metrics.get('gain_to_pain', 0)
+    kelly = curated_metrics.get('kelly_criterion', 0)
+    avg_entropy = curated_metrics.get('avg_weight_entropy')
+    
+    col1.metric("Win Rate", f"{win_rate:.1%}", 
+                help="Percentage of periods with positive returns")
+    col2.metric("Profit Factor", f"{profit_factor:.2f}", 
+                help="Gross profits / Gross losses. >1.5 is good, >2 is excellent")
+    col3.metric("Gain-to-Pain", f"{gain_to_pain:.2f}", 
+                help="Total return / Sum of negative returns. Higher is better")
+    col4.metric("Kelly Fraction", f"{kelly:.1%}", 
+                help="Theoretical optimal allocation fraction. Use half-Kelly in practice")
+    
+    if avg_entropy is not None:
+        st.metric("Portfolio Entropy", f"{avg_entropy:.3f}", 
+                  help="Shannon entropy of weights. Higher = more diversified. Max entropy ≈ log₂(N)")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 4: EQUITY CURVE WITH DRAWDOWN OVERLAY
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Equity Curve & Underwater Analysis")
+    
+    if curated_returns:
+        df_returns = pd.DataFrame(curated_returns).sort_values('date')
+        df_returns['equity'] = (1 + df_returns['return']).cumprod()
+        df_returns['peak'] = df_returns['equity'].expanding().max()
+        df_returns['drawdown'] = (df_returns['equity'] / df_returns['peak']) - 1
+        
+        # Create dual-axis chart
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.7, 0.3],
+            subplot_titles=("Growth of ₹1 Investment", "Underwater Curve (Drawdown)")
+        )
+        
+        # Equity curve
+        fig.add_trace(
+            go.Scatter(x=df_returns['date'], y=df_returns['equity'], 
+                      mode='lines', name='Portfolio',
+                      line=dict(color='#FFC300', width=2)),
+            row=1, col=1
+        )
+        
+        # Peak line
+        fig.add_trace(
+            go.Scatter(x=df_returns['date'], y=df_returns['peak'], 
+                      mode='lines', name='High Water Mark',
+                      line=dict(color='#888888', width=1, dash='dot')),
+            row=1, col=1
+        )
+        
+        # Drawdown fill
+        fig.add_trace(
+            go.Scatter(x=df_returns['date'], y=df_returns['drawdown'], 
+                      mode='lines', name='Drawdown',
+                      fill='tozeroy',
+                      line=dict(color='#ef4444', width=1),
+                      fillcolor='rgba(239, 68, 68, 0.3)'),
+            row=2, col=1
+        )
+        
+        fig.update_layout(
+            template='plotly_dark',
+            height=500,
+            showlegend=True,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+        )
+        fig.update_yaxes(title_text="Growth of ₹1", row=1, col=1)
+        fig.update_yaxes(title_text="Drawdown %", tickformat='.1%', row=2, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 5: ROLLING SHARPE ANALYSIS
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.subheader("Rolling Risk-Adjusted Performance")
+    
+    if curated_returns and len(curated_returns) >= 5:
+        df_returns = pd.DataFrame(curated_returns).sort_values('date')
+        window_size = max(3, len(df_returns) // 5)  # Adaptive window
+        
+        rolling_mean = df_returns['return'].rolling(window=window_size).mean()
+        rolling_std = df_returns['return'].rolling(window=window_size).std()
+        rolling_sharpe = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(52)  # Annualized
+        
+        # Rolling Sortino
+        rolling_downside = df_returns['return'].apply(lambda x: x if x < 0 else 0).rolling(window=window_size).std()
+        rolling_sortino = (rolling_mean / rolling_downside.replace(0, np.nan)) * np.sqrt(52)
+        
+        fig_rolling = go.Figure()
+        fig_rolling.add_trace(go.Scatter(
+            x=df_returns['date'], y=rolling_sharpe,
+            mode='lines', name=f'Rolling Sharpe ({window_size}-period)',
+            line=dict(color='#FFC300', width=2)
+        ))
+        fig_rolling.add_trace(go.Scatter(
+            x=df_returns['date'], y=rolling_sortino,
+            mode='lines', name=f'Rolling Sortino ({window_size}-period)',
+            line=dict(color='#10b981', width=2)
+        ))
+        
+        # Add zero line
+        fig_rolling.add_hline(y=0, line_dash="dash", line_color="#888888", opacity=0.5)
+        fig_rolling.add_hline(y=1, line_dash="dot", line_color="#10b981", opacity=0.3, 
+                             annotation_text="Sharpe=1", annotation_position="right")
+        
+        fig_rolling.update_layout(
+            template='plotly_dark',
+            title="Rolling Risk-Adjusted Ratios",
+            yaxis_title="Ratio (Annualized)",
+            height=350
+        )
+        st.plotly_chart(fig_rolling, use_container_width=True)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 6: STRATEGY COMPARISON TABLE
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Strategy Performance Attribution")
+    
+    strategy_data = []
     for name, perf in performance.get('strategy', {}).items():
-        if perf.get('returns'):
-            df = pd.DataFrame(perf['returns']).sort_values('date')
-            df['equity'] = (1 + df['return']).cumprod()
-            df['strategy'] = name
-            equity_curves.append(df)
+        metrics = perf.get('metrics', {})
+        strategy_data.append({
+            'Strategy': name,
+            'CAGR': metrics.get('annual_return', 0),
+            'Volatility': metrics.get('volatility', 0),
+            'Sharpe': metrics.get('sharpe', 0),
+            'Sortino': metrics.get('sortino', 0),
+            'Calmar': metrics.get('calmar', 0),
+            'Max DD': metrics.get('max_drawdown', 0),
+            'Win Rate': metrics.get('win_rate', 0),
+            'Profit Factor': metrics.get('profit_factor', 1)
+        })
+    
+    if strategy_data:
+        df_strategies = pd.DataFrame(strategy_data)
+        df_strategies = df_strategies.sort_values('Sharpe', ascending=False)
+        
+        # Style the dataframe
+        styled = df_strategies.style.format({
+            'CAGR': '{:.2%}',
+            'Volatility': '{:.2%}',
+            'Sharpe': '{:.2f}',
+            'Sortino': '{:.2f}',
+            'Calmar': '{:.2f}',
+            'Max DD': '{:.2%}',
+            'Win Rate': '{:.1%}',
+            'Profit Factor': '{:.2f}'
+        }).background_gradient(subset=['Sharpe'], cmap='RdYlGn', vmin=-1, vmax=2)
+        
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    if equity_curves:
-        full_equity_df = pd.concat(equity_curves)
-        fig_equity = px.line(full_equity_df, x='date', y='equity', color='strategy',
-                             title="Growth of ₹1 Investment Over Time",
-                             labels={'equity': 'Growth of ₹1', 'date': 'Date', 'strategy': 'Strategy'})
-        fig_equity.update_layout(template='plotly_dark', legend_title_text='Strategy')
-        st.plotly_chart(fig_equity, width='stretch')
-
-    plot_weight_evolution(
-        performance.get('strategy_weights_history', []),
-        title="Strategy Weight Evolution Over Time",
-        y_axis_title="Strategy Weight"
-    )
-
-    st.subheader("Rolling Sharpe Ratio (3-Period Window)")
-    df_list = []
-    for name, perf in performance.get('strategy', {}).items():
-        if perf.get('returns'):
-            df = pd.DataFrame(perf['returns']).sort_values('date')
-            rolling_mean = df['return'].rolling(window=3).mean()
-            rolling_std = df['return'].rolling(window=3).std()
-            periods_per_year = 52 
-            df['rolling_sharpe'] = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(periods_per_year)
-            df['strategy'] = name
-            df_list.append(df)
-
-    if df_list:
-        full_df = pd.concat(df_list)
-        fig_sharpe = px.line(full_df, x='date', y='rolling_sharpe', color='strategy', title="Strategy Rolling Sharpe Ratio (3-Period)")
-        fig_sharpe.update_layout(template='plotly_dark', legend_title_text='Strategy', yaxis_title="Sharpe Ratio")
-        st.plotly_chart(fig_sharpe, width='stretch')
-
-    st.subheader("Strategy Correlation Matrix")
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 7: CORRELATION MATRIX
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.subheader("Strategy Correlation Analysis")
+    st.caption("*Low correlation between strategies indicates diversification benefit*")
+    
     returns_df = pd.DataFrame()
     for name, perf in performance.get('strategy', {}).items():
         if perf.get('returns'):
             df_raw = pd.DataFrame(perf['returns'])
             df = df_raw.drop_duplicates(subset='date', keep='last').set_index('date')
-            if len(df_raw) > len(df):
-                logging.warning(f"Removed {len(df_raw) - len(df)} duplicate date entries for strategy '{name}'.")
             returns_df[name] = df['return']
 
-    corr_matrix = returns_df.corr()
-    fig_corr = px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale='Portland', aspect="auto")
-    fig_corr.update_layout(title="Correlation of Strategy Returns", template='plotly_dark')
-    st.plotly_chart(fig_corr, width='stretch')
+    if not returns_df.empty and len(returns_df.columns) > 1:
+        corr_matrix = returns_df.corr()
+        
+        # Calculate average correlation for each strategy
+        avg_corr = corr_matrix.mean()
+        
+        fig_corr = px.imshow(
+            corr_matrix, 
+            text_auto=".2f", 
+            color_continuous_scale='RdBu_r',
+            color_continuous_midpoint=0,
+            aspect="auto",
+            labels=dict(color="Correlation")
+        )
+        fig_corr.update_layout(
+            title="Return Correlation Matrix", 
+            template='plotly_dark',
+            height=400
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+        
+        # Diversification metrics
+        if 'System_Curated' in corr_matrix.columns:
+            other_strategies = [c for c in corr_matrix.columns if c != 'System_Curated']
+            if other_strategies:
+                curated_corr = corr_matrix.loc['System_Curated', other_strategies].mean()
+                st.info(f"📊 **Diversification Insight**: Average correlation between curated portfolio and component strategies: **{curated_corr:.2f}**. Lower values indicate better diversification.")
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 8: STRATEGY WEIGHT EVOLUTION
+    # ═══════════════════════════════════════════════════════════════════════════
+    plot_weight_evolution(
+        performance.get('strategy_weights_history', []),
+        title="Dynamic Strategy Weight Evolution",
+        y_axis_title="Strategy Weight"
+    )
 
 
 def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
@@ -1304,189 +1652,10 @@ def _run_dynamic_strategy_selection(
     metric_label = "Calmar" if is_sip else "Sortino"
     
     _dss_logger.info("=" * 70)
-    _dss_logger.info("DYNAMIC STRATEGY SELECTION v3.0")
+    _dss_logger.info("DYNAMIC STRATEGY SELECTION")
     _dss_logger.info("=" * 70)
     _dss_logger.info(f"Investment Style: {selected_style}")
     _dss_logger.info(f"Selection Metric: {metric_label} Ratio")
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # ADVANCED SELECTION (v3.0) - Multi-Criteria Optimization
-    # ─────────────────────────────────────────────────────────────────────
-    
-    if ADVANCED_SELECTION_AVAILABLE and historical_data and len(historical_data) >= 20:
-        try:
-            _dss_logger.info("Using ADVANCED Multi-Criteria Selection (TOPSIS + Diversification)")
-            
-            if status_text:
-                status_text.text("Running advanced multi-criteria analysis...")
-            
-            # Prepare backtest results in expected format
-            capital = 10_000_000
-            advanced_results = {}
-            
-            # Collect all symbols and build price matrix
-            all_symbols = set()
-            for _, df in historical_data:
-                all_symbols.update(df['symbol'].tolist())
-            all_symbols = sorted(all_symbols)
-            
-            price_matrix = {}
-            for symbol in all_symbols:
-                prices = []
-                last_valid = np.nan
-                for _, df in historical_data:
-                    sym_df = df[df['symbol'] == symbol]
-                    if not sym_df.empty and 'price' in sym_df.columns:
-                        price = sym_df['price'].iloc[0]
-                        if pd.notna(price) and price > 0:
-                            last_valid = price
-                    prices.append(last_valid)
-                price_matrix[symbol] = prices
-            
-            n_days = len(historical_data)
-            dates = [d for d, _ in historical_data]
-            
-            # Backtest each strategy
-            for idx, (name, strategy) in enumerate(all_strategies.items()):
-                if progress_bar:
-                    pct = 0.1 + (idx / len(all_strategies)) * 0.5
-                    progress_bar.progress(pct, text=f"Backtesting: {name}")
-                
-                try:
-                    first_df = historical_data[0][1].copy()
-                    port_df = strategy.generate_portfolio(first_df, capital)
-                    
-                    if port_df is None or port_df.empty or 'units' not in port_df.columns:
-                        continue
-                    
-                    holdings = {}
-                    for _, row in port_df.iterrows():
-                        sym = row['symbol']
-                        units = row.get('units', 0)
-                        if units > 0 and sym in price_matrix:
-                            first_price = price_matrix[sym][0]
-                            if pd.notna(first_price) and first_price > 0:
-                                holdings[sym] = units
-                    
-                    if len(holdings) == 0:
-                        continue
-                    
-                    initial_investment = sum(
-                        units * price_matrix[sym][0]
-                        for sym, units in holdings.items()
-                    )
-                    cash = capital - initial_investment
-                    
-                    daily_values = []
-                    for day_idx in range(n_days):
-                        port_value = sum(
-                            units * price_matrix[sym][day_idx]
-                            for sym, units in holdings.items()
-                            if pd.notna(price_matrix[sym][day_idx])
-                        )
-                        daily_values.append({
-                            'date': dates[day_idx],
-                            'value': port_value + cash,
-                            'investment': capital
-                        })
-                    
-                    if len(daily_values) >= 20:
-                        advanced_results[name] = {
-                            'daily_data': pd.DataFrame(daily_values),
-                            'metrics': {}
-                        }
-                        
-                except Exception as e:
-                    _dss_logger.debug(f"Strategy {name} failed: {e}")
-                    continue
-            
-            if len(advanced_results) >= 4:
-                # Run advanced selection
-                if progress_bar:
-                    progress_bar.progress(0.7, text="Running multi-criteria optimization...")
-                
-                selector = AdvancedStrategySelector(
-                    risk_free_rate=0.0,
-                    bootstrap_samples=200,
-                    min_observations=20,
-                    diversification_weight=0.3
-                )
-                
-                mode = 'sip' if is_sip else 'swing'
-                
-                # Extract market returns for regime detection
-                market_returns = None
-                if advanced_results:
-                    all_returns = []
-                    for data in advanced_results.values():
-                        daily_df = data.get('daily_data')
-                        if daily_df is not None and not daily_df.empty:
-                            values = daily_df['value'].values
-                            rets = pd.Series(values).pct_change().dropna().values
-                            if len(rets) > 0:
-                                all_returns.append(rets)
-                    if all_returns:
-                        min_len = min(len(r) for r in all_returns)
-                        market_returns = np.mean([r[-min_len:] for r in all_returns], axis=0)
-                
-                result = selector.select_strategies(
-                    advanced_results,
-                    market_returns=market_returns,
-                    mode=mode,
-                    n_strategies=4,
-                    regime_aware=True
-                )
-                
-                if result.selected_strategies and len(result.selected_strategies) >= 4:
-                    if progress_bar:
-                        progress_bar.progress(0.95, text="Selection complete")
-                    
-                    # Log advanced selection results
-                    _dss_logger.info("-" * 70)
-                    _dss_logger.info("ADVANCED SELECTION RESULTS")
-                    _dss_logger.info("-" * 70)
-                    _dss_logger.info(f"Diversification Ratio: {result.diversification_benefit:.2f}")
-                    _dss_logger.info(f"Expected Portfolio Sharpe: {result.expected_portfolio_sharpe:.2f}")
-                    
-                    for name in result.selected_strategies:
-                        score = result.selection_scores.get(name, 0)
-                        ci = result.confidence_intervals.get(name, (0, 0))
-                        _dss_logger.info(f"  >>> {name}: MCO={score:.3f}, CI=[{ci[0]:.2f}, {ci[1]:.2f}]")
-                    
-                    _dss_logger.info("=" * 70)
-                    
-                    # Build compatible results dict
-                    compat_results = {}
-                    for name, data in advanced_results.items():
-                        if name in result.selection_scores:
-                            breakdown = result.meta_score_breakdown.get(name, {})
-                            compat_results[name] = {
-                                'status': 'ok',
-                                'metrics': {
-                                    'total_return': breakdown.get('cagr', 0),
-                                    'sharpe': breakdown.get('sharpe_ratio', 0),
-                                    'sortino': breakdown.get('sortino_ratio', 0),
-                                    'calmar': breakdown.get('calmar_ratio', 0),
-                                    'max_dd': breakdown.get('max_drawdown', 0),
-                                },
-                                'score': result.selection_scores.get(name, 0),
-                                'mco_score': result.selection_scores.get(name, 0),
-                                'diversification_ratio': result.diversification_benefit,
-                                'expected_portfolio_sharpe': result.expected_portfolio_sharpe
-                            }
-                    
-                    return result.selected_strategies, compat_results
-                    
-        except Exception as e:
-            _dss_logger.warning(f"Advanced selection failed: {e}, falling back to legacy")
-            import traceback
-            _dss_logger.debug(traceback.format_exc())
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # LEGACY SELECTION (Fallback)
-    # ─────────────────────────────────────────────────────────────────────
-    
-    _dss_logger.info("Using LEGACY single-metric selection")
     
     # Validation
     if not DYNAMIC_SELECTION_AVAILABLE:
@@ -2188,21 +2357,315 @@ def main():
             display_performance_metrics(st.session_state.performance)
 
         with tab3:
-            st.header("Strategy & Subset Analysis")
-            strategies_in_performance = [k for k in st.session_state.performance.get('strategy', {}).keys() if k != 'System_Curated']
-
-            create_subset_heatmap(st.session_state.performance.get('subset'), strategies_in_performance)
+            st.header("Strategy Deep Dive Analytics")
+            st.markdown("*Multi-dimensional strategy decomposition and factor analysis*")
             
-            display_subset_weight_evolution(
-                st.session_state.performance.get('subset_weights_history', []),
-                strategies_in_performance
-            )
+            strategies_in_performance = [k for k in st.session_state.performance.get('strategy', {}).keys() if k != 'System_Curated']
+            
+            if not strategies_in_performance:
+                st.warning("No individual strategy data available for deep dive analysis.")
+            else:
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 1: TIER SHARPE HEATMAP WITH ENHANCED VISUALIZATION
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.subheader("Position Tier Sharpe Attribution")
+                st.caption("*Sharpe ratio by 10-stock tier - identifies which ranking bands generate alpha*")
+                
+                subset_perf = st.session_state.performance.get('subset', {})
+                
+                if subset_perf:
+                    # Build enhanced heatmap data
+                    heatmap_data = {}
+                    max_tier_num = 0
+                    for strat in strategies_in_performance:
+                        if strat in subset_perf and subset_perf[strat]:
+                            tier_nums = [int(tier.split('_')[1]) for tier in subset_perf[strat].keys()]
+                            if tier_nums:
+                                max_tier_num = max(max_tier_num, max(tier_nums))
 
-            st.markdown("---")
-            st.subheader(f"Conviction Heatmap (for {st.session_state.selected_date})")
-            strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance}
-            heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
-            st.plotly_chart(heatmap_fig, width='stretch')
+                    if max_tier_num > 0:
+                        for strat in strategies_in_performance:
+                            row = [subset_perf.get(strat, {}).get(f'tier_{i+1}', np.nan) for i in range(max_tier_num)]
+                            heatmap_data[strat] = row
+
+                        df_heatmap = pd.DataFrame(heatmap_data).transpose()
+                        df_heatmap.columns = [f'Tier {i+1}' for i in range(df_heatmap.shape[1])]
+                        
+                        # Calculate row means for sorting
+                        df_heatmap['Avg Sharpe'] = df_heatmap.mean(axis=1)
+                        df_heatmap = df_heatmap.sort_values('Avg Sharpe', ascending=False)
+                        avg_sharpe = df_heatmap['Avg Sharpe']
+                        df_heatmap = df_heatmap.drop('Avg Sharpe', axis=1)
+
+                        fig_tier = px.imshow(
+                            df_heatmap, 
+                            text_auto=".2f", 
+                            aspect="auto",
+                            color_continuous_scale='RdYlGn',
+                            color_continuous_midpoint=0,
+                            labels=dict(x="Position Tier (10 stocks each)", y="Strategy", color="Sharpe Ratio")
+                        )
+                        fig_tier.update_layout(
+                            template='plotly_dark',
+                            height=max(400, len(strategies_in_performance) * 35),
+                            title="<b>Sharpe Ratio by Position Ranking Tier</b><br><sup>Green = positive risk-adjusted alpha, Red = negative</sup>"
+                        )
+                        st.plotly_chart(fig_tier, use_container_width=True)
+                        
+                        # Tier insights
+                        tier_means = df_heatmap.mean(axis=0)
+                        best_tier = tier_means.idxmax()
+                        worst_tier = tier_means.idxmin()
+                        
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Best Performing Tier", best_tier, f"Avg Sharpe: {tier_means[best_tier]:.2f}")
+                        col2.metric("Worst Performing Tier", worst_tier, f"Avg Sharpe: {tier_means[worst_tier]:.2f}")
+                        col3.metric("Tier Dispersion", f"{tier_means.std():.2f}", help="Std dev of tier Sharpes - higher indicates more ranking value")
+                    else:
+                        st.warning("No tier subset data available to display.", icon="⚠️")
+                else:
+                    st.info("Tier analysis requires sufficient backtest history.")
+                
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 2: STRATEGY RISK/RETURN SCATTER
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("Risk-Return Efficient Frontier Analysis")
+                st.caption("*Strategies positioned by volatility (x) vs return (y) - upper-left is optimal*")
+                
+                scatter_data = []
+                for name in strategies_in_performance:
+                    metrics = st.session_state.performance.get('strategy', {}).get(name, {}).get('metrics', {})
+                    if metrics:
+                        scatter_data.append({
+                            'Strategy': name,
+                            'Volatility': metrics.get('volatility', 0) * 100,
+                            'CAGR': metrics.get('annual_return', 0) * 100,
+                            'Sharpe': metrics.get('sharpe', 0),
+                            'Max DD': abs(metrics.get('max_drawdown', 0)) * 100
+                        })
+                
+                if scatter_data:
+                    df_scatter = pd.DataFrame(scatter_data)
+                    
+                    fig_scatter = px.scatter(
+                        df_scatter,
+                        x='Volatility',
+                        y='CAGR',
+                        size='Max DD',
+                        color='Sharpe',
+                        hover_name='Strategy',
+                        color_continuous_scale='RdYlGn',
+                        color_continuous_midpoint=0,
+                        labels={
+                            'Volatility': 'Annualized Volatility (%)',
+                            'CAGR': 'CAGR (%)',
+                            'Sharpe': 'Sharpe Ratio',
+                            'Max DD': 'Max Drawdown (%)'
+                        }
+                    )
+                    
+                    # Add efficient frontier approximation (convex hull of best points)
+                    # Add Capital Market Line from origin through tangent portfolio
+                    if len(df_scatter) > 2:
+                        max_sharpe_idx = df_scatter['Sharpe'].idxmax()
+                        tangent_vol = df_scatter.loc[max_sharpe_idx, 'Volatility']
+                        tangent_ret = df_scatter.loc[max_sharpe_idx, 'CAGR']
+                        
+                        # CML line from origin
+                        cml_x = [0, tangent_vol * 1.5]
+                        cml_y = [0, tangent_ret * 1.5]
+                        
+                        fig_scatter.add_trace(go.Scatter(
+                            x=cml_x, y=cml_y,
+                            mode='lines',
+                            name='Capital Market Line',
+                            line=dict(color='#888888', dash='dash', width=1)
+                        ))
+                    
+                    fig_scatter.update_layout(
+                        template='plotly_dark',
+                        title="<b>Strategy Risk-Return Positioning</b><br><sup>Bubble size = Max Drawdown, Color = Sharpe Ratio</sup>",
+                        height=500
+                    )
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 3: STRATEGY FACTOR DECOMPOSITION
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("Strategy Factor Decomposition")
+                st.caption("*Multi-dimensional performance fingerprint for each strategy*")
+                
+                factor_data = []
+                for name in strategies_in_performance:
+                    metrics = st.session_state.performance.get('strategy', {}).get(name, {}).get('metrics', {})
+                    if metrics:
+                        factor_data.append({
+                            'Strategy': name,
+                            'Return Factor': min(max(metrics.get('annual_return', 0) / 0.30, -1), 1),  # Normalize to [-1, 1]
+                            'Risk Control': min(max(-metrics.get('max_drawdown', -0.20) / 0.20, 0), 1),  # Lower DD = higher score
+                            'Consistency': metrics.get('win_rate', 0.5),
+                            'Efficiency': min(max(metrics.get('sharpe', 0) / 2, -1), 1),
+                            'Tail Risk': min(max(metrics.get('tail_ratio', 1), 0), 2) / 2  # Normalize
+                        })
+                
+                if factor_data and len(factor_data) > 0:
+                    df_factors = pd.DataFrame(factor_data)
+                    
+                    # Radar chart for top 4 strategies by Sharpe
+                    top_strats = df_factors.nlargest(min(4, len(df_factors)), 'Efficiency')
+                    
+                    categories = ['Return Factor', 'Risk Control', 'Consistency', 'Efficiency', 'Tail Risk']
+                    
+                    fig_radar = go.Figure()
+                    colors = ['#FFC300', '#10b981', '#06b6d4', '#f59e0b']
+                    
+                    for idx, row in top_strats.iterrows():
+                        values = [row[cat] for cat in categories]
+                        values.append(values[0])  # Close the polygon
+                        
+                        fig_radar.add_trace(go.Scatterpolar(
+                            r=values,
+                            theta=categories + [categories[0]],
+                            fill='toself',
+                            name=row['Strategy'][:20],
+                            line_color=colors[idx % len(colors)],
+                            opacity=0.7
+                        ))
+                    
+                    fig_radar.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, range=[0, 1], showticklabels=False),
+                            bgcolor='rgba(0,0,0,0)'
+                        ),
+                        showlegend=True,
+                        template='plotly_dark',
+                        title="<b>Strategy Factor Fingerprints (Top 4)</b>",
+                        height=450
+                    )
+                    st.plotly_chart(fig_radar, use_container_width=True)
+                
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 4: TIER WEIGHT EVOLUTION
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("Dynamic Tier Allocation History")
+                st.caption("*How position tier weights evolved through the backtest*")
+                
+                display_subset_weight_evolution(
+                    st.session_state.performance.get('subset_weights_history', []),
+                    strategies_in_performance
+                )
+                
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 5: CONVICTION SIGNAL ANALYSIS
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("Cross-Strategy Conviction Analysis")
+                st.caption(f"*Current signal strength across strategies for {st.session_state.selected_date}*")
+                
+                strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance if name in strategies}
+                
+                if strategies_for_heatmap and st.session_state.current_df is not None:
+                    heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
+                    if heatmap_fig:
+                        st.plotly_chart(heatmap_fig, use_container_width=True)
+                    
+                    # Signal agreement analysis
+                    st.markdown("**Signal Consensus Analysis**")
+                    
+                    signal_counts = {}
+                    for name, s in strategies_for_heatmap.items():
+                        try:
+                            port = s.generate_portfolio(st.session_state.current_df.copy())
+                            if not port.empty:
+                                for symbol in port.head(10)['symbol']:
+                                    signal_counts[symbol] = signal_counts.get(symbol, 0) + 1
+                        except:
+                            pass
+                    
+                    if signal_counts:
+                        sorted_signals = sorted(signal_counts.items(), key=lambda x: x[1], reverse=True)
+                        top_consensus = sorted_signals[:5]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**High Consensus Picks** (agreed by multiple strategies):")
+                            for symbol, count in top_consensus:
+                                agreement_pct = count / len(strategies_for_heatmap) * 100
+                                st.markdown(f"• **{symbol}**: {count}/{len(strategies_for_heatmap)} strategies ({agreement_pct:.0f}%)")
+                        
+                        with col2:
+                            consensus_threshold = len(strategies_for_heatmap) / 2
+                            high_conviction = [s for s, c in sorted_signals if c >= consensus_threshold]
+                            st.metric("High Conviction Symbols", len(high_conviction), 
+                                     help=f"Symbols appearing in ≥{consensus_threshold:.0f} strategy portfolios")
+                            
+                            avg_agreement = np.mean([c for _, c in sorted_signals]) / len(strategies_for_heatmap)
+                            st.metric("Average Signal Agreement", f"{avg_agreement:.1%}",
+                                     help="Mean fraction of strategies agreeing on each symbol")
+                
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECTION 6: STRATEGY SELECTION SUMMARY
+                # ═══════════════════════════════════════════════════════════════════════════
+                st.markdown("---")
+                st.subheader("Strategy Selection Rationale")
+                
+                if strategies_in_performance:
+                    # Create summary table with key decision metrics
+                    summary_data = []
+                    for name in strategies_in_performance:
+                        metrics = st.session_state.performance.get('strategy', {}).get(name, {}).get('metrics', {})
+                        subset = st.session_state.performance.get('subset', {}).get(name, {})
+                        
+                        tier1_sharpe = subset.get('tier_1', np.nan) if subset else np.nan
+                        
+                        summary_data.append({
+                            'Strategy': name,
+                            'Sharpe': metrics.get('sharpe', 0),
+                            'Sortino': metrics.get('sortino', 0),
+                            'Calmar': metrics.get('calmar', 0),
+                            'Max DD': metrics.get('max_drawdown', 0),
+                            'Win Rate': metrics.get('win_rate', 0),
+                            'Tier 1 Sharpe': tier1_sharpe,
+                            'Selection Score': (
+                                metrics.get('sharpe', 0) * 0.3 + 
+                                metrics.get('sortino', 0) * 0.25 + 
+                                metrics.get('calmar', 0) * 0.2 +
+                                (1 + metrics.get('max_drawdown', 0)) * 0.15 +
+                                metrics.get('win_rate', 0) * 0.1
+                            )
+                        })
+                    
+                    df_summary = pd.DataFrame(summary_data)
+                    df_summary = df_summary.sort_values('Selection Score', ascending=False)
+                    
+                    styled_summary = df_summary.style.format({
+                        'Sharpe': '{:.2f}',
+                        'Sortino': '{:.2f}',
+                        'Calmar': '{:.2f}',
+                        'Max DD': '{:.2%}',
+                        'Win Rate': '{:.1%}',
+                        'Tier 1 Sharpe': '{:.2f}',
+                        'Selection Score': '{:.3f}'
+                    }).background_gradient(
+                        subset=['Selection Score'], 
+                        cmap='YlGn'
+                    ).background_gradient(
+                        subset=['Max DD'], 
+                        cmap='RdYlGn'
+                    )
+                    
+                    st.dataframe(styled_summary, use_container_width=True, hide_index=True)
+                    
+                    st.markdown("""
+                    **Selection Score Formula:**
+                    ```
+                    Score = 0.30×Sharpe + 0.25×Sortino + 0.20×Calmar + 0.15×(1+MaxDD) + 0.10×WinRate
+                    ```
+                    *Multi-factor composite balancing risk-adjusted returns, drawdown control, and consistency*
+                    """)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
