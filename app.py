@@ -54,7 +54,25 @@ try:
         MomentumMasters, VolatilitySurfer, AdaptiveVolBreakout, VolReversalHarvester, AlphaSurge,
         ReturnPyramid, MomentumCascade, AlphaVortex, SurgeSentinel, VelocityVortex, BreakoutAlphaHunter,
         ExtremeMomentumBlitz, HyperAlphaIgniter, VelocityApocalypse, QuantumMomentumLeap,
-        NebulaMomentumStorm, ResonanceEcho
+        NebulaMomentumStorm, ResonanceEcho, DivergenceMirage, FractalWhisper, InterferenceWave,
+        ShadowPuppet, EntangledMomentum, ButterflyChaos, SynapseFiring, HolographicMomentum,
+        WormholeTemporal, SymbioticAlpha, PhononVibe, HorizonEvent, EscherLoop, MicrowaveCosmic,
+        SingularityMomentum, MultiverseAlpha, EternalReturnCycle, DivineMomentumOracle,
+        CelestialAlphaForge, InfiniteMomentumLoop, GodParticleSurge, NirvanaMomentumWave,
+        PantheonAlphaRealm, ZenithMomentumPeak, OmniscienceReturn, ApotheosisMomentum,
+        TranscendentAlpha, TurnaroundSniper, MomentumAccelerator, VolatilityRegimeTrader,
+        CrossSectionalAlpha, DualMomentum, AdaptiveZScoreEngine, MomentumDecayModel,
+        InformationRatioOptimizer, BayesianMomentumUpdater, RelativeStrengthRotator,
+        VolatilityAdjustedValue, NonlinearMomentumBlender, EntropyWeightedSelector,
+        KalmanFilterMomentum, MeanVarianceOptimizer, RegimeSwitchingStrategy, FractalMomentumStrategy,
+        CopulaBlendStrategy, WaveletDenoiser, GradientBoostBlender, AttentionMechanism,
+        EnsembleVotingStrategy, OptimalTransportBlender, StochasticDominance, MaximumEntropyStrategy,
+        HiddenMarkovModel, QuantileRegressionStrategy, MutualInformationBlender, GameTheoreticStrategy,
+        ReinforcementLearningInspired, SpectralClusteringStrategy, CausalInferenceStrategy,
+        BootstrapConfidenceStrategy, KernelDensityStrategy, SurvivalAnalysisStrategy,
+        PrincipalComponentStrategy, FactorMomentumStrategy, ElasticNetBlender, RobustRegressionStrategy,
+        ConvexOptimizationStrategy, MonteCarloStrategy, VariationalInferenceStrategy,
+        NeuralNetworkInspired, GraphNeuralInspired, ContrastiveLearningStrategy
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
