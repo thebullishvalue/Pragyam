@@ -1377,19 +1377,18 @@ def display_performance_metrics(performance: Dict):
         df_strategies = pd.DataFrame(strategy_data)
         df_strategies = df_strategies.sort_values('Sharpe', ascending=False)
         
-        # Style the dataframe
-        styled = df_strategies.style.format({
-            'CAGR': '{:.2%}',
-            'Volatility': '{:.2%}',
-            'Sharpe': '{:.2f}',
-            'Sortino': '{:.2f}',
-            'Calmar': '{:.2f}',
-            'Max DD': '{:.2%}',
-            'Win Rate': '{:.1%}',
-            'Profit Factor': '{:.2f}'
-        }).background_gradient(subset=['Sharpe'], cmap='RdYlGn', vmin=-1, vmax=2)
+        # Format the dataframe for display
+        df_display = df_strategies.copy()
+        df_display['CAGR'] = df_display['CAGR'].apply(lambda x: f"{x:.2%}")
+        df_display['Volatility'] = df_display['Volatility'].apply(lambda x: f"{x:.2%}")
+        df_display['Sharpe'] = df_display['Sharpe'].apply(lambda x: f"{x:.2f}")
+        df_display['Sortino'] = df_display['Sortino'].apply(lambda x: f"{x:.2f}")
+        df_display['Calmar'] = df_display['Calmar'].apply(lambda x: f"{x:.2f}")
+        df_display['Max DD'] = df_display['Max DD'].apply(lambda x: f"{x:.2%}")
+        df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.1%}")
+        df_display['Profit Factor'] = df_display['Profit Factor'].apply(lambda x: f"{x:.2f}")
         
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 7: CORRELATION MATRIX
@@ -2641,23 +2640,17 @@ def main():
                     df_summary = pd.DataFrame(summary_data)
                     df_summary = df_summary.sort_values('Selection Score', ascending=False)
                     
-                    styled_summary = df_summary.style.format({
-                        'Sharpe': '{:.2f}',
-                        'Sortino': '{:.2f}',
-                        'Calmar': '{:.2f}',
-                        'Max DD': '{:.2%}',
-                        'Win Rate': '{:.1%}',
-                        'Tier 1 Sharpe': '{:.2f}',
-                        'Selection Score': '{:.3f}'
-                    }).background_gradient(
-                        subset=['Selection Score'], 
-                        cmap='YlGn'
-                    ).background_gradient(
-                        subset=['Max DD'], 
-                        cmap='RdYlGn'
-                    )
+                    # Format the dataframe for display
+                    df_display = df_summary.copy()
+                    df_display['Sharpe'] = df_display['Sharpe'].apply(lambda x: f"{x:.2f}")
+                    df_display['Sortino'] = df_display['Sortino'].apply(lambda x: f"{x:.2f}")
+                    df_display['Calmar'] = df_display['Calmar'].apply(lambda x: f"{x:.2f}")
+                    df_display['Max DD'] = df_display['Max DD'].apply(lambda x: f"{x:.2%}")
+                    df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.1%}")
+                    df_display['Tier 1 Sharpe'] = df_display['Tier 1 Sharpe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                    df_display['Selection Score'] = df_display['Selection Score'].apply(lambda x: f"{x:.3f}")
                     
-                    st.dataframe(styled_summary, use_container_width=True, hide_index=True)
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
                     st.markdown("""
                     **Selection Score Formula:**
