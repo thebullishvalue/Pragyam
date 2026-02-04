@@ -217,8 +217,24 @@ def create_equity_drawdown_chart(
     # Zero line for drawdown
     fig.add_hline(y=0, line_color=COLORS['muted'], line_width=1, row=2, col=1)
     
-    # Layout - clean without excessive annotations
+    # Layout - clean with proper annotations
     layout = get_chart_layout(height=480, legend_position='top')
+    layout['annotations'] = [
+        dict(
+            text="<b>Growth of ₹1 Investment</b>",
+            xref="paper", yref="paper",
+            x=0, y=1.06,
+            showarrow=False,
+            font=dict(size=12, color=COLORS['text'])
+        ),
+        dict(
+            text="<b>Underwater Curve</b>",
+            xref="paper", yref="paper",
+            x=0, y=0.32,
+            showarrow=False,
+            font=dict(size=12, color=COLORS['text'])
+        )
+    ]
     fig.update_layout(**layout)
     
     # Axis formatting

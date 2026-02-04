@@ -10,22 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.1.0] - 2026-02-04
 
 ### Added
-- Unified chart styling module (`charts.py`) following Hemrek Capital design system
-- Premium metric cards with semantic color coding (success/warning/danger)
-- Factor interpretation guide in Strategy Deep Dive
-- Cross-strategy conviction analysis with signal consensus metrics
-- Diversification ratio display in correlation analysis
+- Adaptive strategy selection framework (`adaptive_selection.py`)
+- REL_BREADTH based execution triggers (SIP and Swing modes)
+- Dispersion-weighted rank scoring (replaces fixed threshold formulas)
+- Market-derived trigger levels from breadth distribution
+- Regime sensitivity computation for strategies
 
 ### Changed
-- Performance tab completely redesigned with institutional-grade aesthetics
-- Strategy Deep Dive tab enhanced with consistent styling
-- Replaced deprecated `use_container_width` with `width="stretch"`
-- Updated Plotly axis configuration for compatibility
+- Performance tab completely redesigned with clean metric layout
+- Strategy Deep Dive tab simplified with minimal headers
+- Selection scoring now uses rank-based adaptive weights
+- Equity chart y-axis starts from sensible minimum (not zero)
+- Chart annotations restored ("Growth of ₹1 Investment", "Underwater Curve")
+
+### Removed
+- Fixed threshold selection formulas (0.30×Sharpe + 0.25×Sortino...)
+- Hardcoded strategy weights
+- Verbose section headers and info-boxes
 
 ### Fixed
-- Plotly `titlefont` deprecation error (replaced with inline styling)
-- Chart rendering issues in Streamlit Cloud environment
-- Axis configuration conflicts in subplot charts
+- Plotly `titlefont` deprecation error
+- `use_container_width` deprecation warnings
+- Equity curve appearing flat due to y-axis starting at zero
 
 ---
 

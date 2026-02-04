@@ -2667,10 +2667,10 @@ def main():
                                      help="Mean fraction of strategies agreeing on each symbol")
                 
                 # ═══════════════════════════════════════════════════════════════════════════
-                # SELECTION SUMMARY
+                # SELECTION SUMMARY (Adaptive Rank-Based)
                 # ═══════════════════════════════════════════════════════════════════════════
                 st.markdown("---")
-                st.markdown("##### Selection Summary")
+                st.markdown("##### Adaptive Selection Ranking")
                 
                 if strategies_in_performance:
                     summary_data = []
@@ -2686,28 +2686,45 @@ def main():
                             'Sortino': metrics.get('sortino', 0),
                             'Calmar': metrics.get('calmar', 0),
                             'Max DD': metrics.get('max_drawdown', 0),
-                            'T1 Sharpe': tier1_sharpe,
-                            'Score': (
-                                metrics.get('sharpe', 0) * 0.3 + 
-                                metrics.get('sortino', 0) * 0.25 + 
-                                metrics.get('calmar', 0) * 0.2 +
-                                (1 + metrics.get('max_drawdown', 0)) * 0.15 +
-                                metrics.get('win_rate', 0) * 0.1
-                            )
+                            'Win Rate': metrics.get('win_rate', 0),
+                            'T1 Sharpe': tier1_sharpe
                         })
                     
                     df_summary = pd.DataFrame(summary_data)
+                    
+                    # Adaptive rank-based scoring (no fixed thresholds)
+                    # Each metric ranked 0-1, weighted by cross-sectional dispersion
+                    rank_metrics = ['Sharpe', 'Sortino', 'Calmar', 'Win Rate']
+                    
+                    for col in rank_metrics:
+                        df_summary[f'{col}_Rank'] = df_summary[col].rank(pct=True)
+                    
+                    # Max DD: reverse rank (less negative = better)
+                    df_summary['DD_Rank'] = df_summary['Max DD'].rank(pct=True, ascending=False)
+                    
+                    # Compute dispersion-weighted score
+                    rank_cols = [c for c in df_summary.columns if c.endswith('_Rank')]
+                    dispersions = {col: df_summary[col].std() for col in rank_cols}
+                    total_disp = sum(dispersions.values()) or 1
+                    
+                    # Adaptive weights from dispersion (higher dispersion = more discriminating)
+                    weights = {col: disp / total_disp for col, disp in dispersions.items()}
+                    
+                    df_summary['Score'] = sum(df_summary[col] * w for col, w in weights.items())
                     df_summary = df_summary.sort_values('Score', ascending=False)
                     
-                    df_display = df_summary.copy()
+                    # Display table
+                    df_display = df_summary[['Strategy', 'Sharpe', 'Sortino', 'Calmar', 'Max DD', 'Win Rate', 'T1 Sharpe', 'Score']].copy()
                     df_display['Sharpe'] = df_display['Sharpe'].apply(lambda x: f"{x:.2f}")
                     df_display['Sortino'] = df_display['Sortino'].apply(lambda x: f"{x:.2f}")
                     df_display['Calmar'] = df_display['Calmar'].apply(lambda x: f"{x:.2f}")
                     df_display['Max DD'] = df_display['Max DD'].apply(lambda x: f"{x:.1%}")
+                    df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.0%}")
                     df_display['T1 Sharpe'] = df_display['T1 Sharpe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
                     df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}")
                     
                     st.dataframe(df_display, width="stretch", hide_index=True)
+                    st.caption("Score = Dispersion-weighted rank composite (metrics with higher cross-sectional variance get more weight)")
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
