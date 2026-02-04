@@ -221,11 +221,20 @@ def create_equity_drawdown_chart(
     ]
     fig.update_layout(**layout)
     
-    # Axis formatting
-    fig.update_yaxes(title_text="Portfolio Value (₹)", row=1, col=1, **get_axis_config())
-    fig.update_yaxes(title_text="Drawdown", tickformat='.1%', row=2, col=1, **get_axis_config())
-    fig.update_xaxes(**get_axis_config(), row=1, col=1)
-    fig.update_xaxes(title_text="Date", **get_axis_config(), row=2, col=1)
+    # Axis formatting - apply styling directly to avoid conflicts
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=COLORS['border'],
+        gridwidth=1,
+        linecolor=COLORS['border'],
+        tickfont=dict(color=COLORS['muted'], size=11),
+        titlefont=dict(color=COLORS['text'], size=12)
+    )
+    
+    fig.update_yaxes(title_text="Portfolio Value (₹)", row=1, col=1, **axis_style)
+    fig.update_yaxes(title_text="Drawdown", tickformat='.1%', row=2, col=1, **axis_style)
+    fig.update_xaxes(row=1, col=1, **axis_style)
+    fig.update_xaxes(title_text="Date", row=2, col=1, **axis_style)
     
     return fig
 
@@ -296,8 +305,18 @@ def create_rolling_metrics_chart(
         height=380
     )
     fig.update_layout(**layout)
-    fig.update_xaxes(**get_axis_config(title="Date"))
-    fig.update_yaxes(**get_axis_config(title="Ratio (Annualized)", zeroline=True))
+    
+    # Apply axis styling directly
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=COLORS['border'],
+        gridwidth=1,
+        linecolor=COLORS['border'],
+        tickfont=dict(color=COLORS['muted'], size=11),
+        titlefont=dict(color=COLORS['text'], size=12)
+    )
+    fig.update_xaxes(title_text="Date", **axis_style)
+    fig.update_yaxes(title_text="Ratio (Annualized)", zeroline=True, zerolinecolor=COLORS['muted'], **axis_style)
     
     return fig
 
@@ -538,8 +557,17 @@ def create_risk_return_scatter(
         height=500
     )
     fig.update_layout(**layout)
-    fig.update_xaxes(**get_axis_config(title="Annualized Volatility (%)"))
-    fig.update_yaxes(**get_axis_config(title="CAGR (%)"))
+    
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=COLORS['border'],
+        gridwidth=1,
+        linecolor=COLORS['border'],
+        tickfont=dict(color=COLORS['muted'], size=11),
+        titlefont=dict(color=COLORS['text'], size=12)
+    )
+    fig.update_xaxes(title_text="Annualized Volatility (%)", **axis_style)
+    fig.update_yaxes(title_text="CAGR (%)", **axis_style)
     
     return fig
 
@@ -678,9 +706,19 @@ def create_weight_evolution_chart(
         title=f"<b>{title}</b>",
         height=400
     )
-    layout['yaxis'] = dict(**get_axis_config(title="Weight"), tickformat='.0%')
+    
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=COLORS['border'],
+        gridwidth=1,
+        linecolor=COLORS['border'],
+        tickfont=dict(color=COLORS['muted'], size=11),
+        titlefont=dict(color=COLORS['text'], size=12)
+    )
+    
+    layout['yaxis'] = dict(title="Weight", tickformat='.0%', **axis_style)
     fig.update_layout(**layout)
-    fig.update_xaxes(**get_axis_config(title="Date"))
+    fig.update_xaxes(title_text="Date", **axis_style)
     
     return fig
 
@@ -815,8 +853,16 @@ def create_bar_chart(
     
     layout = get_chart_layout(title=f"<b>{title}</b>" if title else "", height=400)
     fig.update_layout(**layout)
-    fig.update_xaxes(**get_axis_config())
-    fig.update_yaxes(**get_axis_config())
+    
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=COLORS['border'],
+        gridwidth=1,
+        linecolor=COLORS['border'],
+        tickfont=dict(color=COLORS['muted'], size=11)
+    )
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
     
     return fig
 

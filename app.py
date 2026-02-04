@@ -1355,7 +1355,7 @@ def display_performance_metrics(performance: Dict):
             fig.update_yaxes(showgrid=True, gridcolor=COLORS['border'], title_text="Portfolio Value (₹)", row=1, col=1)
             fig.update_yaxes(showgrid=True, gridcolor=COLORS['border'], title_text="Drawdown", tickformat='.1%', row=2, col=1)
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 5: ROLLING SHARPE ANALYSIS (Unified Styling)
@@ -1411,7 +1411,7 @@ def display_performance_metrics(performance: Dict):
             fig_rolling.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
             fig_rolling.update_yaxes(showgrid=True, gridcolor=COLORS['border'], zeroline=True, zerolinecolor=COLORS['muted'])
         
-        st.plotly_chart(fig_rolling, use_container_width=True)
+        st.plotly_chart(fig_rolling, width="stretch")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 6: STRATEGY COMPARISON TABLE
@@ -1450,7 +1450,7 @@ def display_performance_metrics(performance: Dict):
         df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.1%}")
         df_display['Profit Factor'] = df_display['Profit Factor'].apply(lambda x: f"{x:.2f}")
         
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, width="stretch", hide_index=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 7: CORRELATION MATRIX (Unified Styling)
@@ -1504,7 +1504,7 @@ def display_performance_metrics(performance: Dict):
                 margin=dict(l=100, r=40, t=60, b=40)
             )
         
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width="stretch")
         
         # Diversification metrics
         if 'System_Curated' in corr_matrix.columns:
@@ -1547,7 +1547,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
     if UNIFIED_CHARTS_AVAILABLE:
         fig = create_tier_sharpe_heatmap(subset_perf, strategy_options)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Add insights
             all_values = []
@@ -2551,7 +2551,7 @@ def main():
                             height=max(400, len(strategies_in_performance) * 35),
                             title="<b>Sharpe Ratio by Position Ranking Tier</b><br><sup>Green = positive risk-adjusted alpha, Red = negative</sup>"
                         )
-                        st.plotly_chart(fig_tier, use_container_width=True)
+                        st.plotly_chart(fig_tier, width="stretch")
                         
                         # Tier insights
                         tier_means = df_heatmap.mean(axis=0)
@@ -2648,7 +2648,7 @@ def main():
                         fig_scatter.update_xaxes(title="Annualized Volatility (%)", showgrid=True, gridcolor=COLORS['border'])
                         fig_scatter.update_yaxes(title="CAGR (%)", showgrid=True, gridcolor=COLORS['border'])
                     
-                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    st.plotly_chart(fig_scatter, width="stretch")
                 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 3: STRATEGY FACTOR DECOMPOSITION
@@ -2719,7 +2719,7 @@ def main():
                             margin=dict(l=80, r=80, t=80, b=80)
                         )
                     
-                    st.plotly_chart(fig_radar, use_container_width=True)
+                    st.plotly_chart(fig_radar, width="stretch")
                     
                     # Factor interpretation guide
                     st.markdown("""
@@ -2759,7 +2759,7 @@ def main():
                 if strategies_for_heatmap and st.session_state.current_df is not None:
                     heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
                     if heatmap_fig:
-                        st.plotly_chart(heatmap_fig, use_container_width=True)
+                        st.plotly_chart(heatmap_fig, width="stretch")
                     
                     # Signal agreement analysis
                     st.markdown("**Signal Consensus Analysis**")
@@ -2840,7 +2840,7 @@ def main():
                     df_display['Tier 1 Sharpe'] = df_display['Tier 1 Sharpe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                     df_display['Selection Score'] = df_display['Selection Score'].apply(lambda x: f"{x:.3f}")
                     
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    st.dataframe(df_display, width="stretch", hide_index=True)
                     
                     st.markdown("""
                     **Selection Score Formula:**
