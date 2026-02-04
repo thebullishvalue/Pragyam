@@ -158,23 +158,40 @@ def create_equity_drawdown_chart(
     df['peak'] = df['equity'].expanding().max()
     df['drawdown'] = (df['equity'] / df['peak']) - 1
     
+    # Calculate sensible y-axis range for equity curve
+    equity_min = df['equity'].min()
+    equity_max = df['equity'].max()
+    y_padding = (equity_max - equity_min) * 0.1
+    y_min = max(0.8, equity_min - y_padding)  # Don't go below 0.8 for readability
+    y_max = equity_max + y_padding
+    
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.08,
+        vertical_spacing=0.12,
         row_heights=[0.7, 0.3],
         subplot_titles=None
     )
     
-    # Equity Curve
+    # Equity Curve - fill to minimum, not zero
     fig.add_trace(go.Scatter(
         x=df[date_col], 
         y=df['equity'],
         mode='lines',
-        name='Portfolio Value',
+        name='Portfolio',
         line=dict(color=COLORS['primary'], width=2.5),
-        fill='tozeroy',
-        fillcolor=f'rgba({COLORS["primary_rgb"]}, 0.08)'
+        fill='tonexty',
+        fillcolor=f'rgba({COLORS["primary_rgb"]}, 0.15)'
+    ), row=1, col=1)
+    
+    # Baseline for fill
+    fig.add_trace(go.Scatter(
+        x=df[date_col], 
+        y=[y_min] * len(df),
+        mode='lines',
+        name='_baseline',
+        line=dict(color='rgba(0,0,0,0)', width=0),
+        showlegend=False
     ), row=1, col=1)
     
     # High Water Mark
@@ -183,7 +200,7 @@ def create_equity_drawdown_chart(
         y=df['peak'],
         mode='lines',
         name='High Water Mark',
-        line=dict(color=COLORS['muted'], width=1, dash='dot')
+        line=dict(color=COLORS['muted'], width=1.5, dash='dot')
     ), row=1, col=1)
     
     # Drawdown Fill
@@ -193,34 +210,18 @@ def create_equity_drawdown_chart(
         mode='lines',
         name='Drawdown',
         fill='tozeroy',
-        line=dict(color=COLORS['danger'], width=1),
-        fillcolor='rgba(239, 68, 68, 0.3)'
+        line=dict(color=COLORS['danger'], width=1.5),
+        fillcolor='rgba(239, 68, 68, 0.35)'
     ), row=2, col=1)
     
     # Zero line for drawdown
     fig.add_hline(y=0, line_color=COLORS['muted'], line_width=1, row=2, col=1)
     
-    # Layout
-    layout = get_chart_layout(height=500, legend_position='top')
-    layout['annotations'] = [
-        dict(
-            text="<b>Growth of ₹1 Investment</b>",
-            xref="paper", yref="paper",
-            x=0, y=1.08,
-            showarrow=False,
-            font=dict(size=13, color=COLORS['text'])
-        ),
-        dict(
-            text="<b>Underwater Curve</b>",
-            xref="paper", yref="paper",
-            x=0, y=0.28,
-            showarrow=False,
-            font=dict(size=13, color=COLORS['text'])
-        )
-    ]
+    # Layout - clean without excessive annotations
+    layout = get_chart_layout(height=480, legend_position='top')
     fig.update_layout(**layout)
     
-    # Axis formatting - apply styling directly to avoid conflicts
+    # Axis formatting
     axis_style = dict(
         showgrid=True,
         gridcolor=COLORS['border'],
@@ -229,10 +230,16 @@ def create_equity_drawdown_chart(
         tickfont=dict(color=COLORS['muted'], size=11)
     )
     
-    fig.update_yaxes(title_text="Portfolio Value (₹)", row=1, col=1, **axis_style)
-    fig.update_yaxes(title_text="Drawdown", tickformat='.1%', row=2, col=1, **axis_style)
+    # Set y-axis range for equity curve to show meaningful variation
+    fig.update_yaxes(
+        title_text="Portfolio Value", 
+        row=1, col=1, 
+        range=[y_min, y_max],
+        **axis_style
+    )
+    fig.update_yaxes(title_text="Drawdown", tickformat='.0%', row=2, col=1, **axis_style)
     fig.update_xaxes(row=1, col=1, **axis_style)
-    fig.update_xaxes(title_text="Date", row=2, col=1, **axis_style)
+    fig.update_xaxes(row=2, col=1, **axis_style)
     
     return fig
 
@@ -299,8 +306,7 @@ def create_rolling_metrics_chart(
                   annotation_font_color=COLORS['muted'])
     
     layout = get_chart_layout(
-        title="<b>Rolling Risk-Adjusted Performance</b>",
-        height=380
+        height=350
     )
     fig.update_layout(**layout)
     
@@ -312,8 +318,8 @@ def create_rolling_metrics_chart(
         linecolor=COLORS['border'],
         tickfont=dict(color=COLORS['muted'], size=11)
     )
-    fig.update_xaxes(title_text="Date", **axis_style)
-    fig.update_yaxes(title_text="Ratio (Annualized)", zeroline=True, zerolinecolor=COLORS['muted'], **axis_style)
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(title_text="Ratio", zeroline=True, zerolinecolor=COLORS['muted'], **axis_style)
     
     return fig
 
@@ -366,8 +372,8 @@ def create_correlation_heatmap(
     ))
     
     layout = get_chart_layout(
-        title=f"<b>{title}</b>",
-        height=max(350, len(corr_matrix) * 35),
+        title=f"<b>{title}</b>" if title else "",
+        height=max(300, len(corr_matrix) * 30),
         show_legend=False
     )
     fig.update_layout(**layout)
@@ -550,8 +556,7 @@ def create_risk_return_scatter(
         ))
     
     layout = get_chart_layout(
-        title="<b>Risk-Return Efficient Frontier</b><br><sup>Bubble size = Max Drawdown magnitude</sup>",
-        height=500
+        height=420
     )
     fig.update_layout(**layout)
     
@@ -562,7 +567,7 @@ def create_risk_return_scatter(
         linecolor=COLORS['border'],
         tickfont=dict(color=COLORS['muted'], size=11)
     )
-    fig.update_xaxes(title_text="Annualized Volatility (%)", **axis_style)
+    fig.update_xaxes(title_text="Volatility (%)", **axis_style)
     fig.update_yaxes(title_text="CAGR (%)", **axis_style)
     
     return fig
@@ -643,13 +648,8 @@ def create_factor_radar(
         ),
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(family='Inter', color=COLORS['text']),
-        title=dict(
-            text="<b>Strategy Factor Fingerprints</b>",
-            font=dict(size=14),
-            x=0.5
-        ),
-        height=450,
-        margin=dict(l=80, r=80, t=80, b=80)
+        height=400,
+        margin=dict(l=60, r=60, t=40, b=60)
     )
     
     return fig
