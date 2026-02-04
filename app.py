@@ -28,6 +28,24 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='Mean of empt
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered in divide')
 # --- End suppression ---
 
+# --- Import Unified Chart Components ---
+try:
+    from charts import (
+        COLORS, get_chart_layout, get_axis_config,
+        create_equity_drawdown_chart, create_rolling_metrics_chart,
+        create_correlation_heatmap, create_tier_sharpe_heatmap,
+        create_risk_return_scatter, create_factor_radar,
+        create_weight_evolution_chart, create_signal_heatmap
+    )
+    UNIFIED_CHARTS_AVAILABLE = True
+except ImportError:
+    UNIFIED_CHARTS_AVAILABLE = False
+    # Fallback color scheme
+    COLORS = {
+        'primary': '#FFC300', 'success': '#10b981', 'danger': '#ef4444',
+        'warning': '#f59e0b', 'info': '#06b6d4', 'muted': '#888888',
+        'card': '#1A1A1A', 'border': '#2A2A2A', 'text': '#EAEAEA'
+    }
 
 # --- Import Strategies from strategies.py ---
 try:
@@ -90,7 +108,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "v3.0.0"  # Advanced Selection + Hedge Fund Grade Analytics
+VERSION = "v3.1.0"  # Unified UI/UX + Hedge Fund Grade Analytics
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
@@ -1172,8 +1190,22 @@ def display_performance_metrics(performance: Dict):
         st.warning("Performance data not available. Please run an analysis.")
         return
 
-    st.header("Quantitative Performance Analytics")
-    st.markdown("*Institutional-grade risk-adjusted performance measurement*")
+    # Custom metric card component
+    def metric_card(label, value, sublabel="", card_class=""):
+        return f'''
+        <div class="metric-card {card_class}">
+            <h4>{label}</h4>
+            <h2>{value}</h2>
+            {f'<div class="sub-metric">{sublabel}</div>' if sublabel else ''}
+        </div>
+        '''
+    
+    st.markdown("""
+    <div class="info-box">
+        <h4>📊 Quantitative Performance Analytics</h4>
+        <p>Institutional-grade risk-adjusted performance measurement with hedge fund standard metrics.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Extract System_Curated metrics
     curated_data = performance.get('strategy', {}).get('System_Curated', {})
@@ -1181,11 +1213,9 @@ def display_performance_metrics(performance: Dict):
     curated_returns = curated_data.get('returns', [])
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 1: EXECUTIVE SUMMARY
+    # SECTION 1: EXECUTIVE SUMMARY - Premium Metric Cards
     # ═══════════════════════════════════════════════════════════════════════════
-    st.subheader("Executive Summary")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
+    st.markdown("### Executive Summary")
     
     ann_ret = curated_metrics.get('annual_return', 0)
     total_ret = curated_metrics.get('total_return', 0)
@@ -1193,170 +1223,202 @@ def display_performance_metrics(performance: Dict):
     sortino = curated_metrics.get('sortino', 0)
     calmar = curated_metrics.get('calmar', 0)
     
-    # Color coding based on performance
-    ret_delta = "normal" if ann_ret >= 0 else "inverse"
-    sharpe_color = "🟢" if sharpe > 1 else ("🟡" if sharpe > 0 else "🔴")
+    # Determine card classes based on values
+    ret_class = "success" if ann_ret > 0 else "danger"
+    sharpe_class = "success" if sharpe > 1 else ("warning" if sharpe > 0 else "danger")
+    sortino_class = "success" if sortino > 1.5 else ("warning" if sortino > 0 else "danger")
+    calmar_class = "success" if calmar > 1 else ("warning" if calmar > 0.5 else "danger")
     
-    col1.metric("CAGR", f"{ann_ret:.2%}", help="Compound Annual Growth Rate - Geometric mean annual return")
-    col2.metric("Total Return", f"{total_ret:.2%}", help="Cumulative return over the entire backtest period")
-    col3.metric(f"Sharpe {sharpe_color}", f"{sharpe:.2f}", help="Risk-adjusted return: CAGR / Volatility. Excellent > 2, Good > 1, Poor < 0")
-    col4.metric("Sortino", f"{sortino:.2f}", help="Downside risk-adjusted return: CAGR / Downside Deviation. Better than Sharpe as it ignores upside volatility")
-    col5.metric("Calmar", f"{calmar:.2f}", help="Drawdown efficiency: CAGR / |Max Drawdown|. Measures recovery capability")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.markdown(metric_card("CAGR", f"{ann_ret:.2%}", "Compound Annual Growth", ret_class), unsafe_allow_html=True)
+    with col2:
+        st.markdown(metric_card("Total Return", f"{total_ret:.2%}", "Cumulative", ret_class), unsafe_allow_html=True)
+    with col3:
+        st.markdown(metric_card("Sharpe Ratio", f"{sharpe:.2f}", "Risk-Adjusted", sharpe_class), unsafe_allow_html=True)
+    with col4:
+        st.markdown(metric_card("Sortino Ratio", f"{sortino:.2f}", "Downside-Adjusted", sortino_class), unsafe_allow_html=True)
+    with col5:
+        st.markdown(metric_card("Calmar Ratio", f"{calmar:.2f}", "DD Efficiency", calmar_class), unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 2: RISK DECOMPOSITION
     # ═══════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Risk Decomposition")
-    
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Risk Decomposition")
     
     volatility = curated_metrics.get('volatility', 0)
     max_dd = curated_metrics.get('max_drawdown', 0)
     omega = curated_metrics.get('omega_ratio', 1)
     tail_ratio = curated_metrics.get('tail_ratio', 1)
     
-    col1.metric("Annualized Volatility", f"{volatility:.2%}", 
-                help="Standard deviation of returns, annualized. Lower indicates more predictable performance")
-    col2.metric("Maximum Drawdown", f"{max_dd:.2%}", 
-                help="Largest peak-to-trough decline. Key capital preservation metric")
-    col3.metric("Omega Ratio", f"{omega:.2f}", 
-                help="Probability-weighted gains/losses ratio. >1 indicates positive expectancy across full distribution")
-    col4.metric("Tail Ratio", f"{tail_ratio:.2f}", 
-                help="95th percentile / |5th percentile|. >1 indicates positive skew (bigger wins than losses)")
+    vol_class = "success" if volatility < 0.15 else ("warning" if volatility < 0.25 else "danger")
+    dd_class = "success" if max_dd > -0.10 else ("warning" if max_dd > -0.20 else "danger")
+    omega_class = "success" if omega > 1.5 else ("warning" if omega > 1 else "danger")
+    tail_class = "success" if tail_ratio > 1.2 else ("neutral" if tail_ratio > 0.8 else "danger")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(metric_card("Volatility", f"{volatility:.2%}", "Annualized Std Dev", vol_class), unsafe_allow_html=True)
+    with col2:
+        st.markdown(metric_card("Max Drawdown", f"{max_dd:.2%}", "Peak-to-Trough", dd_class), unsafe_allow_html=True)
+    with col3:
+        st.markdown(metric_card("Omega Ratio", f"{omega:.2f}", "Gain/Loss Probability", omega_class), unsafe_allow_html=True)
+    with col4:
+        st.markdown(metric_card("Tail Ratio", f"{tail_ratio:.2f}", "Upside/Downside Tails", tail_class), unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 3: CONSISTENCY & EFFICIENCY METRICS
     # ═══════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Consistency & Capital Efficiency")
-    
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Consistency & Capital Efficiency")
     
     win_rate = curated_metrics.get('win_rate', 0)
     profit_factor = curated_metrics.get('profit_factor', 1)
     gain_to_pain = curated_metrics.get('gain_to_pain', 0)
     kelly = curated_metrics.get('kelly_criterion', 0)
-    avg_entropy = curated_metrics.get('avg_weight_entropy')
     
-    col1.metric("Win Rate", f"{win_rate:.1%}", 
-                help="Percentage of periods with positive returns")
-    col2.metric("Profit Factor", f"{profit_factor:.2f}", 
-                help="Gross profits / Gross losses. >1.5 is good, >2 is excellent")
-    col3.metric("Gain-to-Pain", f"{gain_to_pain:.2f}", 
-                help="Total return / Sum of negative returns. Higher is better")
-    col4.metric("Kelly Fraction", f"{kelly:.1%}", 
-                help="Theoretical optimal allocation fraction. Use half-Kelly in practice")
+    wr_class = "success" if win_rate > 0.55 else ("warning" if win_rate > 0.45 else "danger")
+    pf_class = "success" if profit_factor > 1.5 else ("warning" if profit_factor > 1 else "danger")
+    gp_class = "success" if gain_to_pain > 1 else ("warning" if gain_to_pain > 0.5 else "danger")
+    kelly_class = "info" if kelly > 0 else "danger"
     
-    if avg_entropy is not None:
-        st.metric("Portfolio Entropy", f"{avg_entropy:.3f}", 
-                  help="Shannon entropy of weights. Higher = more diversified. Max entropy ≈ log₂(N)")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(metric_card("Win Rate", f"{win_rate:.1%}", "Positive Periods", wr_class), unsafe_allow_html=True)
+    with col2:
+        st.markdown(metric_card("Profit Factor", f"{profit_factor:.2f}", "Gross P/L Ratio", pf_class), unsafe_allow_html=True)
+    with col3:
+        st.markdown(metric_card("Gain-to-Pain", f"{gain_to_pain:.2f}", "Recovery Efficiency", gp_class), unsafe_allow_html=True)
+    with col4:
+        st.markdown(metric_card("Kelly Fraction", f"{kelly:.1%}", "Optimal Allocation", kelly_class), unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 4: EQUITY CURVE WITH DRAWDOWN OVERLAY
+    # SECTION 4: EQUITY CURVE WITH DRAWDOWN OVERLAY (Unified Styling)
     # ═══════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Equity Curve & Underwater Analysis")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Equity Curve & Underwater Analysis")
     
     if curated_returns:
         df_returns = pd.DataFrame(curated_returns).sort_values('date')
-        df_returns['equity'] = (1 + df_returns['return']).cumprod()
-        df_returns['peak'] = df_returns['equity'].expanding().max()
-        df_returns['drawdown'] = (df_returns['equity'] / df_returns['peak']) - 1
         
-        # Create dual-axis chart
-        fig = make_subplots(
-            rows=2, cols=1, 
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.7, 0.3],
-            subplot_titles=("Growth of ₹1 Investment", "Underwater Curve (Drawdown)")
-        )
-        
-        # Equity curve
-        fig.add_trace(
-            go.Scatter(x=df_returns['date'], y=df_returns['equity'], 
-                      mode='lines', name='Portfolio',
-                      line=dict(color='#FFC300', width=2)),
-            row=1, col=1
-        )
-        
-        # Peak line
-        fig.add_trace(
-            go.Scatter(x=df_returns['date'], y=df_returns['peak'], 
-                      mode='lines', name='High Water Mark',
-                      line=dict(color='#888888', width=1, dash='dot')),
-            row=1, col=1
-        )
-        
-        # Drawdown fill
-        fig.add_trace(
-            go.Scatter(x=df_returns['date'], y=df_returns['drawdown'], 
-                      mode='lines', name='Drawdown',
-                      fill='tozeroy',
-                      line=dict(color='#ef4444', width=1),
-                      fillcolor='rgba(239, 68, 68, 0.3)'),
-            row=2, col=1
-        )
-        
-        fig.update_layout(
-            template='plotly_dark',
-            height=500,
-            showlegend=True,
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
-        )
-        fig.update_yaxes(title_text="Growth of ₹1", row=1, col=1)
-        fig.update_yaxes(title_text="Drawdown %", tickformat='.1%', row=2, col=1)
+        if UNIFIED_CHARTS_AVAILABLE:
+            fig = create_equity_drawdown_chart(df_returns, date_col='date', return_col='return')
+        else:
+            # Fallback chart creation
+            df_returns['equity'] = (1 + df_returns['return']).cumprod()
+            df_returns['peak'] = df_returns['equity'].expanding().max()
+            df_returns['drawdown'] = (df_returns['equity'] / df_returns['peak']) - 1
+            
+            fig = make_subplots(
+                rows=2, cols=1, 
+                shared_xaxes=True,
+                vertical_spacing=0.08,
+                row_heights=[0.7, 0.3]
+            )
+            
+            fig.add_trace(go.Scatter(
+                x=df_returns['date'], y=df_returns['equity'], 
+                mode='lines', name='Portfolio',
+                line=dict(color=COLORS['primary'], width=2.5),
+                fill='tozeroy', fillcolor=f'rgba(255, 195, 0, 0.08)'
+            ), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=df_returns['date'], y=df_returns['peak'], 
+                mode='lines', name='High Water Mark',
+                line=dict(color=COLORS['muted'], width=1, dash='dot')
+            ), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=df_returns['date'], y=df_returns['drawdown'], 
+                mode='lines', name='Drawdown',
+                fill='tozeroy',
+                line=dict(color=COLORS['danger'], width=1),
+                fillcolor='rgba(239, 68, 68, 0.3)'
+            ), row=2, col=1)
+            
+            fig.update_layout(
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor=COLORS['card'],
+                height=500,
+                showlegend=True,
+                legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
+                font=dict(family='Inter', color=COLORS['text']),
+                margin=dict(l=60, r=20, t=40, b=40)
+            )
+            fig.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
+            fig.update_yaxes(showgrid=True, gridcolor=COLORS['border'], title_text="Portfolio Value (₹)", row=1, col=1)
+            fig.update_yaxes(showgrid=True, gridcolor=COLORS['border'], title_text="Drawdown", tickformat='.1%', row=2, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 5: ROLLING SHARPE ANALYSIS
+    # SECTION 5: ROLLING SHARPE ANALYSIS (Unified Styling)
     # ═══════════════════════════════════════════════════════════════════════════
-    st.subheader("Rolling Risk-Adjusted Performance")
+    st.markdown("### Rolling Risk-Adjusted Performance")
     
     if curated_returns and len(curated_returns) >= 5:
         df_returns = pd.DataFrame(curated_returns).sort_values('date')
-        window_size = max(3, len(df_returns) // 5)  # Adaptive window
+        window_size = max(3, len(df_returns) // 5)
         
-        rolling_mean = df_returns['return'].rolling(window=window_size).mean()
-        rolling_std = df_returns['return'].rolling(window=window_size).std()
-        rolling_sharpe = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(52)  # Annualized
+        if UNIFIED_CHARTS_AVAILABLE:
+            fig_rolling = create_rolling_metrics_chart(df_returns, window=window_size, date_col='date', return_col='return')
+        else:
+            rolling_mean = df_returns['return'].rolling(window=window_size).mean()
+            rolling_std = df_returns['return'].rolling(window=window_size).std()
+            rolling_sharpe = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(52)
+            
+            downside_returns = df_returns['return'].apply(lambda x: x if x < 0 else 0)
+            rolling_downside = downside_returns.rolling(window=window_size).std()
+            rolling_sortino = (rolling_mean / rolling_downside.replace(0, np.nan)) * np.sqrt(52)
+            
+            fig_rolling = go.Figure()
+            fig_rolling.add_trace(go.Scatter(
+                x=df_returns['date'], y=rolling_sharpe,
+                mode='lines', name=f'Rolling Sharpe ({window_size}-period)',
+                line=dict(color=COLORS['primary'], width=2)
+            ))
+            fig_rolling.add_trace(go.Scatter(
+                x=df_returns['date'], y=rolling_sortino,
+                mode='lines', name=f'Rolling Sortino ({window_size}-period)',
+                line=dict(color=COLORS['success'], width=2)
+            ))
+            
+            fig_rolling.add_hline(y=0, line_dash="dash", line_color=COLORS['muted'], line_width=1)
+            fig_rolling.add_hline(y=1, line_dash="dot", line_color=COLORS['success'], line_width=1,
+                                 annotation_text="Sharpe = 1", annotation_position="right",
+                                 annotation_font_color=COLORS['muted'])
+            fig_rolling.add_hline(y=2, line_dash="dot", line_color=COLORS['warning'], line_width=1,
+                                 annotation_text="Sharpe = 2", annotation_position="right",
+                                 annotation_font_color=COLORS['muted'])
+            
+            fig_rolling.update_layout(
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor=COLORS['card'],
+                title=dict(text="<b>Rolling Risk-Adjusted Performance</b>", font=dict(size=14)),
+                yaxis_title="Ratio (Annualized)",
+                height=380,
+                font=dict(family='Inter', color=COLORS['text']),
+                legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
+                margin=dict(l=60, r=20, t=60, b=40)
+            )
+            fig_rolling.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
+            fig_rolling.update_yaxes(showgrid=True, gridcolor=COLORS['border'], zeroline=True, zerolinecolor=COLORS['muted'])
         
-        # Rolling Sortino
-        rolling_downside = df_returns['return'].apply(lambda x: x if x < 0 else 0).rolling(window=window_size).std()
-        rolling_sortino = (rolling_mean / rolling_downside.replace(0, np.nan)) * np.sqrt(52)
-        
-        fig_rolling = go.Figure()
-        fig_rolling.add_trace(go.Scatter(
-            x=df_returns['date'], y=rolling_sharpe,
-            mode='lines', name=f'Rolling Sharpe ({window_size}-period)',
-            line=dict(color='#FFC300', width=2)
-        ))
-        fig_rolling.add_trace(go.Scatter(
-            x=df_returns['date'], y=rolling_sortino,
-            mode='lines', name=f'Rolling Sortino ({window_size}-period)',
-            line=dict(color='#10b981', width=2)
-        ))
-        
-        # Add zero line
-        fig_rolling.add_hline(y=0, line_dash="dash", line_color="#888888", opacity=0.5)
-        fig_rolling.add_hline(y=1, line_dash="dot", line_color="#10b981", opacity=0.3, 
-                             annotation_text="Sharpe=1", annotation_position="right")
-        
-        fig_rolling.update_layout(
-            template='plotly_dark',
-            title="Rolling Risk-Adjusted Ratios",
-            yaxis_title="Ratio (Annualized)",
-            height=350
-        )
         st.plotly_chart(fig_rolling, use_container_width=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 6: STRATEGY COMPARISON TABLE
     # ═══════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Strategy Performance Attribution")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Strategy Performance Attribution")
+    st.caption("*Ranked by Sharpe ratio - higher is better*")
     
     strategy_data = []
     for name, perf in performance.get('strategy', {}).items():
@@ -1391,9 +1453,9 @@ def display_performance_metrics(performance: Dict):
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 7: CORRELATION MATRIX
+    # SECTION 7: CORRELATION MATRIX (Unified Styling)
     # ═══════════════════════════════════════════════════════════════════════════
-    st.subheader("Strategy Correlation Analysis")
+    st.markdown("### Strategy Correlation Analysis")
     st.caption("*Low correlation between strategies indicates diversification benefit*")
     
     returns_df = pd.DataFrame()
@@ -1406,22 +1468,42 @@ def display_performance_metrics(performance: Dict):
     if not returns_df.empty and len(returns_df.columns) > 1:
         corr_matrix = returns_df.corr()
         
-        # Calculate average correlation for each strategy
-        avg_corr = corr_matrix.mean()
+        if UNIFIED_CHARTS_AVAILABLE:
+            fig_corr = create_correlation_heatmap(corr_matrix, title="Strategy Return Correlation")
+        else:
+            # Fallback correlation heatmap
+            colorscale = [
+                [0.0, '#3b82f6'],
+                [0.25, '#60a5fa'],
+                [0.5, COLORS['muted']],
+                [0.75, '#f87171'],
+                [1.0, '#ef4444']
+            ]
+            
+            fig_corr = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.index,
+                colorscale=colorscale,
+                zmid=0, zmin=-1, zmax=1,
+                text=np.round(corr_matrix.values, 2),
+                texttemplate='%{text}',
+                textfont=dict(size=11, color='white'),
+                colorbar=dict(
+                    title=dict(text='Correlation', font=dict(color=COLORS['muted'])),
+                    tickfont=dict(color=COLORS['muted'])
+                )
+            ))
+            fig_corr.update_layout(
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor=COLORS['card'],
+                title=dict(text="<b>Strategy Return Correlation</b>", font=dict(size=14)),
+                height=max(350, len(corr_matrix) * 35),
+                font=dict(family='Inter', color=COLORS['text']),
+                margin=dict(l=100, r=40, t=60, b=40)
+            )
         
-        fig_corr = px.imshow(
-            corr_matrix, 
-            text_auto=".2f", 
-            color_continuous_scale='RdBu_r',
-            color_continuous_midpoint=0,
-            aspect="auto",
-            labels=dict(color="Correlation")
-        )
-        fig_corr.update_layout(
-            title="Return Correlation Matrix", 
-            template='plotly_dark',
-            height=400
-        )
         st.plotly_chart(fig_corr, use_container_width=True)
         
         # Diversification metrics
@@ -1429,7 +1511,23 @@ def display_performance_metrics(performance: Dict):
             other_strategies = [c for c in corr_matrix.columns if c != 'System_Curated']
             if other_strategies:
                 curated_corr = corr_matrix.loc['System_Curated', other_strategies].mean()
-                st.info(f"📊 **Diversification Insight**: Average correlation between curated portfolio and component strategies: **{curated_corr:.2f}**. Lower values indicate better diversification.")
+                avg_overall = corr_matrix.values[np.triu_indices_from(corr_matrix.values, k=1)].mean()
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                    <div class="info-box">
+                        <h4>📊 Diversification Insight</h4>
+                        <p>Average correlation between curated portfolio and components: <strong>{curated_corr:.2f}</strong></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"""
+                    <div class="info-box">
+                        <h4>🎯 Portfolio Diversification</h4>
+                        <p>Overall average pairwise correlation: <strong>{avg_overall:.2f}</strong></p>
+                    </div>
+                    """, unsafe_allow_html=True)
     
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 8: STRATEGY WEIGHT EVOLUTION
@@ -1442,8 +1540,52 @@ def display_performance_metrics(performance: Dict):
 
 
 def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
-    if not subset_perf: return
+    """Create tier Sharpe heatmap with unified styling."""
+    if not subset_perf: 
+        return
 
+    if UNIFIED_CHARTS_AVAILABLE:
+        fig = create_tier_sharpe_heatmap(subset_perf, strategy_options)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Add insights
+            all_values = []
+            for strat in strategy_options:
+                if strat in subset_perf:
+                    all_values.extend([v for v in subset_perf[strat].values() if not np.isnan(v)])
+            
+            if all_values:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    best_tier = max(range(1, 11), key=lambda t: np.nanmean([
+                        subset_perf.get(s, {}).get(f'tier_{t}', np.nan) for s in strategy_options
+                    ]))
+                    st.markdown(f"""
+                    <div class="metric-card info">
+                        <h4>Best Performing Tier</h4>
+                        <h2>Tier {best_tier}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    avg_sharpe = np.nanmean(all_values)
+                    st.markdown(f"""
+                    <div class="metric-card {'success' if avg_sharpe > 0 else 'danger'}">
+                        <h4>Average Tier Sharpe</h4>
+                        <h2>{avg_sharpe:.2f}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col3:
+                    tier_dispersion = np.nanstd(all_values)
+                    st.markdown(f"""
+                    <div class="metric-card neutral">
+                        <h4>Tier Dispersion</h4>
+                        <h2>{tier_dispersion:.2f}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+        return
+
+    # Fallback implementation
     heatmap_data = {}
     max_tier_num = 0
     for strat in strategy_options:
@@ -2428,8 +2570,8 @@ def main():
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 2: STRATEGY RISK/RETURN SCATTER
                 # ═══════════════════════════════════════════════════════════════════════════
-                st.markdown("---")
-                st.subheader("Risk-Return Efficient Frontier Analysis")
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                st.markdown("### Risk-Return Efficient Frontier Analysis")
                 st.caption("*Strategies positioned by volatility (x) vs return (y) - upper-left is optimal*")
                 
                 scatter_data = []
@@ -2438,62 +2580,81 @@ def main():
                     if metrics:
                         scatter_data.append({
                             'Strategy': name,
-                            'Volatility': metrics.get('volatility', 0) * 100,
-                            'CAGR': metrics.get('annual_return', 0) * 100,
+                            'Volatility': metrics.get('volatility', 0),
+                            'CAGR': metrics.get('annual_return', 0),
                             'Sharpe': metrics.get('sharpe', 0),
-                            'Max DD': abs(metrics.get('max_drawdown', 0)) * 100
+                            'Max DD': metrics.get('max_drawdown', 0)
                         })
                 
                 if scatter_data:
-                    df_scatter = pd.DataFrame(scatter_data)
-                    
-                    fig_scatter = px.scatter(
-                        df_scatter,
-                        x='Volatility',
-                        y='CAGR',
-                        size='Max DD',
-                        color='Sharpe',
-                        hover_name='Strategy',
-                        color_continuous_scale='RdYlGn',
-                        color_continuous_midpoint=0,
-                        labels={
-                            'Volatility': 'Annualized Volatility (%)',
-                            'CAGR': 'CAGR (%)',
-                            'Sharpe': 'Sharpe Ratio',
-                            'Max DD': 'Max Drawdown (%)'
-                        }
-                    )
-                    
-                    # Add efficient frontier approximation (convex hull of best points)
-                    # Add Capital Market Line from origin through tangent portfolio
-                    if len(df_scatter) > 2:
-                        max_sharpe_idx = df_scatter['Sharpe'].idxmax()
-                        tangent_vol = df_scatter.loc[max_sharpe_idx, 'Volatility']
-                        tangent_ret = df_scatter.loc[max_sharpe_idx, 'CAGR']
+                    if UNIFIED_CHARTS_AVAILABLE:
+                        fig_scatter = create_risk_return_scatter(scatter_data)
+                    else:
+                        df_scatter = pd.DataFrame(scatter_data)
+                        df_scatter['Vol_pct'] = df_scatter['Volatility'] * 100
+                        df_scatter['CAGR_pct'] = df_scatter['CAGR'] * 100
+                        df_scatter['Size'] = np.abs(df_scatter['Max DD']) * 100 + 5
                         
-                        # CML line from origin
-                        cml_x = [0, tangent_vol * 1.5]
-                        cml_y = [0, tangent_ret * 1.5]
+                        fig_scatter = go.Figure()
                         
                         fig_scatter.add_trace(go.Scatter(
-                            x=cml_x, y=cml_y,
-                            mode='lines',
-                            name='Capital Market Line',
-                            line=dict(color='#888888', dash='dash', width=1)
+                            x=df_scatter['Vol_pct'],
+                            y=df_scatter['CAGR_pct'],
+                            mode='markers+text',
+                            marker=dict(
+                                size=df_scatter['Size'],
+                                color=df_scatter['Sharpe'],
+                                colorscale='RdYlGn',
+                                cmin=-1, cmax=2,
+                                showscale=True,
+                                colorbar=dict(title='Sharpe', tickfont=dict(color=COLORS['muted'])),
+                                line=dict(width=1, color=COLORS['border'])
+                            ),
+                            text=df_scatter['Strategy'].apply(lambda x: x[:12]),
+                            textposition='top center',
+                            textfont=dict(size=9, color=COLORS['muted']),
+                            customdata=df_scatter[['Strategy', 'Max DD']].values,
+                            hovertemplate='<b>%{customdata[0]}</b><br>CAGR: %{y:.1f}%<br>Vol: %{x:.1f}%<br>Max DD: %{customdata[1]:.1%}<extra></extra>'
                         ))
+                        
+                        if len(df_scatter) > 2:
+                            max_sharpe_idx = df_scatter['Sharpe'].idxmax()
+                            tangent_vol = df_scatter.loc[max_sharpe_idx, 'Vol_pct']
+                            tangent_ret = df_scatter.loc[max_sharpe_idx, 'CAGR_pct']
+                            
+                            fig_scatter.add_trace(go.Scatter(
+                                x=[0, tangent_vol * 1.8], y=[0, tangent_ret * 1.8],
+                                mode='lines', name='Capital Market Line',
+                                line=dict(color=COLORS['muted'], dash='dash', width=1.5)
+                            ))
+                            
+                            fig_scatter.add_trace(go.Scatter(
+                                x=[tangent_vol], y=[tangent_ret],
+                                mode='markers', name='Optimal Portfolio',
+                                marker=dict(size=15, color=COLORS['primary'], symbol='star',
+                                           line=dict(width=2, color=COLORS['text']))
+                            ))
+                        
+                        fig_scatter.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor=COLORS['card'],
+                            title=dict(text="<b>Risk-Return Efficient Frontier</b><br><sup>Bubble size = Max Drawdown</sup>", font=dict(size=14)),
+                            height=500,
+                            font=dict(family='Inter', color=COLORS['text']),
+                            legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
+                            margin=dict(l=60, r=20, t=80, b=50)
+                        )
+                        fig_scatter.update_xaxes(title="Annualized Volatility (%)", showgrid=True, gridcolor=COLORS['border'])
+                        fig_scatter.update_yaxes(title="CAGR (%)", showgrid=True, gridcolor=COLORS['border'])
                     
-                    fig_scatter.update_layout(
-                        template='plotly_dark',
-                        title="<b>Strategy Risk-Return Positioning</b><br><sup>Bubble size = Max Drawdown, Color = Sharpe Ratio</sup>",
-                        height=500
-                    )
                     st.plotly_chart(fig_scatter, use_container_width=True)
                 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 3: STRATEGY FACTOR DECOMPOSITION
                 # ═══════════════════════════════════════════════════════════════════════════
-                st.markdown("---")
-                st.subheader("Strategy Factor Decomposition")
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                st.markdown("### Strategy Factor Decomposition")
                 st.caption("*Multi-dimensional performance fingerprint for each strategy*")
                 
                 factor_data = []
@@ -2502,48 +2663,77 @@ def main():
                     if metrics:
                         factor_data.append({
                             'Strategy': name,
-                            'Return Factor': min(max(metrics.get('annual_return', 0) / 0.30, -1), 1),  # Normalize to [-1, 1]
-                            'Risk Control': min(max(-metrics.get('max_drawdown', -0.20) / 0.20, 0), 1),  # Lower DD = higher score
+                            'Return Factor': min(max(metrics.get('annual_return', 0) / 0.30, -1), 1),
+                            'Risk Control': min(max(-metrics.get('max_drawdown', -0.20) / 0.20, 0), 1),
                             'Consistency': metrics.get('win_rate', 0.5),
                             'Efficiency': min(max(metrics.get('sharpe', 0) / 2, -1), 1),
-                            'Tail Risk': min(max(metrics.get('tail_ratio', 1), 0), 2) / 2  # Normalize
+                            'Tail Risk': min(max(metrics.get('tail_ratio', 1), 0), 2) / 2
                         })
                 
                 if factor_data and len(factor_data) > 0:
-                    df_factors = pd.DataFrame(factor_data)
-                    
-                    # Radar chart for top 4 strategies by Sharpe
-                    top_strats = df_factors.nlargest(min(4, len(df_factors)), 'Efficiency')
-                    
-                    categories = ['Return Factor', 'Risk Control', 'Consistency', 'Efficiency', 'Tail Risk']
-                    
-                    fig_radar = go.Figure()
-                    colors = ['#FFC300', '#10b981', '#06b6d4', '#f59e0b']
-                    
-                    for idx, row in top_strats.iterrows():
-                        values = [row[cat] for cat in categories]
-                        values.append(values[0])  # Close the polygon
+                    if UNIFIED_CHARTS_AVAILABLE:
+                        fig_radar = create_factor_radar(factor_data, max_strategies=4)
+                    else:
+                        df_factors = pd.DataFrame(factor_data)
+                        top_strats = df_factors.nlargest(min(4, len(df_factors)), 'Efficiency')
+                        categories = ['Return Factor', 'Risk Control', 'Consistency', 'Efficiency', 'Tail Risk']
                         
-                        fig_radar.add_trace(go.Scatterpolar(
-                            r=values,
-                            theta=categories + [categories[0]],
-                            fill='toself',
-                            name=row['Strategy'][:20],
-                            line_color=colors[idx % len(colors)],
-                            opacity=0.7
-                        ))
+                        fig_radar = go.Figure()
+                        palette = [COLORS['primary'], COLORS['success'], COLORS['info'], COLORS['warning']]
+                        
+                        for idx, (_, row) in enumerate(top_strats.iterrows()):
+                            values = [row[cat] for cat in categories]
+                            values.append(values[0])
+                            color = palette[idx % len(palette)]
+                            
+                            fig_radar.add_trace(go.Scatterpolar(
+                                r=values,
+                                theta=categories + [categories[0]],
+                                fill='toself',
+                                name=row['Strategy'][:20],
+                                line_color=color,
+                                fillcolor=f'rgba{tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2, 4)) + (0.2,)}',
+                                opacity=0.8
+                            ))
+                        
+                        fig_radar.update_layout(
+                            polar=dict(
+                                radialaxis=dict(
+                                    visible=True, range=[0, 1],
+                                    showticklabels=True,
+                                    tickfont=dict(size=9, color=COLORS['muted']),
+                                    gridcolor=COLORS['border']
+                                ),
+                                angularaxis=dict(
+                                    tickfont=dict(size=11, color=COLORS['text']),
+                                    gridcolor=COLORS['border']
+                                ),
+                                bgcolor='rgba(0,0,0,0)'
+                            ),
+                            showlegend=True,
+                            legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center', font=dict(size=10)),
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            font=dict(family='Inter', color=COLORS['text']),
+                            title=dict(text="<b>Strategy Factor Fingerprints</b>", font=dict(size=14), x=0.5),
+                            height=450,
+                            margin=dict(l=80, r=80, t=80, b=80)
+                        )
                     
-                    fig_radar.update_layout(
-                        polar=dict(
-                            radialaxis=dict(visible=True, range=[0, 1], showticklabels=False),
-                            bgcolor='rgba(0,0,0,0)'
-                        ),
-                        showlegend=True,
-                        template='plotly_dark',
-                        title="<b>Strategy Factor Fingerprints (Top 4)</b>",
-                        height=450
-                    )
                     st.plotly_chart(fig_radar, use_container_width=True)
+                    
+                    # Factor interpretation guide
+                    st.markdown("""
+                    <div class="info-box">
+                        <h4>📈 Factor Interpretation</h4>
+                        <p>
+                        <strong>Return Factor:</strong> Normalized annual return vs 30% benchmark | 
+                        <strong>Risk Control:</strong> Drawdown protection (lower DD = higher score) | 
+                        <strong>Consistency:</strong> Win rate | 
+                        <strong>Efficiency:</strong> Sharpe ratio normalized | 
+                        <strong>Tail Risk:</strong> Upside/downside tail balance
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 4: TIER WEIGHT EVOLUTION
