@@ -10,22 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.1.0] - 2026-02-04
 
 ### Added
-- Adaptive strategy selection framework (`adaptive_selection.py`)
-- REL_BREADTH based execution triggers (SIP and Swing modes)
-- Dispersion-weighted rank scoring (replaces fixed threshold formulas)
-- Market-derived trigger levels from breadth distribution
-- Regime sensitivity computation for strategies
+- Strategy selection framework (`adaptive_selection.py`)
+  - Fetches REL_BREADTH data from Google Sheets
+  - SIP mode: Accumulate when REL_BREADTH < 0.42
+  - Swing mode: Buy < 0.42, Sell >= 0.50 (hardcoded research-derived triggers)
+  - Dispersion-weighted rank scoring for strategy weights (no fixed formulas)
+- Chart annotations restored ("Growth of ₹1 Investment", "Underwater Curve")
 
 ### Changed
-- Performance tab completely redesigned with clean metric layout
+- Performance tab redesigned with clean metric layout using st.metric()
 - Strategy Deep Dive tab simplified with minimal headers
-- Selection scoring now uses rank-based adaptive weights
+- Selection scoring uses rank-based adaptive weights instead of fixed formulas
 - Equity chart y-axis starts from sensible minimum (not zero)
-- Chart annotations restored ("Growth of ₹1 Investment", "Underwater Curve")
 
 ### Removed
 - Fixed threshold selection formulas (0.30×Sharpe + 0.25×Sortino...)
-- Hardcoded strategy weights
 - Verbose section headers and info-boxes
 
 ### Fixed
