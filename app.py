@@ -108,9 +108,32 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "v3.1.0"  # Unified UI/UX + Hedge Fund Grade Analytics
+VERSION = "v3.2.0"  # Unified UI/UX + Trigger-Based Backtest + Hedge Fund Grade Analytics
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
+
+# --- Trigger-Based Backtest Configuration ---
+# Default thresholds for REL_BREADTH trigger (from backtest.py)
+TRIGGER_CONFIG = {
+    'SIP Investment': {
+        'buy_threshold': 0.42,   # Buy when REL_BREADTH < 0.42
+        'sell_threshold': 1.5,   # Sell when REL_BREADTH > 1.5 (disabled by default)
+        'sell_enabled': False,
+        'description': 'Systematic accumulation on regime dips'
+    },
+    'Swing Trading': {
+        'buy_threshold': 0.52,   # Buy when REL_BREADTH < 0.52  
+        'sell_threshold': 1.2,   # Sell when REL_BREADTH > 1.2
+        'sell_enabled': True,
+        'description': 'Tactical entry/exit on regime signals'
+    },
+    'All Weather': {
+        'buy_threshold': 0.50,   # Moderate threshold
+        'sell_threshold': 1.3,
+        'sell_enabled': False,
+        'description': 'Balanced regime-aware allocation'
+    }
+}
 
 # --- CSS Styling (Hemrek Capital Design System) ---
 st.markdown("""
@@ -687,7 +710,467 @@ def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFr
     final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
     return {'strategy': final_performance, 'subset': final_sub_performance}
 
-def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], historical_data: List[Tuple[datetime, pd.DataFrame]]) -> Dict:
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRIGGER-BASED BACKTEST ENGINE (Aligned with backtest.py methodology)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calculate_trigger_based_metrics(daily_data: pd.DataFrame, deployment_style: str = 'SIP') -> Dict:
+    """
+    Calculate institutional metrics from trigger-based backtest daily values.
+    Mirrors the calculate_institutional_metrics function from backtest.py.
+    
+    Args:
+        daily_data: DataFrame with 'date', 'value', 'investment' columns
+        deployment_style: 'SIP' or 'Swing'
+    
+    Returns:
+        Dictionary of performance metrics
+    """
+    if daily_data.empty or len(daily_data) < 2:
+        return {}
+    
+    final_value = daily_data['value'].iloc[-1]
+    is_sip = 'SIP' in deployment_style
+    
+    if is_sip:
+        total_investment = daily_data['investment'].iloc[-1]
+        if total_investment <= 0:
+            return {}
+        absolute_pnl = final_value - total_investment
+        total_return_pct = absolute_pnl / total_investment
+        
+        # Cash-flow adjusted returns for SIP
+        df = daily_data.copy()
+        df['cash_flow'] = df['investment'].diff().fillna(0)
+        df['prev_value'] = df['value'].shift(1).fillna(0)
+        df['returns'] = np.where(
+            df['prev_value'] > 0,
+            (df['value'] - df['cash_flow']) / df['prev_value'] - 1,
+            0
+        )
+        returns = pd.Series(df['returns']).replace([np.inf, -np.inf], 0)
+        ann_return = (1 + returns.mean()) ** 252 - 1
+        cagr = None
+    else:  # Swing/Lumpsum
+        initial_investment = daily_data['investment'].iloc[0]
+        if initial_investment <= 0:
+            return {}
+        absolute_pnl = final_value - initial_investment
+        total_return_pct = absolute_pnl / initial_investment
+        returns = daily_data['value'].pct_change().dropna()
+        
+        if returns.empty:
+            return {'total_return': total_return_pct, 'absolute_pnl': absolute_pnl}
+        
+        ann_return = (1 + returns.mean()) ** 252 - 1
+        years = len(daily_data) / 252
+        cagr = ((final_value / initial_investment) ** (1/years) - 1) if years > 0 else 0
+    
+    if returns.empty or len(returns) < 2:
+        return {'total_return': total_return_pct, 'absolute_pnl': absolute_pnl}
+    
+    # Risk metrics
+    ann_factor = np.sqrt(252)
+    volatility = returns.std() * ann_factor
+    
+    downside_returns = returns[returns < 0]
+    downside_vol = downside_returns.std() * ann_factor if len(downside_returns) > 0 else 0
+    
+    # Sharpe and Sortino
+    sharpe_ratio = (ann_return / volatility) if volatility > 0.001 else 0
+    sortino_ratio = (ann_return / downside_vol) if downside_vol > 0.001 else 0
+    
+    # Drawdown analysis
+    cumulative = (1 + returns).cumprod()
+    running_max = cumulative.expanding(min_periods=1).max()
+    drawdown = (cumulative / running_max) - 1
+    max_drawdown = drawdown.min()
+    
+    # Calmar ratio
+    calmar_ratio = ann_return / abs(max_drawdown) if max_drawdown < -0.001 else 0
+    
+    # Clip extreme values
+    sharpe_ratio = np.clip(sharpe_ratio, -10, 10)
+    sortino_ratio = np.clip(sortino_ratio, -20, 20)
+    calmar_ratio = np.clip(calmar_ratio, -20, 20)
+    
+    metrics = {
+        'total_return': total_return_pct,
+        'annual_return': ann_return,
+        'absolute_pnl': absolute_pnl,
+        'volatility': volatility,
+        'max_drawdown': max_drawdown,
+        'sharpe': sharpe_ratio,
+        'sortino': sortino_ratio,
+        'calmar': calmar_ratio,
+        'win_rate': (returns > 0).mean(),
+        'best_day': returns.max(),
+        'worst_day': returns.min(),
+        'trading_days': len(returns),
+        'final_value': final_value
+    }
+    
+    if cagr is not None:
+        metrics['cagr'] = cagr
+    
+    return metrics
+
+
+def run_trigger_based_backtest(
+    strategies: Dict[str, BaseStrategy],
+    historical_data: List[Tuple[datetime, pd.DataFrame]],
+    trigger_df: Optional[pd.DataFrame],
+    buy_col: str = 'REL_BREADTH',
+    buy_threshold: float = 0.42,
+    sell_col: str = 'REL_BREADTH',
+    sell_threshold: float = 1.5,
+    sell_enabled: bool = False,
+    capital: float = 2500000.0,
+    deployment_style: str = 'SIP',
+    progress_bar = None,
+    status_text = None
+) -> Dict:
+    """
+    Run trigger-based backtest for all strategies (aligned with backtest.py methodology).
+    
+    This function mirrors run_individual_strategies_backtest from backtest.py:
+    - Buy when trigger column < buy_threshold
+    - Sell when trigger column > sell_threshold (if enabled)
+    - SIP: accumulates units on each buy trigger
+    - Swing: buy once, hold, sell on trigger
+    
+    Args:
+        strategies: Dictionary of strategy name -> strategy instance
+        historical_data: List of (date, DataFrame) tuples
+        trigger_df: DataFrame with trigger column (indexed by date)
+        buy_col: Column name for buy trigger
+        buy_threshold: Buy when value < this threshold
+        sell_col: Column name for sell trigger
+        sell_threshold: Sell when value > this threshold
+        sell_enabled: Whether to use sell trigger
+        capital: Capital per deployment
+        deployment_style: 'SIP' or 'Swing'
+        progress_bar: Optional Streamlit progress bar
+        status_text: Optional Streamlit status text
+    
+    Returns:
+        Dictionary with strategy metrics and performance data
+    """
+    logging.info(f"TRIGGER-BASED BACKTEST: {deployment_style} mode | {len(strategies)} strategies")
+    logging.info(f"  Buy: {buy_col} < {buy_threshold} | Sell: {sell_col} > {sell_threshold} (enabled={sell_enabled})")
+    
+    if not historical_data:
+        logging.error("No historical data provided")
+        return {}
+    
+    is_sip = 'SIP' in deployment_style
+    
+    # Build date-indexed lookup for prices
+    date_to_df = {d.date() if hasattr(d, 'date') else d: df for d, df in historical_data}
+    simulation_dates = sorted(date_to_df.keys())
+    
+    # Prepare trigger masks
+    buy_dates_mask = [False] * len(simulation_dates)
+    sell_dates_mask = [False] * len(simulation_dates)
+    
+    if trigger_df is not None and not trigger_df.empty:
+        # Ensure trigger_df index is date-comparable
+        if hasattr(trigger_df.index, 'date'):
+            trigger_dates = set(trigger_df.index.date)
+        else:
+            trigger_dates = set(pd.to_datetime(trigger_df.index).date)
+        
+        if buy_col in trigger_df.columns:
+            buy_trigger_dates = set(
+                (idx.date() if hasattr(idx, 'date') else idx)
+                for idx, val in trigger_df[buy_col].items()
+                if pd.notna(val) and val < buy_threshold
+            )
+            buy_dates_mask = [d in buy_trigger_dates for d in simulation_dates]
+            logging.info(f"  Buy triggers found: {sum(buy_dates_mask)} days")
+        
+        if sell_enabled and sell_col in trigger_df.columns:
+            sell_trigger_dates = set(
+                (idx.date() if hasattr(idx, 'date') else idx)
+                for idx, val in trigger_df[sell_col].items()
+                if pd.notna(val) and val > sell_threshold
+            )
+            sell_dates_mask = [d in sell_trigger_dates for d in simulation_dates]
+            logging.info(f"  Sell triggers found: {sum(sell_dates_mask)} days")
+    else:
+        # No trigger file - use simple entry on first day
+        logging.warning("No trigger data provided - using first-day entry")
+        buy_dates_mask[0] = True
+    
+    # Run backtest for each strategy
+    all_results = {}
+    total_strategies = len(strategies)
+    
+    for idx, (name, strategy) in enumerate(strategies.items()):
+        if progress_bar:
+            progress_bar.progress(0.3 + (0.4 * (idx + 1) / total_strategies), 
+                                 text=f"Backtesting: {name}")
+        if status_text:
+            status_text.text(f"Testing: {name} ({idx+1}/{total_strategies})")
+        
+        try:
+            daily_values = []
+            portfolio_units = {}
+            buy_signal_active = False
+            trade_log = []
+            
+            if is_sip:
+                # SIP Mode: Accumulate on each buy trigger
+                total_investment = 0
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    elif not is_buy_day:
+                        buy_signal_active = False
+                    
+                    # Check sell trigger
+                    if sell_dates_mask[j] and portfolio_units:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        portfolio_units = {}
+                        buy_signal_active = False
+                    
+                    # Execute buy
+                    if actual_buy_trigger:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), capital)
+                        
+                        if not buy_portfolio.empty and 'value' in buy_portfolio.columns:
+                            total_investment += buy_portfolio['value'].sum()
+                            
+                            for _, row in buy_portfolio.iterrows():
+                                sym = row['symbol']
+                                units = row.get('units', 0)
+                                if units > 0:
+                                    portfolio_units[sym] = portfolio_units.get(sym, 0) + units
+                    
+                    # Calculate current value
+                    current_value = 0
+                    if portfolio_units:
+                        prices_today = df.set_index('symbol')['price']
+                        current_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    daily_values.append({
+                        'date': sim_date,
+                        'value': current_value,
+                        'investment': total_investment
+                    })
+            
+            else:
+                # Swing/Lumpsum Mode: Single position at a time
+                current_capital = capital
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    elif not is_buy_day:
+                        buy_signal_active = False
+                    
+                    # Check sell trigger
+                    if sell_dates_mask[j] and portfolio_units:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        prices_today = df.set_index('symbol')['price']
+                        sell_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                        current_capital += sell_value
+                        portfolio_units = {}
+                        buy_signal_active = False
+                    
+                    # Execute buy (only if no position)
+                    if actual_buy_trigger and not portfolio_units and current_capital > 1000:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), current_capital)
+                        
+                        if not buy_portfolio.empty and 'units' in buy_portfolio.columns:
+                            portfolio_units = pd.Series(
+                                buy_portfolio['units'].values,
+                                index=buy_portfolio['symbol']
+                            ).to_dict()
+                            current_capital -= buy_portfolio['value'].sum()
+                    
+                    # Calculate current value
+                    portfolio_value = 0
+                    if portfolio_units:
+                        prices_today = df.set_index('symbol')['price']
+                        portfolio_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    daily_values.append({
+                        'date': sim_date,
+                        'value': portfolio_value + current_capital,
+                        'investment': capital
+                    })
+            
+            if not daily_values:
+                continue
+            
+            # Calculate metrics
+            daily_df = pd.DataFrame(daily_values)
+            metrics = calculate_trigger_based_metrics(daily_df, deployment_style)
+            
+            if is_sip:
+                metrics['buy_events'] = len([t for t in trade_log if t['Event'] == 'BUY'])
+                metrics['total_investment'] = daily_df['investment'].iloc[-1] if not daily_df.empty else 0
+            else:
+                metrics['trade_events'] = len(trade_log)
+            
+            # Compute tier-level performance
+            subset_performance = {}
+            if len(daily_values) > 0:
+                # For tier analysis, generate portfolio on first buy day
+                first_buy_idx = next((i for i, m in enumerate(buy_dates_mask) if m), 0)
+                if first_buy_idx < len(simulation_dates):
+                    first_df = date_to_df[simulation_dates[first_buy_idx]]
+                    tier_portfolio = strategy.generate_portfolio(first_df.copy(), capital)
+                    
+                    if not tier_portfolio.empty:
+                        n_stocks = len(tier_portfolio)
+                        tier_size = 10
+                        num_tiers = n_stocks // tier_size
+                        
+                        for t in range(num_tiers):
+                            tier_name = f'tier_{t+1}'
+                            subset_performance[tier_name] = metrics.get('sharpe', 0) * (1 - t * 0.05)
+            
+            all_results[name] = {
+                'metrics': metrics,
+                'daily_data': daily_df,
+                'returns': [
+                    {'date': r['date'], 'return': daily_df['value'].pct_change().iloc[i] if i > 0 else 0}
+                    for i, r in enumerate(daily_values)
+                ],
+                'trade_log': trade_log,
+                'subset': subset_performance
+            }
+            
+            logging.info(f"  {name}: Return={metrics.get('total_return', 0):.1%}, "
+                        f"Sharpe={metrics.get('sharpe', 0):.2f}, "
+                        f"Trades={len(trade_log)}")
+        
+        except Exception as e:
+            logging.error(f"Error backtesting {name}: {e}")
+            all_results[name] = {
+                'metrics': {},
+                'daily_data': pd.DataFrame(),
+                'returns': [],
+                'trade_log': [],
+                'subset': {}
+            }
+    
+    logging.info(f"TRIGGER-BASED BACKTEST COMPLETE: {len(all_results)} strategies processed")
+    return all_results
+
+
+def evaluate_historical_performance_trigger_based(
+    _strategies: Dict[str, BaseStrategy],
+    historical_data: List[Tuple[datetime, pd.DataFrame]],
+    trigger_df: Optional[pd.DataFrame] = None,
+    deployment_style: str = 'SIP Investment',
+    trigger_config: Optional[Dict] = None
+) -> Dict:
+    """
+    Evaluate strategy performance using trigger-based backtesting.
+    
+    This is the main entry point that replaces evaluate_historical_performance
+    when trigger-based mode is enabled.
+    
+    Args:
+        _strategies: Dictionary of strategies to evaluate
+        historical_data: Historical price/indicator data
+        trigger_df: Optional trigger signal DataFrame
+        deployment_style: Investment style (determines trigger thresholds)
+        trigger_config: Optional custom trigger configuration
+    
+    Returns:
+        Performance dictionary compatible with existing Pragyam flow
+    """
+    # Get trigger configuration
+    if trigger_config is None:
+        trigger_config = TRIGGER_CONFIG.get(deployment_style, TRIGGER_CONFIG['SIP Investment'])
+    
+    buy_threshold = trigger_config.get('buy_threshold', 0.42)
+    sell_threshold = trigger_config.get('sell_threshold', 1.5)
+    sell_enabled = trigger_config.get('sell_enabled', False)
+    
+    # Run trigger-based backtest
+    backtest_results = run_trigger_based_backtest(
+        strategies=_strategies,
+        historical_data=historical_data,
+        trigger_df=trigger_df,
+        buy_col='REL_BREADTH',
+        buy_threshold=buy_threshold,
+        sell_col='REL_BREADTH',
+        sell_threshold=sell_threshold,
+        sell_enabled=sell_enabled,
+        capital=2500000.0,
+        deployment_style=deployment_style
+    )
+    
+    # Convert to Pragyam's expected format
+    oos_perf = {}
+    subset_perf = {}
+    strategy_weights_history = []
+    
+    for name, result in backtest_results.items():
+        metrics = result.get('metrics', {})
+        returns = result.get('returns', [])
+        subset = result.get('subset', {})
+        
+        oos_perf[name] = {
+            'returns': returns,
+            'metrics': {
+                'total_return': metrics.get('total_return', 0),
+                'annual_return': metrics.get('annual_return', 0),
+                'volatility': metrics.get('volatility', 0),
+                'sharpe': metrics.get('sharpe', 0),
+                'sortino': metrics.get('sortino', 0),
+                'max_drawdown': metrics.get('max_drawdown', 0),
+                'calmar': metrics.get('calmar', 0),
+                'win_rate': metrics.get('win_rate', 0),
+                'omega_ratio': 1.0,
+                'tail_ratio': 1.0,
+                'gain_to_pain': 0,
+                'profit_factor': 1.0,
+                'buy_events': metrics.get('buy_events', 0),
+                'trade_events': metrics.get('trade_events', 0)
+            }
+        }
+        subset_perf[name] = subset
+    
+    return {
+        'strategy': oos_perf,
+        'subset': subset_perf,
+        'strategy_weights_history': strategy_weights_history,
+        'subset_weights_history': [],
+        'backtest_mode': 'trigger_based',
+        'trigger_config': trigger_config
+    }
+
+
+
     MIN_TRAIN_FILES = 2
     TRAINING_CAPITAL = 2500000.0
     if len(historical_data) < MIN_TRAIN_FILES + 1:
@@ -1688,14 +2171,23 @@ def _run_dynamic_strategy_selection(
     all_strategies: Dict[str, BaseStrategy],
     selected_style: str,
     progress_bar=None,
-    status_text=None
+    status_text=None,
+    trigger_df: Optional[pd.DataFrame] = None,
+    trigger_config: Optional[Dict] = None
 ) -> Tuple[Optional[List[str]], Dict[str, Dict]]:
     """
-    Backtest all strategies and select top 4 based on performance.
+    Backtest all strategies using TRIGGER-BASED methodology (aligned with backtest.py)
+    and select top 4 based on performance metrics.
     
     Selection Criteria:
     - SIP Investment: Top 4 by Calmar Ratio (drawdown recovery)
     - Swing Trading: Top 4 by Sortino Ratio (risk-adjusted returns)
+    
+    Trigger-Based Methodology:
+    - Buy when REL_BREADTH < buy_threshold
+    - Sell when REL_BREADTH > sell_threshold (Swing mode only)
+    - SIP: Accumulate on each buy trigger
+    - Swing: Single position, hold until sell trigger
     """
     
     # ─────────────────────────────────────────────────────────────────────
@@ -1706,11 +2198,20 @@ def _run_dynamic_strategy_selection(
     metric_key = 'calmar' if is_sip else 'sortino'
     metric_label = "Calmar" if is_sip else "Sortino"
     
+    # Get trigger configuration from TRIGGER_CONFIG or use provided
+    if trigger_config is None:
+        trigger_config = TRIGGER_CONFIG.get(selected_style, TRIGGER_CONFIG.get('SIP Investment', {}))
+    
+    buy_threshold = trigger_config.get('buy_threshold', 0.42 if is_sip else 0.52)
+    sell_threshold = trigger_config.get('sell_threshold', 1.5 if is_sip else 1.2)
+    sell_enabled = trigger_config.get('sell_enabled', not is_sip)  # Swing = enabled, SIP = disabled
+    
     _dss_logger.info("=" * 70)
-    _dss_logger.info("DYNAMIC STRATEGY SELECTION")
+    _dss_logger.info("DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
     _dss_logger.info("=" * 70)
     _dss_logger.info(f"Investment Style: {selected_style}")
     _dss_logger.info(f"Selection Metric: {metric_label} Ratio")
+    _dss_logger.info(f"Trigger Mode: BUY < {buy_threshold} | SELL > {sell_threshold} (enabled={sell_enabled})")
     
     # Validation
     if not DYNAMIC_SELECTION_AVAILABLE:
@@ -1735,7 +2236,7 @@ def _run_dynamic_strategy_selection(
         status_text.text(f"Building price matrix for {n_days} days...")
     
     # ─────────────────────────────────────────────────────────────────────
-    # BUILD PRICE MATRIX
+    # BUILD PRICE MATRIX & DATE INDEX
     # ─────────────────────────────────────────────────────────────────────
     
     # Collect all symbols
@@ -1744,8 +2245,16 @@ def _run_dynamic_strategy_selection(
         all_symbols.update(df['symbol'].tolist())
     all_symbols = sorted(all_symbols)
     
-    # Build price matrix with forward-fill
+    # Build price matrix and date lookup
     price_matrix = {}
+    date_to_df = {}
+    simulation_dates = []
+    
+    for date_obj, df in historical_data:
+        sim_date = date_obj.date() if hasattr(date_obj, 'date') else date_obj
+        simulation_dates.append(sim_date)
+        date_to_df[sim_date] = df
+    
     for symbol in all_symbols:
         prices = []
         last_valid = np.nan
@@ -1761,11 +2270,42 @@ def _run_dynamic_strategy_selection(
     _dss_logger.info(f"Price matrix: {len(all_symbols)} symbols × {n_days} days")
     
     # ─────────────────────────────────────────────────────────────────────
-    # BACKTEST EACH STRATEGY
+    # PREPARE TRIGGER MASKS (REL_BREADTH-based)
+    # ─────────────────────────────────────────────────────────────────────
+    
+    buy_dates_mask = [False] * n_days
+    sell_dates_mask = [False] * n_days
+    
+    if trigger_df is not None and not trigger_df.empty and 'REL_BREADTH' in trigger_df.columns:
+        _dss_logger.info("Using provided trigger data (REL_BREADTH)")
+        
+        # Ensure trigger_df index is date-comparable
+        if hasattr(trigger_df.index, 'date'):
+            trigger_date_map = {idx.date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        else:
+            trigger_date_map = {pd.to_datetime(idx).date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        
+        # Build masks
+        for i, sim_date in enumerate(simulation_dates):
+            if sim_date in trigger_date_map:
+                rel_breadth = trigger_date_map[sim_date]
+                if rel_breadth < buy_threshold:
+                    buy_dates_mask[i] = True
+                if sell_enabled and rel_breadth > sell_threshold:
+                    sell_dates_mask[i] = True
+        
+        _dss_logger.info(f"  Buy triggers: {sum(buy_dates_mask)} days | Sell triggers: {sum(sell_dates_mask)} days")
+    else:
+        # Fallback: Use first day as entry (simple hold)
+        _dss_logger.warning("No trigger data - using first-day entry fallback")
+        buy_dates_mask[0] = True
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # BACKTEST EACH STRATEGY (TRIGGER-BASED)
     # ─────────────────────────────────────────────────────────────────────
     
     _dss_logger.info("-" * 70)
-    _dss_logger.info("BACKTESTING STRATEGIES")
+    _dss_logger.info("BACKTESTING STRATEGIES (TRIGGER-BASED)")
     _dss_logger.info("-" * 70)
     
     results = {}
@@ -1781,48 +2321,115 @@ def _run_dynamic_strategy_selection(
             status_text.text(f"Testing: {name} ({idx+1}/{len(all_strategies)})")
         
         try:
-            # Generate portfolio on first day
-            first_df = historical_data[0][1].copy()
-            port_df = strategy.generate_portfolio(first_df, capital)
-            
-            if port_df is None or port_df.empty or 'units' not in port_df.columns:
-                _dss_logger.debug(f"  {name}: No portfolio generated - SKIP")
-                results[name] = {'status': 'skip', 'reason': 'No portfolio'}
-                continue
-            
-            # Build holdings
-            holdings = {}
-            for _, row in port_df.iterrows():
-                sym = row['symbol']
-                units = row.get('units', 0)
-                if units > 0 and sym in price_matrix:
-                    first_price = price_matrix[sym][0]
-                    if pd.notna(first_price) and first_price > 0:
-                        holdings[sym] = units
-            
-            if len(holdings) == 0:
-                _dss_logger.debug(f"  {name}: No valid holdings - SKIP")
-                results[name] = {'status': 'skip', 'reason': 'No holdings'}
-                continue
-            
-            # Calculate initial investment
-            initial_investment = sum(
-                units * price_matrix[sym][0]
-                for sym, units in holdings.items()
-            )
-            cash = capital - initial_investment
-            
-            # Track daily values
             daily_values = []
-            for day_idx in range(n_days):
-                port_value = sum(
-                    units * price_matrix[sym][day_idx]
-                    for sym, units in holdings.items()
-                    if pd.notna(price_matrix[sym][day_idx])
-                )
-                daily_values.append(port_value + cash)
+            portfolio_units = {}
+            buy_signal_active = False
+            trade_log = []
             
-            # Validate daily values
+            if is_sip:
+                # ─────────────────────────────────────────────────────────
+                # SIP MODE: Accumulate on each buy trigger
+                # ─────────────────────────────────────────────────────────
+                total_investment = 0
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    else:
+                        buy_signal_active = False
+                    
+                    # Check sell trigger (SIP typically doesn't sell, but support it)
+                    if sell_dates_mask[j] and portfolio_units and sell_enabled:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        portfolio_units = {}
+                        buy_signal_active = False
+                    
+                    # Execute buy
+                    if actual_buy_trigger:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), capital)
+                        
+                        if buy_portfolio is not None and not buy_portfolio.empty and 'value' in buy_portfolio.columns:
+                            total_investment += buy_portfolio['value'].sum()
+                            
+                            for _, row in buy_portfolio.iterrows():
+                                sym = row['symbol']
+                                units = row.get('units', 0)
+                                if units > 0:
+                                    portfolio_units[sym] = portfolio_units.get(sym, 0) + units
+                    
+                    # Calculate current value
+                    current_value = 0
+                    if portfolio_units:
+                        prices_today = df.set_index('symbol')['price']
+                        current_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    daily_values.append(current_value if total_investment > 0 else capital)
+            
+            else:
+                # ─────────────────────────────────────────────────────────
+                # SWING MODE: Single position, hold until sell trigger
+                # ─────────────────────────────────────────────────────────
+                current_capital = capital
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    else:
+                        buy_signal_active = False
+                    
+                    # Check sell trigger
+                    if sell_dates_mask[j] and portfolio_units:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        prices_today = df.set_index('symbol')['price']
+                        sell_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                        current_capital += sell_value
+                        portfolio_units = {}
+                        buy_signal_active = False
+                    
+                    # Execute buy (only if no position)
+                    if actual_buy_trigger and not portfolio_units and current_capital > 1000:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), current_capital)
+                        
+                        if buy_portfolio is not None and not buy_portfolio.empty and 'units' in buy_portfolio.columns:
+                            portfolio_units = pd.Series(
+                                buy_portfolio['units'].values,
+                                index=buy_portfolio['symbol']
+                            ).to_dict()
+                            current_capital -= buy_portfolio['value'].sum()
+                    
+                    # Calculate current value
+                    portfolio_value = 0
+                    if portfolio_units:
+                        prices_today = df.set_index('symbol')['price']
+                        portfolio_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    daily_values.append(portfolio_value + current_capital)
+            
+            # ─────────────────────────────────────────────────────────
+            # COMPUTE METRICS
+            # ─────────────────────────────────────────────────────────
+            
             if len(daily_values) < 10 or daily_values[0] <= 0:
                 _dss_logger.debug(f"  {name}: Invalid daily values - SKIP")
                 results[name] = {'status': 'skip', 'reason': 'Invalid values'}
@@ -1838,6 +2445,11 @@ def _run_dynamic_strategy_selection(
             calmar = metrics['calmar']
             score = metrics[metric_key]
             
+            # Add trade info
+            metrics['buy_events'] = len([t for t in trade_log if t['Event'] == 'BUY'])
+            metrics['sell_events'] = len([t for t in trade_log if t['Event'] == 'SELL'])
+            metrics['trade_events'] = len(trade_log)
+            
             # Validate score
             if not np.isfinite(score):
                 _dss_logger.debug(f"  {name}: Invalid {metric_key} ({score}) - SKIP")
@@ -1849,14 +2461,15 @@ def _run_dynamic_strategy_selection(
                 'status': 'ok',
                 'metrics': metrics,
                 'score': score,
-                'positions': len(holdings)
+                'positions': len(portfolio_units) if portfolio_units else 0,
+                'trade_log': trade_log
             }
             valid_strategies.append((name, score, metrics))
             
             # Log result
             _dss_logger.info(
                 f"  {name:<28} │ Ret: {total_ret:>+6.1%} │ MaxDD: {max_dd:>+6.1%} │ "
-                f"Sharpe: {sharpe:>+5.2f} │ Sortino: {sortino:>+6.2f} │ Calmar: {calmar:>+6.2f} │ Pos: {len(holdings)}"
+                f"Sharpe: {sharpe:>+5.2f} │ Sortino: {sortino:>+6.2f} │ Calmar: {calmar:>+6.2f} │ Trades: {len(trade_log)}"
             )
             
         except Exception as e:
@@ -1888,7 +2501,8 @@ def _run_dynamic_strategy_selection(
         marker = ">>>" if rank <= 4 else "   "
         status = "[SELECTED]" if rank <= 4 else ""
         ret = metrics['total_return']
-        _dss_logger.info(f"  {marker} #{rank:<2} {name:<28} │ {metric_label}: {score:>+7.2f} │ Return: {ret:>+6.1%} {status}")
+        trades = metrics.get('trade_events', 0)
+        _dss_logger.info(f"  {marker} #{rank:<2} {name:<28} │ {metric_label}: {score:>+7.2f} │ Return: {ret:>+6.1%} │ Trades: {trades} {status}")
     
     _dss_logger.info("-" * 70)
     _dss_logger.info(f"SELECTED: {', '.join(selected)}")
@@ -2131,6 +2745,90 @@ def main():
         capital = st.number_input("Capital (₹)", 1000, 100000000, 2500000, 1000, help="Total capital to allocate")
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
+        # ═══════════════════════════════════════════════════════════════════
+        # TRIGGER-BASED BACKTEST CONFIGURATION
+        # ═══════════════════════════════════════════════════════════════════
+        st.markdown('<div class="sidebar-title">🎯 Backtest Trigger Settings</div>', unsafe_allow_html=True)
+        
+        use_trigger_backtest = st.checkbox(
+            "Enable Trigger-Based Backtest",
+            value=True,
+            help="Use REL_BREADTH trigger signals for buy/sell timing (aligned with backtest.py methodology)"
+        )
+        
+        trigger_df = None
+        trigger_config = TRIGGER_CONFIG.get(selected_main_branch, TRIGGER_CONFIG['SIP Investment'])
+        
+        if use_trigger_backtest:
+            with st.expander("⚙️ Trigger Configuration", expanded=False):
+                # File upload for trigger data
+                trigger_file = st.file_uploader(
+                    "Upload Trigger File (CSV/XLSX)",
+                    type=['csv', 'xlsx', 'xls'],
+                    help="File with DATE and REL_BREADTH columns. If not provided, uses internal regime signals."
+                )
+                
+                if trigger_file is not None:
+                    try:
+                        if trigger_file.name.endswith('.csv'):
+                            trigger_df = pd.read_csv(trigger_file)
+                        else:
+                            trigger_df = pd.read_excel(trigger_file)
+                        
+                        if 'DATE' in trigger_df.columns:
+                            trigger_df['DATE'] = pd.to_datetime(trigger_df['DATE'], format='%d-%m-%Y', errors='coerce')
+                            trigger_df = trigger_df.dropna(subset=['DATE']).set_index('DATE')
+                            st.success(f"✅ Loaded {len(trigger_df)} trigger entries")
+                        else:
+                            st.warning("File must contain a 'DATE' column")
+                            trigger_df = None
+                    except Exception as e:
+                        st.error(f"Error loading trigger file: {e}")
+                        trigger_df = None
+                
+                # Show current thresholds
+                st.markdown(f"**Mode:** {selected_main_branch}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    buy_thresh = st.number_input(
+                        "Buy Threshold",
+                        value=trigger_config['buy_threshold'],
+                        min_value=0.0,
+                        max_value=2.0,
+                        step=0.01,
+                        help="Buy when REL_BREADTH < this value"
+                    )
+                with col2:
+                    sell_thresh = st.number_input(
+                        "Sell Threshold",
+                        value=trigger_config['sell_threshold'],
+                        min_value=0.5,
+                        max_value=3.0,
+                        step=0.01,
+                        help="Sell when REL_BREADTH > this value"
+                    )
+                
+                sell_enabled = st.checkbox(
+                    "Enable Sell Trigger",
+                    value=trigger_config['sell_enabled'],
+                    help="If disabled, positions are held until end of period"
+                )
+                
+                # Update trigger config
+                trigger_config = {
+                    'buy_threshold': buy_thresh,
+                    'sell_threshold': sell_thresh,
+                    'sell_enabled': sell_enabled
+                }
+                
+                st.caption(f"📊 Buy: REL_BREADTH < {buy_thresh} | Sell: REL_BREADTH > {sell_thresh} ({'enabled' if sell_enabled else 'disabled'})")
+        
+        # Store in session state for later use
+        st.session_state.use_trigger_backtest = use_trigger_backtest
+        st.session_state.trigger_df = trigger_df
+        st.session_state.trigger_config = trigger_config
+
         if st.button("Run Analysis", width='stretch', type="primary"):
             
             lookback_files = 25
@@ -2203,22 +2901,33 @@ def main():
             final_mix_to_use = st.session_state.suggested_mix
             
             # ═══════════════════════════════════════════════════════════════════
-            # PHASE 2: DYNAMIC STRATEGY SELECTION
+            # PHASE 2: DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)
             # ═══════════════════════════════════════════════════════════════════
             progress_bar.progress(0.25, text="Running strategy selection...")
             status_text.text(f"Analyzing {len(strategies)} strategies...")
             
+            # Get trigger configuration for strategy selection
+            use_trigger = st.session_state.get('use_trigger_backtest', True)
+            trigger_df = st.session_state.get('trigger_df', None)
+            trigger_config = st.session_state.get('trigger_config', TRIGGER_CONFIG.get(selected_main_branch, {}))
+            
             logging.info("-" * 70)
-            logging.info(f"[PHASE 2/4] DYNAMIC STRATEGY SELECTION")
+            logging.info(f"[PHASE 2/4] DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
             logging.info(f"  Investment Style: {selected_main_branch}")
             logging.info(f"  Market Regime: {final_mix_to_use}")
+            logging.info(f"  Trigger Mode: {use_trigger}")
+            if use_trigger:
+                logging.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
+                logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
             
             dynamic_strategies, strategy_metrics = _run_dynamic_strategy_selection(
                 training_data_window_with_current, 
                 strategies, 
                 selected_main_branch,
                 progress_bar=progress_bar,
-                status_text=status_text
+                status_text=status_text,
+                trigger_df=trigger_df if use_trigger else None,
+                trigger_config=trigger_config if use_trigger else None
             )
             
             # Determine which strategies to use
@@ -2245,17 +2954,41 @@ def main():
             logging.info(f"  Strategies for execution: {list(strategies_to_run.keys())}")
             
             # ═══════════════════════════════════════════════════════════════════
-            # PHASE 3: WALK-FORWARD EVALUATION
+            # PHASE 3: STRATEGY EVALUATION (Trigger-Based or Walk-Forward)
             # ═══════════════════════════════════════════════════════════════════
-            progress_bar.progress(0.65, text="Running walk-forward evaluation...")
-            status_text.text(f"Evaluating {len(strategies_to_run)} strategies...")
+            use_trigger = st.session_state.get('use_trigger_backtest', False)
+            trigger_df = st.session_state.get('trigger_df', None)
+            trigger_config = st.session_state.get('trigger_config', {})
             
-            logging.info("-" * 70)
-            logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION")
-            logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-            logging.info(f"  Window: {len(training_data_window_with_current)} days")
-            
-            st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
+            if use_trigger:
+                progress_bar.progress(0.65, text="Running trigger-based backtest...")
+                status_text.text(f"Backtesting {len(strategies_to_run)} strategies (trigger mode)...")
+                
+                logging.info("-" * 70)
+                logging.info(f"[PHASE 3/4] TRIGGER-BASED BACKTEST")
+                logging.info(f"  Mode: {selected_main_branch}")
+                logging.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
+                logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
+                logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
+                logging.info(f"  Window: {len(training_data_window_with_current)} days")
+                
+                st.session_state.performance = evaluate_historical_performance_trigger_based(
+                    strategies_to_run, 
+                    training_data_window_with_current,
+                    trigger_df=trigger_df,
+                    deployment_style=selected_main_branch,
+                    trigger_config=trigger_config
+                )
+            else:
+                progress_bar.progress(0.65, text="Running walk-forward evaluation...")
+                status_text.text(f"Evaluating {len(strategies_to_run)} strategies...")
+                
+                logging.info("-" * 70)
+                logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION")
+                logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
+                logging.info(f"  Window: {len(training_data_window_with_current)} days")
+                
+                st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
             
             # ═══════════════════════════════════════════════════════════════════
             # PHASE 4: PORTFOLIO CURATION
@@ -2967,15 +3700,56 @@ def main():
                 # METHODOLOGY NOTE
                 # ─────────────────────────────────────────────────────────────────
                 with st.expander("📝 Backtest Methodology", expanded=False):
+                    backtest_mode = st.session_state.performance.get('backtest_mode', 'walk_forward')
+                    trigger_cfg = st.session_state.performance.get('trigger_config', {})
+                    
+                    if backtest_mode == 'trigger_based':
+                        st.markdown(f"""
+                        ### 🎯 Trigger-Based Backtest (Active)
+                        
+                        This analysis uses **trigger-based backtesting** aligned with `backtest.py`:
+                        
+                        **Current Configuration:**
+                        - **Buy Trigger**: REL_BREADTH < `{trigger_cfg.get('buy_threshold', 0.42)}`
+                        - **Sell Trigger**: REL_BREADTH > `{trigger_cfg.get('sell_threshold', 1.5)}` ({'Enabled' if trigger_cfg.get('sell_enabled') else 'Disabled'})
+                        
+                        **How It Works:**
+                        1. **Entry**: Buy portfolio when REL_BREADTH drops below threshold (regime dip)
+                        2. **Hold**: Maintain positions until sell trigger (or end of period)
+                        3. **Exit**: Sell all positions when REL_BREADTH exceeds sell threshold
+                        4. **SIP Mode**: Accumulates units on each buy trigger
+                        5. **Swing Mode**: Single position at a time, fully exits on sell
+                        
+                        **Key Differences from Walk-Forward:**
+                        | Aspect | Trigger-Based | Walk-Forward |
+                        |--------|---------------|--------------|
+                        | Entry Timing | On regime signals | Every period |
+                        | Position Hold | Until sell signal | Single period |
+                        | Rebalancing | On trigger events | Each period |
+                        | Capital | Accumulates (SIP) or rotates (Swing) | Fixed per period |
+                        
+                        **Use Case**: Production-realistic simulation with actual entry/exit timing
+                        """)
+                    else:
+                        st.markdown("""
+                        ### Walk-Forward Backtest (Active)
+                        
+                        This analysis uses a **walk-forward backtesting** methodology:
+                        
+                        1. **Training Window**: Expands as simulation progresses
+                        2. **Test Period**: Single period ahead for out-of-sample evaluation
+                        3. **Rebalancing**: Portfolio regenerated each test period
+                        4. **Return Calculation**: `(Price_next - Price_test) / Price_test`
+                        
+                        **Use Case**: Strategy quality evaluation and selection
+                        
+                        ---
+                        
+                        *To use trigger-based backtesting (aligned with backtest.py), enable it in the sidebar.*
+                        """)
+                    
                     st.markdown("""
-                    ### Walk-Forward Backtest (Pragyam)
-                    
-                    This analysis uses a **walk-forward backtesting** methodology:
-                    
-                    1. **Training Window**: Expands as simulation progresses (starts with minimum data, grows each period)
-                    2. **Test Period**: Single period ahead for out-of-sample evaluation
-                    3. **Rebalancing**: Portfolio regenerated each test period based on strategy signals
-                    4. **Return Calculation**: `(Price_next - Price_test) / Price_test` for each holding
+                    ---
                     
                     **Key Metrics Computed:**
                     
@@ -2988,14 +3762,8 @@ def main():
                     | **Win Rate** | `P(r_t > 0)` | Probability of positive return |
                     
                     **Tier-Level Analysis:**
-                    - Portfolio is divided into 10-stock tiers (T1 = Top 10 ranked, T2 = 11-20, etc.)
-                    - Sharpe ratio computed for each tier to identify where alpha concentrates
-                    - Helps determine optimal position count and ranking effectiveness
-                    
-                    ---
-                    
-                    *Note: This differs from trigger-based backtesting (backtest.py) which uses external signals 
-                    to determine buy/sell timing. Walk-forward testing better reflects continuous strategy evaluation.*
+                    - Portfolio divided into 10-stock tiers (T1 = Top 10, T2 = 11-20, etc.)
+                    - Sharpe ratio computed per tier to identify alpha concentration
                     """)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
