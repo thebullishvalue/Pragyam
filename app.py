@@ -108,27 +108,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "v3.2.0"  # Unified UI/UX + Trigger-Based Backtest + Hedge Fund Grade Analytics
+VERSION = "v3.3.0"  # Unified UI/UX + Trigger-Based Backtest (Fixed System Source)
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
-# --- Trigger-Based Backtest Configuration ---
-# Default thresholds for REL_BREADTH trigger (from backtest.py)
+# --- Trigger-Based Backtest Configuration (FIXED SYSTEM LOGIC) ---
 TRIGGER_CONFIG = {
     'SIP Investment': {
-        'buy_threshold': 0.42,   # Buy when REL_BREADTH < 0.42
-        'sell_threshold': 1.5,   # Sell when REL_BREADTH > 1.5 (disabled by default)
-        'sell_enabled': False,
-        'description': 'Systematic accumulation on regime dips'
+        'buy_threshold': 0.42,    # Buy when REL_BREADTH < 0.42
+        'sell_threshold': 999.0,  # Effectively disabled
+        'sell_enabled': False,    # Explicitly disabled
+        'description': 'Systematic accumulation on regime dips (< 0.42)'
     },
     'Swing Trading': {
-        'buy_threshold': 0.52,   # Buy when REL_BREADTH < 0.52  
-        'sell_threshold': 1.2,   # Sell when REL_BREADTH > 1.2
+        'buy_threshold': 0.42,   # Buy when REL_BREADTH < 0.42
+        'sell_threshold': 0.50,  # Sell when REL_BREADTH > 0.50
         'sell_enabled': True,
-        'description': 'Tactical entry/exit on regime signals'
+        'description': 'Tactical entry (< 0.42) and exit (> 0.50)'
     },
+    # Fallback/Legacy
     'All Weather': {
-        'buy_threshold': 0.50,   # Moderate threshold
+        'buy_threshold': 0.42,
         'sell_threshold': 1.3,
         'sell_enabled': False,
         'description': 'Balanced regime-aware allocation'
@@ -486,6 +486,7 @@ if 'suggested_mix' not in st.session_state: st.session_state.suggested_mix = Non
 if 'regime_display' not in st.session_state: st.session_state.regime_display = None # For sidebar display
 if 'min_pos_pct' not in st.session_state: st.session_state.min_pos_pct = 1.0
 if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 10.0
+if 'trigger_df' not in st.session_state: st.session_state.trigger_df = None
 
 # --- Base Classes and Utilities ---
 def fix_csv_export(df: pd.DataFrame) -> bytes:
@@ -498,6 +499,34 @@ def create_export_link(data_bytes, filename):
     b64 = base64.b64encode(data_bytes).decode()
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-link">Download Portfolio CSV</a>'
     return href
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_system_trigger_data() -> Optional[pd.DataFrame]:
+    """
+    Fetches trigger data (REL_BREADTH) from the fixed system Google Sheet.
+    URL: https://docs.google.com/spreadsheets/d/1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/edit?usp=sharing
+    """
+    sheet_id = "1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c"
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    
+    try:
+        df = pd.read_csv(url)
+        # Normalize column names
+        df.columns = [c.strip() for c in df.columns]
+        
+        if 'DATE' in df.columns and 'REL_BREADTH' in df.columns:
+            # Try parsing day-first (common in IN/UK) then standard ISO
+            df['DATE'] = pd.to_datetime(df['DATE'], dayfirst=True, errors='coerce')
+            df = df.dropna(subset=['DATE', 'REL_BREADTH'])
+            df = df.set_index('DATE').sort_index()
+            df['REL_BREADTH'] = pd.to_numeric(df['REL_BREADTH'], errors='coerce')
+            return df
+        else:
+            logging.error("Trigger Sheet Missing Columns: Needs DATE and REL_BREADTH")
+            return None
+    except Exception as e:
+        logging.error(f"System Trigger Fetch Error: {e}")
+        return None
 
 # =========================================================================
 # --- Live Data Loading Function ---
@@ -547,15 +576,6 @@ def compute_portfolio_return(portfolio: pd.DataFrame, next_prices: pd.DataFrame)
 def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, float]:
     """
     Calculate comprehensive risk-adjusted performance metrics.
-    
-    Mathematical Framework:
-    - CAGR: Compound Annual Growth Rate via geometric mean
-    - Sharpe: Excess return per unit of total volatility (annualized)
-    - Sortino: Excess return per unit of downside deviation
-    - Calmar: CAGR / |Max Drawdown| - recovery efficiency metric
-    - Kelly: f* = p - q/b where p=win_rate, q=1-p, b=avg_win/avg_loss
-    
-    Uses proper time-weighted annualization factor.
     """
     default_metrics = {
         'total_return': 0, 'annual_return': 0, 'volatility': 0, 
@@ -719,13 +739,6 @@ def calculate_trigger_based_metrics(daily_data: pd.DataFrame, deployment_style: 
     """
     Calculate institutional metrics from trigger-based backtest daily values.
     Mirrors the calculate_institutional_metrics function from backtest.py.
-    
-    Args:
-        daily_data: DataFrame with 'date', 'value', 'investment' columns
-        deployment_style: 'SIP' or 'Swing'
-    
-    Returns:
-        Dictionary of performance metrics
     """
     if daily_data.empty or len(daily_data) < 2:
         return {}
@@ -839,23 +852,6 @@ def run_trigger_based_backtest(
     - Sell when trigger column > sell_threshold (if enabled)
     - SIP: accumulates units on each buy trigger
     - Swing: buy once, hold, sell on trigger
-    
-    Args:
-        strategies: Dictionary of strategy name -> strategy instance
-        historical_data: List of (date, DataFrame) tuples
-        trigger_df: DataFrame with trigger column (indexed by date)
-        buy_col: Column name for buy trigger
-        buy_threshold: Buy when value < this threshold
-        sell_col: Column name for sell trigger
-        sell_threshold: Sell when value > this threshold
-        sell_enabled: Whether to use sell trigger
-        capital: Capital per deployment
-        deployment_style: 'SIP' or 'Swing'
-        progress_bar: Optional Streamlit progress bar
-        status_text: Optional Streamlit status text
-    
-    Returns:
-        Dictionary with strategy metrics and performance data
     """
     logging.info(f"TRIGGER-BASED BACKTEST: {deployment_style} mode | {len(strategies)} strategies")
     logging.info(f"  Buy: {buy_col} < {buy_threshold} | Sell: {sell_col} > {sell_threshold} (enabled={sell_enabled})")
@@ -1093,19 +1089,6 @@ def evaluate_historical_performance_trigger_based(
 ) -> Dict:
     """
     Evaluate strategy performance using trigger-based backtesting.
-    
-    This is the main entry point that replaces evaluate_historical_performance
-    when trigger-based mode is enabled.
-    
-    Args:
-        _strategies: Dictionary of strategies to evaluate
-        historical_data: Historical price/indicator data
-        trigger_df: Optional trigger signal DataFrame
-        deployment_style: Investment style (determines trigger thresholds)
-        trigger_config: Optional custom trigger configuration
-    
-    Returns:
-        Performance dictionary compatible with existing Pragyam flow
     """
     # Get trigger configuration
     if trigger_config is None:
@@ -1170,7 +1153,8 @@ def evaluate_historical_performance_trigger_based(
     }
 
 
-
+def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], historical_data: List[Tuple[datetime, pd.DataFrame]]) -> Dict:
+    """Standard Walk-Forward Performance Evaluation"""
     MIN_TRAIN_FILES = 2
     TRAINING_CAPITAL = 2500000.0
     if len(historical_data) < MIN_TRAIN_FILES + 1:
@@ -1455,15 +1439,8 @@ class MarketRegimeDetectorV2:
     def _analyze_correlation_regime(self, df: pd.DataFrame) -> Dict:
         """
         Analyze cross-sectional correlation structure.
-        
-        High correlation (herding) often precedes market stress.
-        Low correlation indicates stock-picking environment.
-        
-        Mathematical approach: Compute pairwise correlation proxy via 
-        indicator agreement across the cross-section.
         """
         # Cross-sectional correlation proxy via indicator agreement
-        # When indicators agree across stocks, correlation is high
         rsi_median = df['rsi latest'].median()
         osc_median = df['osc latest'].median()
         
@@ -1506,12 +1483,6 @@ class MarketRegimeDetectorV2:
     def _analyze_velocity(self, window: list) -> Dict:
         """
         Analyze momentum velocity and acceleration.
-        
-        Velocity: First derivative of RSI (rate of change)
-        Acceleration: Second derivative (rate of change of velocity)
-        
-        Positive acceleration with positive velocity = strengthening momentum
-        Negative acceleration with positive velocity = momentum fading
         """
         if len(window) < 5: 
             return {'acceleration': 'UNKNOWN', 'score': 0.0, 'avg_velocity': 0.0, 'acceleration_value': 0.0}
@@ -2178,16 +2149,6 @@ def _run_dynamic_strategy_selection(
     """
     Backtest all strategies using TRIGGER-BASED methodology (aligned with backtest.py)
     and select top 4 based on performance metrics.
-    
-    Selection Criteria:
-    - SIP Investment: Top 4 by Calmar Ratio (drawdown recovery)
-    - Swing Trading: Top 4 by Sortino Ratio (risk-adjusted returns)
-    
-    Trigger-Based Methodology:
-    - Buy when REL_BREADTH < buy_threshold
-    - Sell when REL_BREADTH > sell_threshold (Swing mode only)
-    - SIP: Accumulate on each buy trigger
-    - Swing: Single position, hold until sell trigger
     """
     
     # ─────────────────────────────────────────────────────────────────────
@@ -2202,9 +2163,9 @@ def _run_dynamic_strategy_selection(
     if trigger_config is None:
         trigger_config = TRIGGER_CONFIG.get(selected_style, TRIGGER_CONFIG.get('SIP Investment', {}))
     
-    buy_threshold = trigger_config.get('buy_threshold', 0.42 if is_sip else 0.52)
-    sell_threshold = trigger_config.get('sell_threshold', 1.5 if is_sip else 1.2)
-    sell_enabled = trigger_config.get('sell_enabled', not is_sip)  # Swing = enabled, SIP = disabled
+    buy_threshold = trigger_config.get('buy_threshold', 0.42)
+    sell_threshold = trigger_config.get('sell_threshold', 999.9)
+    sell_enabled = trigger_config.get('sell_enabled', False)
     
     _dss_logger.info("=" * 70)
     _dss_logger.info("DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
@@ -2746,88 +2707,42 @@ def main():
         num_positions = st.slider("Number of Positions", 5, 100, 30, 5, help="Maximum positions in the final portfolio")
 
         # ═══════════════════════════════════════════════════════════════════
-        # TRIGGER-BASED BACKTEST CONFIGURATION
+        # SYSTEM MONITOR & TRIGGER CONFIG
         # ═══════════════════════════════════════════════════════════════════
-        st.markdown('<div class="sidebar-title">🎯 Backtest Trigger Settings</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">📡 System Monitor</div>', unsafe_allow_html=True)
         
-        use_trigger_backtest = st.checkbox(
-            "Enable Trigger-Based Backtest",
-            value=True,
-            help="Use REL_BREADTH trigger signals for buy/sell timing (aligned with backtest.py methodology)"
-        )
+        # Always fetch trigger data automatically
+        trigger_df = fetch_system_trigger_data()
         
-        trigger_df = None
-        trigger_config = TRIGGER_CONFIG.get(selected_main_branch, TRIGGER_CONFIG['SIP Investment'])
-        
-        if use_trigger_backtest:
-            with st.expander("⚙️ Trigger Configuration", expanded=False):
-                # File upload for trigger data
-                trigger_file = st.file_uploader(
-                    "Upload Trigger File (CSV/XLSX)",
-                    type=['csv', 'xlsx', 'xls'],
-                    help="File with DATE and REL_BREADTH columns. If not provided, uses internal regime signals."
-                )
+        if trigger_df is not None:
+            last_date = trigger_df.index[-1].strftime('%Y-%m-%d')
+            st.success(f"✅ Trigger Feed Active ({last_date})")
+            
+            # Get fixed config for selected style
+            trigger_config = TRIGGER_CONFIG.get(selected_main_branch, TRIGGER_CONFIG['SIP Investment'])
+            
+            # Store in session state for engine
+            st.session_state.use_trigger_backtest = True
+            st.session_state.trigger_df = trigger_df
+            st.session_state.trigger_config = trigger_config
+            
+            # Display active rules
+            with st.expander("Active Rules (System Locked)", expanded=True):
+                st.caption(f"**Mode:** {selected_main_branch}")
+                st.markdown(f"**Buy Trigger:** REL_BREADTH < `{trigger_config['buy_threshold']}`")
                 
-                if trigger_file is not None:
-                    try:
-                        if trigger_file.name.endswith('.csv'):
-                            trigger_df = pd.read_csv(trigger_file)
-                        else:
-                            trigger_df = pd.read_excel(trigger_file)
-                        
-                        if 'DATE' in trigger_df.columns:
-                            trigger_df['DATE'] = pd.to_datetime(trigger_df['DATE'], format='%d-%m-%Y', errors='coerce')
-                            trigger_df = trigger_df.dropna(subset=['DATE']).set_index('DATE')
-                            st.success(f"✅ Loaded {len(trigger_df)} trigger entries")
-                        else:
-                            st.warning("File must contain a 'DATE' column")
-                            trigger_df = None
-                    except Exception as e:
-                        st.error(f"Error loading trigger file: {e}")
-                        trigger_df = None
+                if trigger_config['sell_enabled']:
+                    st.markdown(f"**Sell Trigger:** REL_BREADTH > `{trigger_config['sell_threshold']}`")
+                else:
+                    st.markdown("**Sell Trigger:** `Disabled`")
                 
-                # Show current thresholds
-                st.markdown(f"**Mode:** {selected_main_branch}")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    buy_thresh = st.number_input(
-                        "Buy Threshold",
-                        value=trigger_config['buy_threshold'],
-                        min_value=0.0,
-                        max_value=2.0,
-                        step=0.01,
-                        help="Buy when REL_BREADTH < this value"
-                    )
-                with col2:
-                    sell_thresh = st.number_input(
-                        "Sell Threshold",
-                        value=trigger_config['sell_threshold'],
-                        min_value=0.5,
-                        max_value=3.0,
-                        step=0.01,
-                        help="Sell when REL_BREADTH > this value"
-                    )
-                
-                sell_enabled = st.checkbox(
-                    "Enable Sell Trigger",
-                    value=trigger_config['sell_enabled'],
-                    help="If disabled, positions are held until end of period"
-                )
-                
-                # Update trigger config
-                trigger_config = {
-                    'buy_threshold': buy_thresh,
-                    'sell_threshold': sell_thresh,
-                    'sell_enabled': sell_enabled
-                }
-                
-                st.caption(f"📊 Buy: REL_BREADTH < {buy_thresh} | Sell: REL_BREADTH > {sell_thresh} ({'enabled' if sell_enabled else 'disabled'})")
-        
-        # Store in session state for later use
-        st.session_state.use_trigger_backtest = use_trigger_backtest
-        st.session_state.trigger_df = trigger_df
-        st.session_state.trigger_config = trigger_config
+                st.info(trigger_config['description'])
+        else:
+            st.error("❌ System Feed Disconnected")
+            st.caption("Using internal fallback logic")
+            st.session_state.use_trigger_backtest = False
+            st.session_state.trigger_df = None
+            st.session_state.trigger_config = {}
 
         if st.button("Run Analysis", width='stretch', type="primary"):
             
@@ -2856,7 +2771,7 @@ def main():
             status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols")
             
             logging.info("=" * 70)
-            logging.info("PRAGYAM ANALYSIS ENGINE v2.1")
+            logging.info("PRAGYAM ANALYSIS ENGINE v3.3")
             logging.info("=" * 70)
             logging.info(f"[PHASE 1/4] DATA FETCHING")
             logging.info(f"  Symbols: {len(SYMBOLS_UNIVERSE)}")
