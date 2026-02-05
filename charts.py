@@ -170,7 +170,7 @@ def create_equity_drawdown_chart(
         shared_xaxes=True,
         vertical_spacing=0.12,
         row_heights=[0.7, 0.3],
-        subplot_titles=None
+        subplot_titles=["", ""]  # Empty strings instead of None to prevent 'undefined'
     )
     
     # Equity Curve - fill to minimum, not zero
@@ -349,7 +349,12 @@ def create_correlation_heatmap(
     title: str = "Strategy Correlation Matrix"
 ) -> go.Figure:
     """
-    Create institutional-grade correlation heatmap.
+    Create institutional-grade correlation heatmap with adaptive colorscale.
+    
+    The colorscale adapts to the actual data range for better visualization:
+    - For typical strategy correlations (all positive 0.3-0.9), uses a 
+      diverging scale centered on median correlation
+    - For mixed correlations, uses traditional -1 to +1 centered scale
     
     Args:
         corr_matrix: Correlation matrix DataFrame
@@ -358,38 +363,66 @@ def create_correlation_heatmap(
     Returns:
         Plotly Figure object
     """
-    # Custom colorscale: Blue (negative) -> Gray (zero) -> Red (positive)
-    colorscale = [
-        [0.0, '#3b82f6'],    # Blue (strong negative)
-        [0.25, '#60a5fa'],   # Light blue
-        [0.5, COLORS['muted']],  # Gray (zero)
-        [0.75, '#f87171'],   # Light red
-        [1.0, '#ef4444']     # Red (strong positive)
-    ]
+    # Analyze the correlation distribution (excluding diagonal)
+    corr_values = corr_matrix.values.flatten()
+    off_diag_mask = ~np.eye(len(corr_matrix), dtype=bool).flatten()
+    off_diag_corrs = corr_values[off_diag_mask]
+    
+    corr_min = np.nanmin(off_diag_corrs)
+    corr_max = np.nanmax(off_diag_corrs)
+    corr_median = np.nanmedian(off_diag_corrs)
+    
+    # Determine if correlations are mostly positive (typical for strategy portfolios)
+    # If minimum correlation > 0, adapt the colorscale
+    if corr_min > -0.1:
+        # All positive correlations - use a sequential-diverging scale
+        # Low correlation = cool (diversified, good) 
+        # High correlation = warm (concentrated, risk)
+        colorscale = [
+            [0.0, '#10b981'],      # Green (low corr = good diversification)
+            [0.25, '#34d399'],     # Light green
+            [0.5, '#fbbf24'],      # Yellow/amber (moderate)
+            [0.75, '#f97316'],     # Orange (higher corr)
+            [1.0, '#ef4444']       # Red (very high corr = concentration risk)
+        ]
+        # Set range from 0 to 1 for typical positive correlations
+        zmin, zmax, zmid = 0, 1, 0.5
+    else:
+        # Mixed correlations - use traditional blue-gray-red scale
+        colorscale = [
+            [0.0, '#3b82f6'],      # Blue (strong negative)
+            [0.25, '#60a5fa'],     # Light blue
+            [0.5, COLORS['muted']],  # Gray (zero)
+            [0.75, '#f87171'],     # Light red  
+            [1.0, '#ef4444']       # Red (strong positive)
+        ]
+        zmin, zmax, zmid = -1, 1, 0
     
     fig = go.Figure(data=go.Heatmap(
         z=corr_matrix.values,
         x=corr_matrix.columns,
         y=corr_matrix.index,
         colorscale=colorscale,
-        zmid=0,
-        zmin=-1,
-        zmax=1,
+        zmid=zmid,
+        zmin=zmin,
+        zmax=zmax,
         text=np.round(corr_matrix.values, 2),
         texttemplate='%{text}',
         textfont=dict(size=11, color='white'),
         hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>',
         colorbar=dict(
-            title=dict(text='Correlation', font=dict(color=COLORS['muted'])),
+            title=dict(text='ρ', font=dict(color=COLORS['muted'], size=14)),
             tickfont=dict(color=COLORS['muted']),
             thickness=15,
-            len=0.8
+            len=0.8,
+            tickvals=[zmin, zmid, zmax] if zmin == 0 else [-1, -0.5, 0, 0.5, 1],
+            ticktext=[f'{zmin:.1f}', f'{zmid:.1f}', f'{zmax:.1f}'] if zmin == 0 else ['-1', '-0.5', '0', '0.5', '1']
         )
     ))
     
     layout = get_chart_layout(
         title=f"<b>{title}</b>" if title else "",
-        height=max(300, len(corr_matrix) * 30),
+        height=max(300, len(corr_matrix) * 35),
         show_legend=False
     )
     fig.update_layout(**layout)
