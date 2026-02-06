@@ -2283,6 +2283,7 @@ def _compute_backtest_metrics(daily_values: List[float], periods_per_year: float
         sharpe = ann_return / volatility
     else:
         sharpe = 0.0
+    sharpe = np.clip(sharpe, -10, 10)
     result['sharpe'] = sharpe
     
     # Sortino Ratio (downside deviation)
@@ -2481,13 +2482,34 @@ def _run_dynamic_strategy_selection(
             
             if is_sip:
                 # ─────────────────────────────────────────────────────────
-                # SIP MODE: Accumulate on each buy trigger
+                # SIP MODE: Accumulate on each buy trigger, track TWR
                 # ─────────────────────────────────────────────────────────
-                total_investment = 0
+                # Uses Time-Weighted Return (NAV-index) methodology to
+                # measure pure investment performance independent of 
+                # capital injection effects. Same approach as mutual fund NAV.
+                nav_index = 1.0
+                prev_portfolio_value = 0.0
+                has_position = False
+                sip_amount = capital  # Each SIP installment
                 
                 for j, sim_date in enumerate(simulation_dates):
                     df = date_to_df[sim_date]
+                    prices_today = df.set_index('symbol')['price']
                     
+                    # Step 1: Compute current value of EXISTING holdings
+                    current_value = 0.0
+                    if portfolio_units:
+                        current_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    # Step 2: Update NAV based on market movement BEFORE any new investment
+                    if has_position and prev_portfolio_value > 0:
+                        day_return = (current_value - prev_portfolio_value) / prev_portfolio_value
+                        nav_index *= (1 + day_return)
+                    
+                    # Step 3: Check buy/sell triggers
                     is_buy_day = buy_dates_mask[j]
                     actual_buy_trigger = is_buy_day and not buy_signal_active
                     
@@ -2496,36 +2518,34 @@ def _run_dynamic_strategy_selection(
                     else:
                         buy_signal_active = False
                     
-                    # Check sell trigger (SIP typically doesn't sell, but support it)
+                    # Sell (SIP rarely sells, but support it)
                     if sell_dates_mask[j] and portfolio_units and sell_enabled:
                         trade_log.append({'Event': 'SELL', 'Date': sim_date})
                         portfolio_units = {}
-                        buy_signal_active = False
+                        has_position = False
+                        current_value = 0.0
                     
-                    # Execute buy
+                    # Step 4: Execute SIP buy (does NOT affect nav_index — TWR principle)
                     if actual_buy_trigger:
                         trade_log.append({'Event': 'BUY', 'Date': sim_date})
-                        buy_portfolio = strategy.generate_portfolio(df.copy(), capital)
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), sip_amount)
                         
                         if buy_portfolio is not None and not buy_portfolio.empty and 'value' in buy_portfolio.columns:
-                            total_investment += buy_portfolio['value'].sum()
-                            
                             for _, row in buy_portfolio.iterrows():
                                 sym = row['symbol']
                                 units = row.get('units', 0)
                                 if units > 0:
                                     portfolio_units[sym] = portfolio_units.get(sym, 0) + units
+                            has_position = True
+                            
+                            # Recalculate value after addition for next day's return base
+                            current_value = sum(
+                                units * prices_today.get(sym, 0)
+                                for sym, units in portfolio_units.items()
+                            )
                     
-                    # Calculate current value
-                    current_value = 0
-                    if portfolio_units:
-                        prices_today = df.set_index('symbol')['price']
-                        current_value = sum(
-                            units * prices_today.get(sym, 0)
-                            for sym, units in portfolio_units.items()
-                        )
-                    
-                    daily_values.append(current_value if total_investment > 0 else capital)
+                    prev_portfolio_value = current_value
+                    daily_values.append(nav_index)
             
             else:
                 # ─────────────────────────────────────────────────────────
@@ -3131,51 +3151,36 @@ def main():
             logging.info(f"  Strategies for execution: {list(strategies_to_run.keys())}")
             
             # ═══════════════════════════════════════════════════════════════════
-            # PHASE 3: STRATEGY EVALUATION (Trigger-Based or Walk-Forward)
+            # PHASE 3: WALK-FORWARD PORTFOLIO CURATION (Pure — No Triggers)
             # ═══════════════════════════════════════════════════════════════════
             # Phase 3 uses a shorter window (50 days) than Phase 2 (100 days)
             # - Phase 2 needs breadth for robust strategy selection across regimes
             # - Phase 3 needs recency for adaptive walk-forward weights
+            #
+            # ARCHITECTURAL PRINCIPLE:
+            # Triggers (REL_BREADTH) are used in Phase 2 to SELECT strategies
+            # that perform best under our timing system. Phase 3 evaluates the
+            # CURATION QUALITY: "Given these strategies, how well can we pick 
+            # stocks day-by-day?" This is a pure walk-forward process — every
+            # day is a rebalancing day. The resulting metrics (Sharpe, Sortino,
+            # MaxDD) measure stock-picking ability, not timing ability.
             PHASE3_LOOKBACK = 50
             if len(training_data_window_with_current) > PHASE3_LOOKBACK:
                 phase3_data = training_data_window_with_current[-PHASE3_LOOKBACK:]
             else:
                 phase3_data = training_data_window_with_current
             
-            use_trigger = st.session_state.get('use_trigger_backtest', False)
-            trigger_df = st.session_state.get('trigger_df', None)
-            trigger_config = st.session_state.get('trigger_config', {})
+            progress_bar.progress(0.65, text="Running walk-forward portfolio curation...")
+            status_text.text(f"Walk-forward: {len(strategies_to_run)} strategies over {len(phase3_data)} days...")
             
-            if use_trigger:
-                progress_bar.progress(0.65, text="Running walk-forward evaluation (trigger-integrated)...")
-                status_text.text(f"Walk-forward: {len(strategies_to_run)} strategies with trigger signals...")
-                
-                logging.info("-" * 70)
-                logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION (TRIGGER-INTEGRATED)")
-                logging.info(f"  Mode: {selected_main_branch}")
-                logging.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
-                logging.info(f"  Sell Threshold: {trigger_config.get('sell_threshold', 0.50)}")
-                logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
-                logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-                logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
-                
-                st.session_state.performance = evaluate_historical_performance_trigger_based(
-                    strategies_to_run, 
-                    phase3_data,
-                    trigger_df=trigger_df,
-                    deployment_style=selected_main_branch,
-                    trigger_config=trigger_config
-                )
-            else:
-                progress_bar.progress(0.65, text="Running walk-forward evaluation...")
-                status_text.text(f"Evaluating {len(strategies_to_run)} strategies...")
-                
-                logging.info("-" * 70)
-                logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION")
-                logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-                logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
-                
-                st.session_state.performance = evaluate_historical_performance(strategies_to_run, phase3_data)
+            logging.info("-" * 70)
+            logging.info(f"[PHASE 3/4] WALK-FORWARD PORTFOLIO CURATION (PURE)")
+            logging.info(f"  Mode: {selected_main_branch}")
+            logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
+            logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
+            logging.info(f"  Method: Daily rebalancing walk-forward (no trigger dependency)")
+            
+            st.session_state.performance = evaluate_historical_performance(strategies_to_run, phase3_data)
             
             # ═══════════════════════════════════════════════════════════════════
             # PHASE 4: PORTFOLIO CURATION
