@@ -2057,7 +2057,9 @@ def display_performance_metrics(performance: Dict):
             fig_rolling.add_hline(y=2, line_dash="dot", line_color="#f59e0b", line_width=1)
             
             fig_rolling.update_layout(
-                **_chart_layout_base(320, f"Rolling {window_size}-Period Sharpe & Sortino"),
+                **_chart_layout_base(320, f"Rolling {window_size}-Period Sharpe & Sortino")
+            )
+            fig_rolling.update_layout(
                 showlegend=True,
                 legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center')
             )
@@ -2151,9 +2153,9 @@ def display_performance_metrics(performance: Dict):
                 colorbar=dict(title='ρ', tickfont=dict(color='#888888'))
             ))
             fig_corr.update_layout(
-                **_chart_layout_base(max(300, len(corr_matrix) * 35), "Pairwise Correlation Matrix"),
-                margin=dict(l=100, r=40, t=50, b=40)
+                **_chart_layout_base(max(300, len(corr_matrix) * 35), "Pairwise Correlation Matrix")
             )
+            fig_corr.update_layout(margin=dict(l=100, r=40, t=50, b=40))
         
         st.plotly_chart(fig_corr, width="stretch")
         
@@ -3478,9 +3480,9 @@ def main():
                         )
                         fig_tier.update_layout(
                             **_chart_layout_base(max(350, len(strategies_in_performance) * 30), "Sharpe Ratio by 10-Stock Tier"),
-                            margin=dict(l=120, r=20, t=50, b=40),
                             coloraxis_colorbar=dict(title="Sharpe")
                         )
+                        fig_tier.update_layout(margin=dict(l=120, r=20, t=50, b=40))
                         st.plotly_chart(fig_tier, width="stretch")
                         
                         # Tier insights — metric cards
@@ -3576,9 +3578,9 @@ def main():
                             cagr_pad = max(cagr_range * 0.15, 0.5)
                             
                             fig_scatter.update_layout(
-                                **_chart_layout_base(400, "Volatility vs CAGR (Bubble = MaxDD, Color = Sharpe)"),
-                                margin=dict(l=50, r=20, t=50, b=50)
+                                **_chart_layout_base(400, "Volatility vs CAGR (Bubble = MaxDD, Color = Sharpe)")
                             )
+                            fig_scatter.update_layout(margin=dict(l=50, r=20, t=50, b=50))
                             fig_scatter.update_xaxes(
                                 title='Volatility (%)', gridcolor='rgba(255,255,255,0.05)',
                                 range=[max(0, df_scatter['Vol_pct'].min() - vol_pad), df_scatter['Vol_pct'].max() + vol_pad]
