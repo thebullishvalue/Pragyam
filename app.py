@@ -90,6 +90,18 @@ except ImportError:
     st.error("Fatal Error: `backdata.py` not found. Please ensure it's in the same directory.")
     st.stop()
 
+# --- Import Trigger Data Loader from strategy_selection.py ---
+try:
+    from strategy_selection import (
+        load_breadth_data,
+        SIP_TRIGGER, SWING_BUY_TRIGGER, SWING_SELL_TRIGGER,
+        BREADTH_SHEET_URL
+    )
+    STRATEGY_SELECTION_AVAILABLE = True
+except ImportError:
+    STRATEGY_SELECTION_AVAILABLE = False
+    logging.warning("strategy_selection.py not found. Trigger data must be uploaded manually.")
+
 # --- Import Unified Backtest Engine for Dynamic Strategy Selection ---
 try:
     from backtest_engine import (
@@ -113,23 +125,23 @@ PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
 # --- Trigger-Based Backtest Configuration ---
-# Default thresholds for REL_BREADTH trigger (from backtest.py)
+# Thresholds derived from strategy_selection.py (research-backed, NOT arbitrary)
 TRIGGER_CONFIG = {
     'SIP Investment': {
         'buy_threshold': 0.42,   # Buy when REL_BREADTH < 0.42
-        'sell_threshold': 1.5,   # Sell when REL_BREADTH > 1.5 (disabled by default)
-        'sell_enabled': False,
+        'sell_threshold': 0.50,  # Sell when REL_BREADTH >= 0.50
+        'sell_enabled': False,   # SIP accumulates, no sell
         'description': 'Systematic accumulation on regime dips'
     },
     'Swing Trading': {
-        'buy_threshold': 0.52,   # Buy when REL_BREADTH < 0.52  
-        'sell_threshold': 1.2,   # Sell when REL_BREADTH > 1.2
+        'buy_threshold': 0.42,   # Buy when REL_BREADTH < 0.42  
+        'sell_threshold': 0.50,  # Sell when REL_BREADTH >= 0.50
         'sell_enabled': True,
         'description': 'Tactical entry/exit on regime signals'
     },
     'All Weather': {
-        'buy_threshold': 0.50,   # Moderate threshold
-        'sell_threshold': 1.3,
+        'buy_threshold': 0.42,   # Same research-backed threshold
+        'sell_threshold': 0.50,
         'sell_enabled': False,
         'description': 'Balanced regime-aware allocation'
     }
@@ -668,7 +680,20 @@ def calculate_strategy_weights(performance: Dict) -> Dict[str, float]:
     if not strat_names:
         return {}
 
-    sharpe_values = np.array([performance['strategy'][name].get('sharpe', 0) + 2 for name in strat_names])
+    # Handle both flat format (sharpe at top level) and nested format (sharpe inside 'metrics')
+    sharpe_values = []
+    for name in strat_names:
+        strat_data = performance['strategy'][name]
+        if isinstance(strat_data, dict) and 'metrics' in strat_data and isinstance(strat_data['metrics'], dict):
+            sharpe = strat_data['metrics'].get('sharpe', 0)
+        else:
+            sharpe = strat_data.get('sharpe', 0)
+        # Ensure numeric
+        if not isinstance(sharpe, (int, float)) or not np.isfinite(sharpe):
+            sharpe = 0
+        sharpe_values.append(sharpe + 2)
+    
+    sharpe_values = np.array(sharpe_values)
 
     if sharpe_values.size == 0:
         return {name: 1.0 / len(strat_names) for name in strat_names} if strat_names else {}
@@ -1092,158 +1117,283 @@ def evaluate_historical_performance_trigger_based(
     trigger_config: Optional[Dict] = None
 ) -> Dict:
     """
-    Evaluate strategy performance using trigger-based backtesting.
+    Walk-forward evaluation of strategies using trigger-based buy/sell signals.
     
-    This is the main entry point that replaces evaluate_historical_performance
-    when trigger-based mode is enabled.
+    UNIFIED PIPELINE (eliminates the previous fragmentation):
+    1. Build trigger masks from REL_BREADTH data
+    2. Walk forward through time: train on past → curate on trigger → test OOS
+    3. Produce System_Curated returns + per-strategy OOS returns
+    4. Calculate metrics compatible with curate_final_portfolio
     
-    Args:
-        _strategies: Dictionary of strategies to evaluate
-        historical_data: Historical price/indicator data
-        trigger_df: Optional trigger signal DataFrame
-        deployment_style: Investment style (determines trigger thresholds)
-        trigger_config: Optional custom trigger configuration
-    
-    Returns:
-        Performance dictionary compatible with existing Pragyam flow
+    This replaces BOTH the old trigger-only backtest AND the dead walk-forward code.
     """
     # Get trigger configuration
     if trigger_config is None:
         trigger_config = TRIGGER_CONFIG.get(deployment_style, TRIGGER_CONFIG['SIP Investment'])
     
     buy_threshold = trigger_config.get('buy_threshold', 0.42)
-    sell_threshold = trigger_config.get('sell_threshold', 1.5)
+    sell_threshold = trigger_config.get('sell_threshold', 0.50)
     sell_enabled = trigger_config.get('sell_enabled', False)
+    is_sip = 'SIP' in deployment_style
     
-    # Run trigger-based backtest
-    backtest_results = run_trigger_based_backtest(
-        strategies=_strategies,
-        historical_data=historical_data,
-        trigger_df=trigger_df,
-        buy_col='REL_BREADTH',
-        buy_threshold=buy_threshold,
-        sell_col='REL_BREADTH',
-        sell_threshold=sell_threshold,
-        sell_enabled=sell_enabled,
-        capital=2500000.0,
-        deployment_style=deployment_style
-    )
-    
-    # Convert to Pragyam's expected format
-    oos_perf = {}
-    subset_perf = {}
-    strategy_weights_history = []
-    
-    for name, result in backtest_results.items():
-        metrics = result.get('metrics', {})
-        returns = result.get('returns', [])
-        subset = result.get('subset', {})
-        
-        oos_perf[name] = {
-            'returns': returns,
-            'metrics': {
-                'total_return': metrics.get('total_return', 0),
-                'annual_return': metrics.get('annual_return', 0),
-                'volatility': metrics.get('volatility', 0),
-                'sharpe': metrics.get('sharpe', 0),
-                'sortino': metrics.get('sortino', 0),
-                'max_drawdown': metrics.get('max_drawdown', 0),
-                'calmar': metrics.get('calmar', 0),
-                'win_rate': metrics.get('win_rate', 0),
-                'omega_ratio': 1.0,
-                'tail_ratio': 1.0,
-                'gain_to_pain': 0,
-                'profit_factor': 1.0,
-                'buy_events': metrics.get('buy_events', 0),
-                'trade_events': metrics.get('trade_events', 0)
-            }
-        }
-        subset_perf[name] = subset
-    
-    return {
-        'strategy': oos_perf,
-        'subset': subset_perf,
-        'strategy_weights_history': strategy_weights_history,
-        'subset_weights_history': [],
-        'backtest_mode': 'trigger_based',
-        'trigger_config': trigger_config
-    }
-
-
-
-    MIN_TRAIN_FILES = 2
+    MIN_TRAIN_DAYS = 5
     TRAINING_CAPITAL = 2500000.0
-    if len(historical_data) < MIN_TRAIN_FILES + 1:
-        st.error(f"Not enough historical data for the selected period. Need at least {MIN_TRAIN_FILES + 1} files to run a backtest.")
+    
+    logging.info("=" * 70)
+    logging.info("WALK-FORWARD EVALUATION (TRIGGER-INTEGRATED)")
+    logging.info("=" * 70)
+    logging.info(f"  Style: {deployment_style} | Buy < {buy_threshold} | Sell >= {sell_threshold} (enabled={sell_enabled})")
+    logging.info(f"  Strategies: {list(_strategies.keys())}")
+    logging.info(f"  Data points: {len(historical_data)}")
+    
+    if len(historical_data) < MIN_TRAIN_DAYS + 2:
+        logging.error(f"Not enough data ({len(historical_data)}) for walk-forward. Need {MIN_TRAIN_DAYS + 2}+")
         return {}
-
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # BUILD TRIGGER MASKS
+    # ─────────────────────────────────────────────────────────────────────
+    simulation_dates = []
+    for d, _ in historical_data:
+        sim_date = d.date() if hasattr(d, 'date') else d
+        simulation_dates.append(sim_date)
+    
+    buy_mask = [False] * len(historical_data)
+    sell_mask = [False] * len(historical_data)
+    
+    if trigger_df is not None and not trigger_df.empty and 'REL_BREADTH' in trigger_df.columns:
+        # Build date→value lookup from trigger data
+        if hasattr(trigger_df.index, 'date'):
+            trigger_map = {idx.date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        else:
+            trigger_map = {pd.to_datetime(idx).date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        
+        for i, sim_date in enumerate(simulation_dates):
+            if sim_date in trigger_map:
+                breadth = trigger_map[sim_date]
+                if breadth < buy_threshold:
+                    buy_mask[i] = True
+                if sell_enabled and breadth >= sell_threshold:
+                    sell_mask[i] = True
+        
+        logging.info(f"  Trigger masks: {sum(buy_mask)} buy days, {sum(sell_mask)} sell days")
+    else:
+        # No trigger data: treat every day as active (standard walk-forward)
+        logging.warning("  No trigger data: using standard walk-forward (every day active)")
+        for i in range(len(historical_data)):
+            buy_mask[i] = True
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # WALK-FORWARD LOOP
+    # ─────────────────────────────────────────────────────────────────────
     all_names = list(_strategies.keys()) + ['System_Curated']
     oos_perf = {name: {'returns': []} for name in all_names}
     weight_entropies = []
     strategy_weights_history = []
     subset_weights_history = []
+    
+    # State for SIP accumulation tracking
+    sip_portfolio_units = {}  # strategy -> {symbol: units}
+    swing_in_position = {}   # strategy -> bool
+    
+    progress_bar = st.progress(0, text="Initializing walk-forward...")
+    total_steps = len(historical_data) - MIN_TRAIN_DAYS - 1
+    
+    if total_steps <= 0:
+        progress_bar.empty()
+        logging.error("Not enough data for walk-forward steps")
+        return {}
+    
+    step_count = 0
+    for i in range(MIN_TRAIN_DAYS, len(historical_data) - 1):
+        train_window = historical_data[:i]
+        test_date, test_df = historical_data[i]
+        next_date, next_df = historical_data[i + 1]
+        
+        is_buy_day = buy_mask[i]
+        is_sell_day = sell_mask[i]
+        
+        step_count += 1
+        pct = step_count / total_steps
+        progress_bar.progress(min(pct, 0.99), text=f"Walk-forward step {step_count}/{total_steps}")
+        
+        # ─── SYSTEM CURATED: Walk-Forward Portfolio ───
+        if is_buy_day or (not is_sip and is_sell_day):
+            try:
+                # Train on historical window to get performance-based weights
+                in_sample_perf = _calculate_performance_on_window(train_window, _strategies, TRAINING_CAPITAL)
+                
+                curated_port, strat_wts, sub_wts = curate_final_portfolio(
+                    _strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0
+                )
+                
+                strategy_weights_history.append({'date': test_date, **strat_wts})
+                subset_weights_history.append({'date': test_date, **sub_wts})
+                
+                if curated_port.empty:
+                    oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+                else:
+                    oos_ret = compute_portfolio_return(curated_port, next_df)
+                    oos_perf['System_Curated']['returns'].append({'return': oos_ret, 'date': next_date})
+                    
+                    # Track weight entropy
+                    weights = curated_port['weightage_pct'] / 100
+                    valid_weights = weights[weights > 0]
+                    if len(valid_weights) > 0:
+                        entropy = -np.sum(valid_weights * np.log2(valid_weights))
+                        weight_entropies.append(entropy)
+                        
+            except Exception as e:
+                logging.error(f"Walk-forward curation error ({test_date}): {e}")
+                oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+        else:
+            # Non-trigger day: portfolio held, compute return from previous positions
+            oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+        
+        # ─── PER-STRATEGY OOS Returns ───
+        for name, strategy in _strategies.items():
+            try:
+                if is_buy_day:
+                    portfolio = strategy.generate_portfolio(test_df, TRAINING_CAPITAL)
+                    if not portfolio.empty:
+                        oos_perf[name]['returns'].append({
+                            'return': compute_portfolio_return(portfolio, next_df),
+                            'date': next_date
+                        })
+                    else:
+                        oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
+                else:
+                    oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
+            except Exception as e:
+                logging.error(f"OOS Strategy Error ({name}, {test_date}): {e}")
+                oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
+    
+    progress_bar.empty()
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # COMPUTE FINAL METRICS
+    # ─────────────────────────────────────────────────────────────────────
+    final_oos_perf = {}
+    for name, data in oos_perf.items():
+        metrics, _ = calculate_advanced_metrics(data['returns'])
+        final_oos_perf[name] = {
+            'returns': data['returns'],
+            'metrics': metrics
+        }
+    
+    if weight_entropies:
+        final_oos_perf['System_Curated']['metrics']['avg_weight_entropy'] = np.mean(weight_entropies)
+    
+    # Tier-level performance from full history
+    full_history_subset_perf = _calculate_performance_on_window(historical_data, _strategies, TRAINING_CAPITAL)['subset']
+    
+    logging.info("=" * 70)
+    curated_metrics = final_oos_perf.get('System_Curated', {}).get('metrics', {})
+    logging.info(f"WALK-FORWARD COMPLETE | System_Curated CAGR: {curated_metrics.get('annual_return', 0):.1%} | "
+                 f"Sharpe: {curated_metrics.get('sharpe', 0):.2f} | MaxDD: {curated_metrics.get('max_drawdown', 0):.1%}")
+    logging.info("=" * 70)
+    
+    return {
+        'strategy': final_oos_perf,
+        'subset': full_history_subset_perf,
+        'strategy_weights_history': strategy_weights_history,
+        'subset_weights_history': subset_weights_history,
+        'backtest_mode': 'walk_forward_trigger',
+        'trigger_config': trigger_config
+    }
 
+
+def evaluate_historical_performance(
+    _strategies: Dict[str, BaseStrategy],
+    historical_data: List[Tuple[datetime, pd.DataFrame]]
+) -> Dict:
+    """
+    Standard walk-forward evaluation WITHOUT trigger signals.
+    Every day is a rebalancing day.
+    """
+    MIN_TRAIN_FILES = 2
+    TRAINING_CAPITAL = 2500000.0
+    
+    if len(historical_data) < MIN_TRAIN_FILES + 1:
+        st.error(f"Not enough historical data. Need at least {MIN_TRAIN_FILES + 1} files.")
+        return {}
+    
+    all_names = list(_strategies.keys()) + ['System_Curated']
+    oos_perf = {name: {'returns': []} for name in all_names}
+    weight_entropies = []
+    strategy_weights_history = []
+    subset_weights_history = []
+    
     progress_bar = st.progress(0, text="Initializing backtest...")
     total_steps = len(historical_data) - MIN_TRAIN_FILES - 1
     
     if total_steps <= 0:
-        st.error(f"Not enough data for a single backtest step. Need at least {MIN_TRAIN_FILES + 2} days of data.")
+        st.error(f"Not enough data for backtest steps. Need at least {MIN_TRAIN_FILES + 2} days.")
         progress_bar.empty()
         return {}
-
-
+    
     for i in range(MIN_TRAIN_FILES, len(historical_data) - 1):
         train_window = historical_data[:i]
         test_date, test_df = historical_data[i]
-        next_date, next_df = historical_data[i+1]
-
-        progress_text = f"Processing period {i - MIN_TRAIN_FILES + 1}/{total_steps}: Training on {len(train_window)} files..."
+        next_date, next_df = historical_data[i + 1]
+        
+        progress_text = f"Processing step {i - MIN_TRAIN_FILES + 1}/{total_steps}"
         progress_bar.progress((i - MIN_TRAIN_FILES + 1) / total_steps, text=progress_text)
-        logging.info(f"Backtest Step {i - MIN_TRAIN_FILES + 1}/{total_steps}: Training on {len(train_window)} files (until {train_window[-1][0].date()})")
-
+        
         in_sample_perf = _calculate_performance_on_window(train_window, _strategies, TRAINING_CAPITAL)
-
+        
         try:
-            logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
-            curated_port, strategy_weights, subset_weights = curate_final_portfolio(_strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0)
+            curated_port, strat_wts, sub_wts = curate_final_portfolio(
+                _strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0
+            )
             
-            strategy_weights_history.append({'date': test_date, **strategy_weights})
-            subset_weights_history.append({'date': test_date, **subset_weights})
-
+            strategy_weights_history.append({'date': test_date, **strat_wts})
+            subset_weights_history.append({'date': test_date, **sub_wts})
+            
             if curated_port.empty:
-                logging.warning(f"  - No curated portfolio generated for {test_date.date()}. Appending 0 return.")
                 oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
             else:
-                oos_perf['System_Curated']['returns'].append({'return': compute_portfolio_return(curated_port, next_df), 'date': next_date})
-                logging.info(f"  - COMPLETED: Curating out-of-sample portfolio for {test_date.date()}")
-
+                oos_perf['System_Curated']['returns'].append({
+                    'return': compute_portfolio_return(curated_port, next_df),
+                    'date': next_date
+                })
                 weights = curated_port['weightage_pct'] / 100
-                entropy = -np.sum(weights * np.log2(weights))
-                weight_entropies.append(entropy)
-
+                valid_w = weights[weights > 0]
+                if len(valid_w) > 0:
+                    entropy = -np.sum(valid_w * np.log2(valid_w))
+                    weight_entropies.append(entropy)
         except Exception as e:
             logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
             oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
-
+        
         for name, strategy in _strategies.items():
             try:
-                logging.info(f"  - STARTING: OOS portfolio for {name} on {test_date.date()}")
                 portfolio = strategy.generate_portfolio(test_df, TRAINING_CAPITAL)
-                oos_perf[name]['returns'].append({'return': compute_portfolio_return(portfolio, next_df), 'date': next_date})
-                logging.info(f"  - COMPLETED: OOS portfolio for {name} on {test_date.date()}")
+                oos_perf[name]['returns'].append({
+                    'return': compute_portfolio_return(portfolio, next_df),
+                    'date': next_date
+                })
             except Exception as e:
                 logging.error(f"OOS Strategy Error ({name}, {test_date.date()}): {e}")
                 oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
-
+    
     progress_bar.empty()
-    final_oos_perf = {name: {**data, 'metrics': calculate_advanced_metrics(data['returns'])[0]} for name, data in oos_perf.items()}
-
+    
+    final_oos_perf = {}
+    for name, data in oos_perf.items():
+        metrics, _ = calculate_advanced_metrics(data['returns'])
+        final_oos_perf[name] = {
+            'returns': data['returns'],
+            'metrics': metrics
+        }
+    
     if weight_entropies:
         final_oos_perf['System_Curated']['metrics']['avg_weight_entropy'] = np.mean(weight_entropies)
-
+    
     full_history_subset_perf = _calculate_performance_on_window(historical_data, _strategies, TRAINING_CAPITAL)['subset']
+    
     return {
-        'strategy': final_oos_perf, 
+        'strategy': final_oos_perf,
         'subset': full_history_subset_perf,
         'strategy_weights_history': strategy_weights_history,
         'subset_weights_history': subset_weights_history
@@ -2761,30 +2911,54 @@ def main():
         
         if use_trigger_backtest:
             with st.expander("⚙️ Trigger Configuration", expanded=False):
-                # File upload for trigger data
-                trigger_file = st.file_uploader(
-                    "Upload Trigger File (CSV/XLSX)",
-                    type=['csv', 'xlsx', 'xls'],
-                    help="File with DATE and REL_BREADTH columns. If not provided, uses internal regime signals."
-                )
-                
-                if trigger_file is not None:
+                # Auto-fetch from Google Sheets
+                if STRATEGY_SELECTION_AVAILABLE:
+                    st.caption("📡 Trigger Source: Google Sheets (REL_BREADTH)")
                     try:
-                        if trigger_file.name.endswith('.csv'):
-                            trigger_df = pd.read_csv(trigger_file)
-                        else:
-                            trigger_df = pd.read_excel(trigger_file)
+                        @st.cache_data(ttl=3600, show_spinner=False)
+                        def _fetch_breadth_data():
+                            return load_breadth_data(lookback_rows=600)
                         
-                        if 'DATE' in trigger_df.columns:
-                            trigger_df['DATE'] = pd.to_datetime(trigger_df['DATE'], format='%d-%m-%Y', errors='coerce')
-                            trigger_df = trigger_df.dropna(subset=['DATE']).set_index('DATE')
-                            st.success(f"✅ Loaded {len(trigger_df)} trigger entries")
+                        breadth_df = _fetch_breadth_data()
+                        if not breadth_df.empty:
+                            trigger_df = breadth_df.copy()
+                            trigger_df = trigger_df.set_index('DATE')
+                            st.success(f"✅ Loaded {len(trigger_df)} trigger entries from Google Sheets")
+                            
+                            # Show recent data preview
+                            recent = breadth_df.tail(5).copy()
+                            recent['DATE'] = recent['DATE'].dt.strftime('%Y-%m-%d')
+                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, use_container_width=True)
                         else:
-                            st.warning("File must contain a 'DATE' column")
-                            trigger_df = None
+                            st.warning("⚠️ No data from Google Sheets. Using first-day entry fallback.")
                     except Exception as e:
-                        st.error(f"Error loading trigger file: {e}")
+                        st.error(f"Error fetching from Google Sheets: {e}")
                         trigger_df = None
+                else:
+                    # Fallback: file upload if strategy_selection not available
+                    trigger_file = st.file_uploader(
+                        "Upload Trigger File (CSV/XLSX)",
+                        type=['csv', 'xlsx', 'xls'],
+                        help="File with DATE and REL_BREADTH columns."
+                    )
+                    
+                    if trigger_file is not None:
+                        try:
+                            if trigger_file.name.endswith('.csv'):
+                                trigger_df = pd.read_csv(trigger_file)
+                            else:
+                                trigger_df = pd.read_excel(trigger_file)
+                            
+                            if 'DATE' in trigger_df.columns:
+                                trigger_df['DATE'] = pd.to_datetime(trigger_df['DATE'], format='%d-%m-%Y', errors='coerce')
+                                trigger_df = trigger_df.dropna(subset=['DATE']).set_index('DATE')
+                                st.success(f"✅ Loaded {len(trigger_df)} trigger entries")
+                            else:
+                                st.warning("File must contain a 'DATE' column")
+                                trigger_df = None
+                        except Exception as e:
+                            st.error(f"Error loading trigger file: {e}")
+                            trigger_df = None
                 
                 # Show current thresholds
                 st.markdown(f"**Mode:** {selected_main_branch}")
@@ -2803,10 +2977,10 @@ def main():
                     sell_thresh = st.number_input(
                         "Sell Threshold",
                         value=trigger_config['sell_threshold'],
-                        min_value=0.5,
+                        min_value=0.1,
                         max_value=3.0,
                         step=0.01,
-                        help="Sell when REL_BREADTH > this value"
+                        help="Sell when REL_BREADTH >= this value"
                     )
                 
                 sell_enabled = st.checkbox(
@@ -2822,7 +2996,7 @@ def main():
                     'sell_enabled': sell_enabled
                 }
                 
-                st.caption(f"📊 Buy: REL_BREADTH < {buy_thresh} | Sell: REL_BREADTH > {sell_thresh} ({'enabled' if sell_enabled else 'disabled'})")
+                st.caption(f"📊 Buy: REL_BREADTH < {buy_thresh} | Sell: REL_BREADTH >= {sell_thresh} ({'enabled' if sell_enabled else 'disabled'})")
         
         # Store in session state for later use
         st.session_state.use_trigger_backtest = use_trigger_backtest
@@ -2961,13 +3135,14 @@ def main():
             trigger_config = st.session_state.get('trigger_config', {})
             
             if use_trigger:
-                progress_bar.progress(0.65, text="Running trigger-based backtest...")
-                status_text.text(f"Backtesting {len(strategies_to_run)} strategies (trigger mode)...")
+                progress_bar.progress(0.65, text="Running walk-forward evaluation (trigger-integrated)...")
+                status_text.text(f"Walk-forward: {len(strategies_to_run)} strategies with trigger signals...")
                 
                 logging.info("-" * 70)
-                logging.info(f"[PHASE 3/4] TRIGGER-BASED BACKTEST")
+                logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION (TRIGGER-INTEGRATED)")
                 logging.info(f"  Mode: {selected_main_branch}")
                 logging.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
+                logging.info(f"  Sell Threshold: {trigger_config.get('sell_threshold', 0.50)}")
                 logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
                 logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
                 logging.info(f"  Window: {len(training_data_window_with_current)} days")
