@@ -1904,7 +1904,8 @@ def display_performance_metrics(performance: Dict):
                 showlegend=True,
                 legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
                 font=dict(family='Inter', color=COLORS['text']),
-                margin=dict(l=60, r=20, t=40, b=40)
+                margin=dict(l=60, r=20, t=40, b=40),
+                title=dict(text='', font=dict(size=1))
             )
             fig.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
             fig.update_yaxes(showgrid=True, gridcolor=COLORS['border'], title_text="Portfolio Value", row=1, col=1, range=[y_min, y_max])
@@ -1973,7 +1974,8 @@ def display_performance_metrics(performance: Dict):
                 height=320,
                 font=dict(family='Inter', color=COLORS['text']),
                 legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
-                margin=dict(l=60, r=20, t=40, b=40)
+                margin=dict(l=60, r=20, t=40, b=40),
+                title=dict(text='', font=dict(size=1))
             )
             fig_rolling.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
             fig_rolling.update_yaxes(showgrid=True, gridcolor=COLORS['border'], zeroline=True, zerolinecolor=COLORS['muted'])
@@ -2071,7 +2073,8 @@ def display_performance_metrics(performance: Dict):
                 plot_bgcolor=COLORS['card'],
                 height=max(300, len(corr_matrix) * 35),
                 font=dict(family='Inter', color=COLORS['text']),
-                margin=dict(l=100, r=40, t=20, b=40)
+                margin=dict(l=100, r=40, t=20, b=40),
+                title=dict(text='', font=dict(size=1))
             )
         
         st.plotly_chart(fig_corr, width="stretch")
@@ -3388,7 +3391,8 @@ def main():
                             template='plotly_dark',
                             height=max(350, len(strategies_in_performance) * 30),
                             margin=dict(l=120, r=20, t=20, b=40),
-                            coloraxis_colorbar=dict(title="Sharpe")
+                            coloraxis_colorbar=dict(title="Sharpe"),
+                            title=dict(text='', font=dict(size=1))
                         )
                         st.plotly_chart(fig_tier, width="stretch")
                         
@@ -3489,7 +3493,8 @@ def main():
                             font=dict(family='Inter', color=COLORS['text']),
                             margin=dict(l=60, r=20, t=20, b=50),
                             xaxis_title="Volatility (%)",
-                            yaxis_title="CAGR (%)"
+                            yaxis_title="CAGR (%)",
+                            title=dict(text='', font=dict(size=1))
                         )
                         fig_scatter.update_xaxes(
                             showgrid=True, gridcolor=COLORS['border'],
@@ -3568,7 +3573,8 @@ def main():
                             paper_bgcolor='rgba(0,0,0,0)',
                             font=dict(family='Inter', color=COLORS['text']),
                             height=400,
-                            margin=dict(l=60, r=60, t=40, b=60)
+                            margin=dict(l=60, r=60, t=40, b=60),
+                            title=dict(text='', font=dict(size=1))
                         )
                     
                     st.plotly_chart(fig_radar, width="stretch")

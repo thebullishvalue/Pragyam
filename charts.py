@@ -83,19 +83,13 @@ def get_chart_layout(
         'right': dict(orientation='v', y=0.5, x=1.02, xanchor='left', yanchor='middle')
     }
     
-    return {
+    config = {
         'template': 'plotly_dark',
         'paper_bgcolor': 'rgba(0,0,0,0)',
         'plot_bgcolor': COLORS['card'],
         'height': height,
         'margin': dict(l=60, r=20, t=60 if title else 30, b=50),
         'font': dict(family='Inter, -apple-system, sans-serif', color=COLORS['text'], size=12),
-        'title': dict(
-            text=title,
-            font=dict(size=16, color=COLORS['text']),
-            x=0.5,
-            xanchor='center'
-        ) if title else None,
         'showlegend': show_legend,
         'legend': legend_config.get(legend_position, legend_config['top']),
         'hovermode': 'x unified',
@@ -105,6 +99,19 @@ def get_chart_layout(
             font_family='Inter'
         )
     }
+    
+    # Explicitly set title — never None (Plotly renders None as "undefined" in some themes)
+    if title:
+        config['title'] = dict(
+            text=title,
+            font=dict(size=16, color=COLORS['text']),
+            x=0.5,
+            xanchor='center'
+        )
+    else:
+        config['title'] = dict(text='', font=dict(size=1))
+    
+    return config
 
 
 def get_axis_config(
