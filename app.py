@@ -2041,7 +2041,10 @@ def display_performance_metrics(performance: Dict):
                     [0.0, '#10b981'], [0.25, '#34d399'],
                     [0.5, '#fbbf24'], [0.75, '#f97316'], [1.0, '#ef4444']
                 ]
-                zmin, zmax, zmid = 0, 1, 0.5
+                # Adapt range to actual data spread
+                zmin = max(0, np.floor(corr_min * 10) / 10)
+                zmax = 1.0
+                zmid = (zmin + zmax) / 2
             else:
                 colorscale = [
                     [0.0, '#3b82f6'], [0.25, '#60a5fa'],
@@ -3130,6 +3133,15 @@ def main():
             # ═══════════════════════════════════════════════════════════════════
             # PHASE 3: STRATEGY EVALUATION (Trigger-Based or Walk-Forward)
             # ═══════════════════════════════════════════════════════════════════
+            # Phase 3 uses a shorter window (50 days) than Phase 2 (100 days)
+            # - Phase 2 needs breadth for robust strategy selection across regimes
+            # - Phase 3 needs recency for adaptive walk-forward weights
+            PHASE3_LOOKBACK = 50
+            if len(training_data_window_with_current) > PHASE3_LOOKBACK:
+                phase3_data = training_data_window_with_current[-PHASE3_LOOKBACK:]
+            else:
+                phase3_data = training_data_window_with_current
+            
             use_trigger = st.session_state.get('use_trigger_backtest', False)
             trigger_df = st.session_state.get('trigger_df', None)
             trigger_config = st.session_state.get('trigger_config', {})
@@ -3145,11 +3157,11 @@ def main():
                 logging.info(f"  Sell Threshold: {trigger_config.get('sell_threshold', 0.50)}")
                 logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
                 logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-                logging.info(f"  Window: {len(training_data_window_with_current)} days")
+                logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
                 
                 st.session_state.performance = evaluate_historical_performance_trigger_based(
                     strategies_to_run, 
-                    training_data_window_with_current,
+                    phase3_data,
                     trigger_df=trigger_df,
                     deployment_style=selected_main_branch,
                     trigger_config=trigger_config
@@ -3161,9 +3173,9 @@ def main():
                 logging.info("-" * 70)
                 logging.info(f"[PHASE 3/4] WALK-FORWARD EVALUATION")
                 logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-                logging.info(f"  Window: {len(training_data_window_with_current)} days")
+                logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
                 
-                st.session_state.performance = evaluate_historical_performance(strategies_to_run, training_data_window_with_current)
+                st.session_state.performance = evaluate_historical_performance(strategies_to_run, phase3_data)
             
             # ═══════════════════════════════════════════════════════════════════
             # PHASE 4: PORTFOLIO CURATION
@@ -3433,8 +3445,13 @@ def main():
                             tangent_vol = df_scatter.loc[max_sharpe_idx, 'Vol_pct']
                             tangent_ret = df_scatter.loc[max_sharpe_idx, 'CAGR_pct']
                             
+                            # Constrain CML to data range
+                            vol_max = df_scatter['Vol_pct'].max()
+                            cml_end_vol = min(tangent_vol * 1.8, vol_max * 1.3)
+                            cml_end_ret = tangent_ret * (cml_end_vol / tangent_vol) if tangent_vol > 0 else 0
+                            
                             fig_scatter.add_trace(go.Scatter(
-                                x=[0, tangent_vol * 1.8], y=[0, tangent_ret * 1.8],
+                                x=[0, cml_end_vol], y=[0, cml_end_ret],
                                 mode='lines', name='CML',
                                 line=dict(color=COLORS['muted'], dash='dash', width=1.5),
                                 showlegend=False
@@ -3448,6 +3465,10 @@ def main():
                                 showlegend=False
                             ))
                         
+                        # Auto-scale axes based on actual data
+                        vol_pad = max((df_scatter['Vol_pct'].max() - df_scatter['Vol_pct'].min()) * 0.15, 2)
+                        cagr_pad = max((df_scatter['CAGR_pct'].max() - df_scatter['CAGR_pct'].min()) * 0.2, 2)
+                        
                         fig_scatter.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(0,0,0,0)',
@@ -3458,8 +3479,14 @@ def main():
                             xaxis_title="Volatility (%)",
                             yaxis_title="CAGR (%)"
                         )
-                        fig_scatter.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
-                        fig_scatter.update_yaxes(showgrid=True, gridcolor=COLORS['border'])
+                        fig_scatter.update_xaxes(
+                            showgrid=True, gridcolor=COLORS['border'],
+                            range=[max(0, df_scatter['Vol_pct'].min() - vol_pad), df_scatter['Vol_pct'].max() + vol_pad]
+                        )
+                        fig_scatter.update_yaxes(
+                            showgrid=True, gridcolor=COLORS['border'],
+                            range=[df_scatter['CAGR_pct'].min() - cagr_pad, df_scatter['CAGR_pct'].max() + cagr_pad]
+                        )
                     
                     st.plotly_chart(fig_scatter, width="stretch")
                     st.caption("Bubble size = Max Drawdown magnitude | Color = Sharpe ratio | ⭐ = Optimal")

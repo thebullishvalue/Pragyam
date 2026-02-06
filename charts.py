@@ -385,8 +385,10 @@ def create_correlation_heatmap(
             [0.75, '#f97316'],     # Orange (higher corr)
             [1.0, '#ef4444']       # Red (very high corr = concentration risk)
         ]
-        # Set range from 0 to 1 for typical positive correlations
-        zmin, zmax, zmid = 0, 1, 0.5
+        # Adapt range to actual data spread (not fixed 0-1)
+        zmin = max(0, np.floor(corr_min * 10) / 10)  # Floor to 1 decimal
+        zmax = 1.0
+        zmid = (zmin + zmax) / 2
     else:
         # Mixed correlations - use traditional blue-gray-red scale
         colorscale = [
@@ -415,8 +417,8 @@ def create_correlation_heatmap(
             tickfont=dict(color=COLORS['muted']),
             thickness=15,
             len=0.8,
-            tickvals=[zmin, zmid, zmax] if zmin == 0 else [-1, -0.5, 0, 0.5, 1],
-            ticktext=[f'{zmin:.1f}', f'{zmid:.1f}', f'{zmax:.1f}'] if zmin == 0 else ['-1', '-0.5', '0', '0.5', '1']
+            tickvals=[zmin, zmid, zmax] if corr_min > -0.1 else [-1, -0.5, 0, 0.5, 1],
+            ticktext=[f'{zmin:.1f}', f'{zmid:.1f}', f'{zmax:.1f}'] if corr_min > -0.1 else ['-1', '-0.5', '0', '0.5', '1']
         )
     ))
     
@@ -579,8 +581,13 @@ def create_risk_return_scatter(
         tangent_vol = df.loc[max_sharpe_idx, 'Volatility'] * 100
         tangent_ret = df.loc[max_sharpe_idx, 'CAGR'] * 100
         
-        cml_x = [0, tangent_vol * 1.8]
-        cml_y = [0, tangent_ret * 1.8]
+        # Constrain CML to data range (don't stretch axes)
+        vol_max = df['Volatility'].max() * 100
+        cml_end_vol = min(tangent_vol * 1.8, vol_max * 1.3)
+        cml_end_ret = tangent_ret * (cml_end_vol / tangent_vol) if tangent_vol > 0 else 0
+        
+        cml_x = [0, cml_end_vol]
+        cml_y = [0, cml_end_ret]
         
         fig.add_trace(go.Scatter(
             x=cml_x,
@@ -609,6 +616,12 @@ def create_risk_return_scatter(
     )
     fig.update_layout(**layout)
     
+    # Auto-scale axes based on actual data with padding
+    vol_vals = df['Volatility'] * 100
+    cagr_vals = df['CAGR'] * 100
+    vol_pad = max((vol_vals.max() - vol_vals.min()) * 0.15, 2)
+    cagr_pad = max((cagr_vals.max() - cagr_vals.min()) * 0.2, 2)
+    
     axis_style = dict(
         showgrid=True,
         gridcolor=COLORS['border'],
@@ -616,8 +629,16 @@ def create_risk_return_scatter(
         linecolor=COLORS['border'],
         tickfont=dict(color=COLORS['muted'], size=11)
     )
-    fig.update_xaxes(title_text="Volatility (%)", **axis_style)
-    fig.update_yaxes(title_text="CAGR (%)", **axis_style)
+    fig.update_xaxes(
+        title_text="Volatility (%)", 
+        range=[max(0, vol_vals.min() - vol_pad), vol_vals.max() + vol_pad],
+        **axis_style
+    )
+    fig.update_yaxes(
+        title_text="CAGR (%)", 
+        range=[cagr_vals.min() - cagr_pad, cagr_vals.max() + cagr_pad],
+        **axis_style
+    )
     
     return fig
 
