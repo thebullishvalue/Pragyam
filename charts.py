@@ -169,9 +169,11 @@ def create_equity_drawdown_chart(
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.12,
-        row_heights=[0.7, 0.3],
-        subplot_titles=["", ""]  # Empty strings instead of None to prevent 'undefined'
+        row_heights=[0.7, 0.3]
     )
+    
+    # Clear any auto-generated subplot title annotations
+    fig.layout.annotations = ()
     
     # Equity Curve - fill to minimum, not zero
     fig.add_trace(go.Scatter(
@@ -541,13 +543,13 @@ def create_risk_return_scatter(
     
     fig = go.Figure()
     
-    # Strategy bubbles
+    # Strategy bubbles — bright, clearly visible
     fig.add_trace(go.Scatter(
         x=df['Volatility'] * 100,
         y=df['CAGR'] * 100,
         mode='markers+text',
         marker=dict(
-            size=df['Size'],
+            size=np.clip(df['Size'], 12, 40),
             color=df['Sharpe'],
             colorscale='RdYlGn',
             cmin=-1,
@@ -558,11 +560,12 @@ def create_risk_return_scatter(
                 tickfont=dict(color=COLORS['muted']),
                 thickness=15
             ),
-            line=dict(width=1, color=COLORS['border'])
+            line=dict(width=2, color='rgba(255,255,255,0.8)'),
+            opacity=0.95
         ),
         text=df['Strategy'].apply(lambda x: x[:12] + '...' if len(x) > 12 else x),
         textposition='top center',
-        textfont=dict(size=9, color=COLORS['muted']),
+        textfont=dict(size=10, color='#e2e8f0'),
         hovertemplate=(
             '<b>%{customdata[0]}</b><br>'
             'CAGR: %{y:.1f}%<br>'
@@ -616,11 +619,13 @@ def create_risk_return_scatter(
     )
     fig.update_layout(**layout)
     
-    # Auto-scale axes based on actual data with padding
+    # Auto-scale axes based on actual data with tight padding
     vol_vals = df['Volatility'] * 100
     cagr_vals = df['CAGR'] * 100
-    vol_pad = max((vol_vals.max() - vol_vals.min()) * 0.15, 2)
-    cagr_pad = max((cagr_vals.max() - cagr_vals.min()) * 0.2, 2)
+    vol_range = vol_vals.max() - vol_vals.min()
+    cagr_range = cagr_vals.max() - cagr_vals.min()
+    vol_pad = max(vol_range * 0.15, 1)
+    cagr_pad = max(cagr_range * 0.15, 0.5)
     
     axis_style = dict(
         showgrid=True,

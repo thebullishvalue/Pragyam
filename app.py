@@ -1863,9 +1863,10 @@ def display_performance_metrics(performance: Dict):
                 rows=2, cols=1, 
                 shared_xaxes=True,
                 vertical_spacing=0.12,
-                row_heights=[0.7, 0.3],
-                subplot_titles=["", ""]  # Empty strings to prevent 'undefined'
+                row_heights=[0.7, 0.3]
             )
+            # Clear any auto-generated subplot title annotations
+            fig.layout.annotations = ()
             
             # Baseline for fill
             fig.add_trace(go.Scatter(
@@ -3127,6 +3128,9 @@ def main():
                 trigger_config=trigger_config if use_trigger else None
             )
             
+            # Store Phase 2 metrics for Strategy Metrics tab
+            st.session_state.phase2_strategy_metrics = strategy_metrics
+            
             # Determine which strategies to use
             if dynamic_strategies and len(dynamic_strategies) >= 4:
                 style_strategies = dynamic_strategies
@@ -3430,17 +3434,18 @@ def main():
                             y=df_scatter['CAGR_pct'],
                             mode='markers+text',
                             marker=dict(
-                                size=df_scatter['Size'],
+                                size=np.clip(df_scatter['Size'], 12, 40),
                                 color=df_scatter['Sharpe'],
                                 colorscale='RdYlGn',
                                 cmin=-1, cmax=2,
                                 showscale=True,
                                 colorbar=dict(title='Sharpe', tickfont=dict(color=COLORS['muted'])),
-                                line=dict(width=1, color=COLORS['border'])
+                                line=dict(width=2, color='rgba(255,255,255,0.8)'),
+                                opacity=0.95
                             ),
                             text=df_scatter['Strategy'].apply(lambda x: x[:10]),
                             textposition='top center',
-                            textfont=dict(size=9, color=COLORS['muted']),
+                            textfont=dict(size=10, color='#e2e8f0'),
                             customdata=df_scatter[['Strategy', 'Max DD']].values,
                             hovertemplate='<b>%{customdata[0]}</b><br>CAGR: %{y:.1f}%<br>Vol: %{x:.1f}%<extra></extra>'
                         ))
@@ -3470,9 +3475,11 @@ def main():
                                 showlegend=False
                             ))
                         
-                        # Auto-scale axes based on actual data
-                        vol_pad = max((df_scatter['Vol_pct'].max() - df_scatter['Vol_pct'].min()) * 0.15, 2)
-                        cagr_pad = max((df_scatter['CAGR_pct'].max() - df_scatter['CAGR_pct'].min()) * 0.2, 2)
+                        # Auto-scale axes based on actual data (tight)
+                        vol_range = df_scatter['Vol_pct'].max() - df_scatter['Vol_pct'].min()
+                        cagr_range = df_scatter['CAGR_pct'].max() - df_scatter['CAGR_pct'].min()
+                        vol_pad = max(vol_range * 0.15, 1)
+                        cagr_pad = max(cagr_range * 0.15, 0.5)
                         
                         fig_scatter.update_layout(
                             template='plotly_dark',
@@ -3694,17 +3701,14 @@ def main():
                 st.warning("No strategy data available. Run analysis first.")
             else:
                 # ─────────────────────────────────────────────────────────────────
-                # FULL METRICS TABLE
+                # TABLE 1: SELECTED STRATEGY METRICS (from Phase 3 walk-forward)
                 # ─────────────────────────────────────────────────────────────────
-                st.subheader("📈 Complete Strategy Metrics")
-                
                 metrics_data = []
                 for name in strategies_in_performance:
                     strategy_perf = st.session_state.performance.get('strategy', {}).get(name, {})
                     metrics = strategy_perf.get('metrics', {})
                     returns_list = strategy_perf.get('returns', [])
                     
-                    # Gather comprehensive metrics
                     row = {
                         'Strategy': name,
                         'Total Return': metrics.get('total_return', 0),
@@ -3719,266 +3723,103 @@ def main():
                         'Omega Ratio': metrics.get('omega_ratio', 0),
                         'Tail Ratio': metrics.get('tail_ratio', 0),
                         'Gain/Pain': metrics.get('gain_to_pain', 0),
-                        'Avg Weight Entropy': metrics.get('avg_weight_entropy', 0),
                         'Trading Days': len(returns_list)
                     }
                     metrics_data.append(row)
                 
                 if metrics_data:
                     df_metrics = pd.DataFrame(metrics_data)
-                    
-                    # Sort by Sharpe Ratio descending
                     df_metrics = df_metrics.sort_values('Sharpe Ratio', ascending=False).reset_index(drop=True)
                     
-                    # Create styled display
                     styled_cols = {
-                        'Total Return': '{:.2%}',
-                        'CAGR': '{:.2%}',
-                        'Volatility': '{:.2%}',
-                        'Sharpe Ratio': '{:.3f}',
-                        'Sortino Ratio': '{:.3f}',
-                        'Calmar Ratio': '{:.3f}',
-                        'Max Drawdown': '{:.2%}',
-                        'Win Rate': '{:.1%}',
-                        'Profit Factor': '{:.2f}',
-                        'Omega Ratio': '{:.2f}',
-                        'Tail Ratio': '{:.2f}',
-                        'Gain/Pain': '{:.2f}',
-                        'Avg Weight Entropy': '{:.2f}',
+                        'Total Return': '{:.2%}', 'CAGR': '{:.2%}', 'Volatility': '{:.2%}',
+                        'Sharpe Ratio': '{:.3f}', 'Sortino Ratio': '{:.3f}', 'Calmar Ratio': '{:.3f}',
+                        'Max Drawdown': '{:.2%}', 'Win Rate': '{:.1%}', 'Profit Factor': '{:.2f}',
+                        'Omega Ratio': '{:.2f}', 'Tail Ratio': '{:.2f}', 'Gain/Pain': '{:.2f}',
                         'Trading Days': '{:.0f}'
                     }
                     
-                    # Apply formatting with background gradient on key metrics
                     styled_df = df_metrics.style.format(styled_cols)
-                    
-                    # Apply background gradient to performance columns (requires matplotlib)
                     gradient_cols = ['Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Total Return']
                     available_gradient_cols = [c for c in gradient_cols if c in df_metrics.columns]
                     if available_gradient_cols:
                         try:
-                            styled_df = styled_df.background_gradient(
-                                subset=available_gradient_cols,
-                                cmap='RdYlGn'
-                            )
+                            styled_df = styled_df.background_gradient(subset=available_gradient_cols, cmap='RdYlGn')
                         except ImportError:
-                            pass  # matplotlib not available, skip gradient styling
+                            pass
                     
                     st.dataframe(styled_df, width='stretch', hide_index=True)
                     
-                    # Download button for raw metrics
                     csv_data = df_metrics.to_csv(index=False)
                     st.download_button(
-                        label="📥 Download Full Metrics CSV",
+                        label="📥 Download Selected Strategy Metrics CSV",
                         data=csv_data,
-                        file_name=f"strategy_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        file_name=f"selected_strategy_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv"
                     )
                 
                 st.markdown("---")
                 
                 # ─────────────────────────────────────────────────────────────────
-                # TIER-LEVEL SHARPE DATA
+                # TABLE 2: ALL STRATEGIES FROM PHASE 2 (Selection Backtest)
                 # ─────────────────────────────────────────────────────────────────
-                st.subheader("📊 Tier-Level Performance (10-Stock Subset Sharpe)")
+                st.subheader("📈 Phase 2 Strategy Selection — All Strategies")
                 
-                subset_perf = st.session_state.performance.get('subset', {})
+                phase2_metrics = st.session_state.get('phase2_strategy_metrics', {})
                 
-                if subset_perf:
-                    tier_data = []
-                    for strat_name, tier_dict in subset_perf.items():
-                        if tier_dict:
-                            row = {'Strategy': strat_name}
-                            for tier_name, sharpe_val in tier_dict.items():
-                                tier_num = tier_name.replace('tier_', 'T')
-                                row[tier_num] = sharpe_val
-                            tier_data.append(row)
+                if phase2_metrics:
+                    all_strat_data = []
+                    for name, data in phase2_metrics.items():
+                        if not isinstance(data, dict) or data.get('status') != 'ok':
+                            continue
+                        m = data.get('metrics', {})
+                        all_strat_data.append({
+                            'Strategy': name,
+                            'Total Return': m.get('total_return', 0),
+                            'Ann. Return': m.get('ann_return', 0),
+                            'Volatility': m.get('volatility', 0),
+                            'Sharpe': m.get('sharpe', 0),
+                            'Sortino': m.get('sortino', 0),
+                            'Calmar': m.get('calmar', 0),
+                            'Max DD': m.get('max_dd', 0),
+                            'Win Rate': m.get('win_rate', 0),
+                            'Trades': m.get('trade_events', 0),
+                        })
                     
-                    if tier_data:
-                        df_tiers = pd.DataFrame(tier_data)
+                    if all_strat_data:
+                        df_all = pd.DataFrame(all_strat_data)
+                        df_all = df_all.sort_values('Sharpe', ascending=False).reset_index(drop=True)
                         
-                        # Reorder columns
-                        tier_cols = sorted([c for c in df_tiers.columns if c.startswith('T')], 
-                                          key=lambda x: int(x.replace('T', '')))
-                        df_tiers = df_tiers[['Strategy'] + tier_cols]
+                        # Mark selected strategies
+                        selected_strats = [k for k in st.session_state.performance.get('strategy', {}).keys() if k != 'System_Curated']
+                        df_all.insert(1, 'Selected', df_all['Strategy'].apply(lambda x: '✅' if x in selected_strats else ''))
                         
-                        # Add average column
-                        numeric_cols = [c for c in tier_cols if c in df_tiers.columns]
-                        df_tiers['Avg'] = df_tiers[numeric_cols].mean(axis=1)
+                        all_styled_cols = {
+                            'Total Return': '{:.2%}', 'Ann. Return': '{:.2%}', 'Volatility': '{:.2%}',
+                            'Sharpe': '{:.2f}', 'Sortino': '{:.2f}', 'Calmar': '{:.2f}',
+                            'Max DD': '{:.2%}', 'Win Rate': '{:.1%}', 'Trades': '{:.0f}'
+                        }
                         
-                        # Sort by average
-                        df_tiers = df_tiers.sort_values('Avg', ascending=False).reset_index(drop=True)
-                        
-                        # Format
-                        format_dict = {col: '{:.3f}' for col in tier_cols + ['Avg']}
-                        styled_tiers = df_tiers.style.format(format_dict)
+                        styled_all = df_all.style.format(all_styled_cols)
                         try:
-                            styled_tiers = styled_tiers.background_gradient(
-                                subset=numeric_cols + ['Avg'],
-                                cmap='RdYlGn',
-                                vmin=-1,
-                                vmax=2
+                            styled_all = styled_all.background_gradient(
+                                subset=['Sharpe', 'Sortino', 'Calmar'], cmap='RdYlGn'
                             )
                         except ImportError:
-                            pass  # matplotlib not available
+                            pass
                         
-                        st.dataframe(styled_tiers, width='stretch', hide_index=True)
-                        st.caption("Sharpe Ratio computed for each 10-stock tier subset (T1 = Top 10, T2 = 11-20, etc.)")
+                        st.dataframe(styled_all, width='stretch', hide_index=True, height=600)
+                        st.caption(f"Showing {len(df_all)} strategies evaluated in Phase 2 (trigger-based backtest). ✅ = selected for portfolio curation.")
                         
-                        # Download tier data
-                        tier_csv = df_tiers.to_csv(index=False)
+                        all_csv = df_all.to_csv(index=False)
                         st.download_button(
-                            label="📥 Download Tier Metrics CSV",
-                            data=tier_csv,
-                            file_name=f"tier_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            label="📥 Download All Strategies CSV",
+                            data=all_csv,
+                            file_name=f"all_strategy_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                             mime="text/csv"
                         )
                 else:
-                    st.info("Tier-level performance data not available for this analysis period.")
-                
-                st.markdown("---")
-                
-                # ─────────────────────────────────────────────────────────────────
-                # RETURNS TIME SERIES
-                # ─────────────────────────────────────────────────────────────────
-                st.subheader("📈 Strategy Returns Time Series")
-                
-                # Build returns dataframe
-                returns_data = {}
-                for name in strategies_in_performance:
-                    strategy_perf = st.session_state.performance.get('strategy', {}).get(name, {})
-                    returns_list = strategy_perf.get('returns', [])
-                    if returns_list:
-                        for r in returns_list:
-                            date = r.get('date')
-                            ret = r.get('return', 0)
-                            if date not in returns_data:
-                                returns_data[date] = {}
-                            returns_data[date][name] = ret
-                
-                if returns_data:
-                    df_returns = pd.DataFrame.from_dict(returns_data, orient='index')
-                    df_returns.index = pd.to_datetime(df_returns.index)
-                    df_returns = df_returns.sort_index()
-                    
-                    # Select strategies to display
-                    available_strats = [c for c in df_returns.columns if c != 'System_Curated']
-                    selected_strats = st.multiselect(
-                        "Select Strategies to Compare",
-                        options=['System_Curated'] + available_strats,
-                        default=['System_Curated'] + available_strats[:3] if len(available_strats) >= 3 else ['System_Curated'] + available_strats
-                    )
-                    
-                    if selected_strats:
-                        # Calculate cumulative returns
-                        df_cum = (1 + df_returns[selected_strats]).cumprod()
-                        
-                        # Plot
-                        fig_returns = go.Figure()
-                        for i, strat in enumerate(selected_strats):
-                            color = COLORS['primary'] if strat == 'System_Curated' else COLORS.get('palette', ['#10b981', '#06b6d4', '#f59e0b', '#a855f7'])[i % 4]
-                            fig_returns.add_trace(go.Scatter(
-                                x=df_cum.index,
-                                y=df_cum[strat],
-                                mode='lines',
-                                name=strat[:20],
-                                line=dict(color=color, width=2 if strat == 'System_Curated' else 1.5)
-                            ))
-                        
-                        fig_returns.update_layout(
-                            template='plotly_dark',
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor=COLORS['card'],
-                            height=400,
-                            font=dict(family='Inter', color=COLORS['text']),
-                            legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center'),
-                            margin=dict(l=60, r=20, t=40, b=40),
-                            yaxis_title="Cumulative Return"
-                        )
-                        fig_returns.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
-                        fig_returns.update_yaxes(showgrid=True, gridcolor=COLORS['border'])
-                        
-                        st.plotly_chart(fig_returns, width='stretch')
-                        
-                        # Download returns data
-                        returns_csv = df_returns.to_csv()
-                        st.download_button(
-                            label="📥 Download Returns Time Series CSV",
-                            data=returns_csv,
-                            file_name=f"returns_timeseries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                
-                st.markdown("---")
-                
-                # ─────────────────────────────────────────────────────────────────
-                # METHODOLOGY NOTE
-                # ─────────────────────────────────────────────────────────────────
-                with st.expander("📝 Backtest Methodology", expanded=False):
-                    backtest_mode = st.session_state.performance.get('backtest_mode', 'walk_forward')
-                    trigger_cfg = st.session_state.performance.get('trigger_config', {})
-                    
-                    if backtest_mode == 'trigger_based':
-                        st.markdown(f"""
-                        ### 🎯 Trigger-Based Backtest (Active)
-                        
-                        This analysis uses **trigger-based backtesting** aligned with `backtest.py`:
-                        
-                        **Current Configuration:**
-                        - **Buy Trigger**: REL_BREADTH < `{trigger_cfg.get('buy_threshold', 0.42)}`
-                        - **Sell Trigger**: REL_BREADTH > `{trigger_cfg.get('sell_threshold', 1.5)}` ({'Enabled' if trigger_cfg.get('sell_enabled') else 'Disabled'})
-                        
-                        **How It Works:**
-                        1. **Entry**: Buy portfolio when REL_BREADTH drops below threshold (regime dip)
-                        2. **Hold**: Maintain positions until sell trigger (or end of period)
-                        3. **Exit**: Sell all positions when REL_BREADTH exceeds sell threshold
-                        4. **SIP Mode**: Accumulates units on each buy trigger
-                        5. **Swing Mode**: Single position at a time, fully exits on sell
-                        
-                        **Key Differences from Walk-Forward:**
-                        | Aspect | Trigger-Based | Walk-Forward |
-                        |--------|---------------|--------------|
-                        | Entry Timing | On regime signals | Every period |
-                        | Position Hold | Until sell signal | Single period |
-                        | Rebalancing | On trigger events | Each period |
-                        | Capital | Accumulates (SIP) or rotates (Swing) | Fixed per period |
-                        
-                        **Use Case**: Production-realistic simulation with actual entry/exit timing
-                        """)
-                    else:
-                        st.markdown("""
-                        ### Walk-Forward Backtest (Active)
-                        
-                        This analysis uses a **walk-forward backtesting** methodology:
-                        
-                        1. **Training Window**: Expands as simulation progresses
-                        2. **Test Period**: Single period ahead for out-of-sample evaluation
-                        3. **Rebalancing**: Portfolio regenerated each test period
-                        4. **Return Calculation**: `(Price_next - Price_test) / Price_test`
-                        
-                        **Use Case**: Strategy quality evaluation and selection
-                        
-                        ---
-                        
-                        *To use trigger-based backtesting (aligned with backtest.py), enable it in the sidebar.*
-                        """)
-                    
-                    st.markdown("""
-                    ---
-                    
-                    **Key Metrics Computed:**
-                    
-                    | Metric | Formula | Interpretation |
-                    |--------|---------|----------------|
-                    | **Sharpe Ratio** | `(μ - rf) / σ` | Risk-adjusted excess return |
-                    | **Sortino Ratio** | `(μ - rf) / σ_down` | Downside risk-adjusted return |
-                    | **Calmar Ratio** | `CAGR / |Max DD|` | Return per unit of drawdown risk |
-                    | **Max Drawdown** | `min(V_t / V_peak - 1)` | Worst peak-to-trough decline |
-                    | **Win Rate** | `P(r_t > 0)` | Probability of positive return |
-                    
-                    **Tier-Level Analysis:**
-                    - Portfolio divided into 10-stock tiers (T1 = Top 10, T2 = 11-20, etc.)
-                    - Sharpe ratio computed per tier to identify alpha concentration
-                    """)
+                    st.info("Phase 2 strategy selection metrics not available. Run analysis with dynamic selection enabled.")
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
