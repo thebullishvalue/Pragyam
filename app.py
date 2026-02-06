@@ -2928,7 +2928,7 @@ def main():
                             # Show recent data preview
                             recent = breadth_df.tail(5).copy()
                             recent['DATE'] = recent['DATE'].dt.strftime('%Y-%m-%d')
-                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, use_container_width=True)
+                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, width='stretch')
                         else:
                             st.warning("⚠️ No data from Google Sheets. Using first-day entry fallback.")
                     except Exception as e:
@@ -3719,16 +3719,19 @@ def main():
                     # Apply formatting with background gradient on key metrics
                     styled_df = df_metrics.style.format(styled_cols)
                     
-                    # Apply background gradient to performance columns
+                    # Apply background gradient to performance columns (requires matplotlib)
                     gradient_cols = ['Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Total Return']
                     available_gradient_cols = [c for c in gradient_cols if c in df_metrics.columns]
                     if available_gradient_cols:
-                        styled_df = styled_df.background_gradient(
-                            subset=available_gradient_cols,
-                            cmap='RdYlGn'
-                        )
+                        try:
+                            styled_df = styled_df.background_gradient(
+                                subset=available_gradient_cols,
+                                cmap='RdYlGn'
+                            )
+                        except ImportError:
+                            pass  # matplotlib not available, skip gradient styling
                     
-                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                    st.dataframe(styled_df, width='stretch', hide_index=True)
                     
                     # Download button for raw metrics
                     csv_data = df_metrics.to_csv(index=False)
@@ -3775,14 +3778,18 @@ def main():
                         
                         # Format
                         format_dict = {col: '{:.3f}' for col in tier_cols + ['Avg']}
-                        styled_tiers = df_tiers.style.format(format_dict).background_gradient(
-                            subset=numeric_cols + ['Avg'],
-                            cmap='RdYlGn',
-                            vmin=-1,
-                            vmax=2
-                        )
+                        styled_tiers = df_tiers.style.format(format_dict)
+                        try:
+                            styled_tiers = styled_tiers.background_gradient(
+                                subset=numeric_cols + ['Avg'],
+                                cmap='RdYlGn',
+                                vmin=-1,
+                                vmax=2
+                            )
+                        except ImportError:
+                            pass  # matplotlib not available
                         
-                        st.dataframe(styled_tiers, use_container_width=True, hide_index=True)
+                        st.dataframe(styled_tiers, width='stretch', hide_index=True)
                         st.caption("Sharpe Ratio computed for each 10-stock tier subset (T1 = Top 10, T2 = 11-20, etc.)")
                         
                         # Download tier data
@@ -3858,7 +3865,7 @@ def main():
                         fig_returns.update_xaxes(showgrid=True, gridcolor=COLORS['border'])
                         fig_returns.update_yaxes(showgrid=True, gridcolor=COLORS['border'])
                         
-                        st.plotly_chart(fig_returns, use_container_width=True)
+                        st.plotly_chart(fig_returns, width='stretch')
                         
                         # Download returns data
                         returns_csv = df_returns.to_csv()
