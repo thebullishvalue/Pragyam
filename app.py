@@ -390,6 +390,20 @@ st.markdown("""
         color: var(--text-muted);
     }
 
+    .section-title {
+        margin: 1.6rem 0 0.35rem;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        letter-spacing: 0.2px;
+    }
+
+    .section-subtitle {
+        margin: 0 0 0.9rem;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+    }
+
     /* Buttons */
     .stButton>button {
         border: 2px solid var(--primary-color);
@@ -1833,8 +1847,14 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     fig.update_layout(template='plotly_dark', yaxis_tickformat=".0%")
     st.plotly_chart(fig, width='stretch')
 
-def render_section_header(title: str, subtitle: str = ""):
+def render_section_header(title: str, subtitle: str = "", style: str = "card"):
     subtitle_html = f"<p>{subtitle}</p>" if subtitle else ""
+    if style == "plain":
+        st.markdown(f"<div class='section-title'>{title}</div>", unsafe_allow_html=True)
+        if subtitle:
+            st.markdown(f"<div class='section-subtitle'>{subtitle}</div>", unsafe_allow_html=True)
+        return
+
     st.markdown(
         f"""
         <div class="section-header">
@@ -2045,7 +2065,11 @@ def display_performance_metrics(performance: Dict):
         
         st.plotly_chart(fig_rolling, width="stretch")
 
-    render_section_header("Strategy Attribution", "Relative performance of curated and component strategies.")
+    render_section_header(
+        "Strategy Attribution",
+        "Relative performance of curated and component strategies.",
+        style="plain"
+    )
     
     strategy_data = []
     for name, perf in performance.get('strategy', {}).items():
@@ -2074,7 +2098,11 @@ def display_performance_metrics(performance: Dict):
         
         st.dataframe(df_display, width="stretch", hide_index=True)
 
-    render_section_header("Strategy Correlation", "Cross-strategy return correlations for diversification insight.")
+    render_section_header(
+        "Strategy Correlation",
+        "Cross-strategy return correlations for diversification insight.",
+        style="plain"
+    )
     returns_df = pd.DataFrame()
     for name, perf in performance.get('strategy', {}).items():
         if perf.get('returns'):
@@ -2083,7 +2111,6 @@ def display_performance_metrics(performance: Dict):
             returns_df[name] = df['return']
 
     if not returns_df.empty and len(returns_df.columns) > 1:
-        st.markdown("##### Strategy Correlation")
         corr_matrix = returns_df.corr()
         
         if UNIFIED_CHARTS_AVAILABLE:
@@ -2143,7 +2170,11 @@ def display_performance_metrics(performance: Dict):
         corr_interpretation = "🟢 Well Diversified" if avg_corr < 0.5 else ("🟡 Moderate" if avg_corr < 0.7 else "🔴 Concentrated")
         st.caption(f"Average pairwise correlation: **{avg_corr:.2f}** | {corr_interpretation}")
     
-    render_section_header("Strategy Weight Evolution", "How allocation weights changed through time.")
+    render_section_header(
+        "Strategy Weight Evolution",
+        "How allocation weights changed through time.",
+        style="plain"
+    )
     plot_weight_evolution(
         performance.get('strategy_weights_history', []),
         title="",
@@ -3409,7 +3440,11 @@ def main():
             if not strategies_in_performance:
                 st.warning("No individual strategy data available for deep dive analysis.")
             else:
-                render_section_header("Position Tier Sharpe Map", "Sharpe distribution across tiered position sizing.")
+                render_section_header(
+                    "Position Tier Sharpe Map",
+                    "Sharpe distribution across tiered position sizing.",
+                    style="plain"
+                )
                 subset_perf = st.session_state.performance.get('subset', {})
                 
                 if subset_perf:
@@ -3638,7 +3673,11 @@ def main():
                 # ═══════════════════════════════════════════════════════════════════════════
                 # TIER WEIGHT EVOLUTION
                 # ═══════════════════════════════════════════════════════════════════════════
-                render_section_header("Tier Allocation History", "Evolution of tier weights for selected strategies.")
+                render_section_header(
+                    "Tier Allocation History",
+                    "Evolution of tier weights for selected strategies.",
+                    style="plain"
+                )
                 
                 display_subset_weight_evolution(
                     st.session_state.performance.get('subset_weights_history', []),
@@ -3648,7 +3687,11 @@ def main():
                 # ═══════════════════════════════════════════════════════════════════════════
                 # CONVICTION ANALYSIS
                 # ═══════════════════════════════════════════════════════════════════════════
-                render_section_header("Cross-Strategy Conviction", "Signal agreement and consensus picks across strategies.")
+                render_section_header(
+                    "Cross-Strategy Conviction",
+                    "Signal agreement and consensus picks across strategies.",
+                    style="plain"
+                )
                 
                 strategies_for_heatmap = {name: strategies[name] for name in strategies_in_performance if name in strategies}
                 
@@ -3674,7 +3717,10 @@ def main():
                         
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.markdown("**High Consensus Picks** (agreed by multiple strategies):")
+                            st.markdown(
+                                "<div class='section-subtitle'>High Consensus Picks (agreed by multiple strategies):</div>",
+                                unsafe_allow_html=True
+                            )
                             for symbol, count in top_consensus:
                                 agreement_pct = count / len(strategies_for_heatmap) * 100
                                 st.markdown(f"• **{symbol}**: {count}/{len(strategies_for_heatmap)} strategies ({agreement_pct:.0f}%)")
@@ -3700,7 +3746,11 @@ def main():
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SELECTION SUMMARY (Adaptive Rank-Based)
                 # ═══════════════════════════════════════════════════════════════════════════
-                render_section_header("Adaptive Selection Ranking", "Composite ranking using dispersion-weighted metrics.")
+                render_section_header(
+                    "Adaptive Selection Ranking",
+                    "Composite ranking using dispersion-weighted metrics.",
+                    style="plain"
+                )
                 
                 if strategies_in_performance:
                     summary_data = []
@@ -3791,7 +3841,11 @@ def main():
                 # ─────────────────────────────────────────────────────────────────
                 # TABLE 1: SELECTED STRATEGY METRICS (from Phase 3 walk-forward)
                 # ─────────────────────────────────────────────────────────────────
-                render_section_header("Selected Strategy Metrics", "Phase 3 walk-forward performance for chosen strategies.")
+                render_section_header(
+                    "Selected Strategy Metrics",
+                    "Phase 3 walk-forward performance for chosen strategies.",
+                    style="plain"
+                )
                 metrics_data = []
                 for name in strategies_in_performance:
                     strategy_perf = st.session_state.performance.get('strategy', {}).get(name, {})
@@ -3850,7 +3904,11 @@ def main():
                 # ─────────────────────────────────────────────────────────────────
                 # TABLE 2: ALL STRATEGIES FROM PHASE 2 (Selection Backtest)
                 # ─────────────────────────────────────────────────────────────────
-                render_section_header("Phase 2 Strategy Selection — All Strategies", "Trigger-based backtest metrics for the full universe.")
+                render_section_header(
+                    "Phase 2 Strategy Selection — All Strategies",
+                    "Trigger-based backtest metrics for the full universe.",
+                    style="plain"
+                )
                 
                 phase2_metrics = st.session_state.get('phase2_strategy_metrics', {})
                 
