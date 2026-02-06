@@ -608,9 +608,9 @@ def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, fl
     downside_returns = returns[returns < 0]
     if len(downside_returns) >= 2:
         downside_vol = downside_returns.std(ddof=1) * np.sqrt(periods_per_year)
-        sortino = annual_return / downside_vol if downside_vol > 0.001 else (annual_return * 10 if annual_return > 0 else 0)
+        sortino = annual_return / downside_vol if downside_vol > 0.001 else 0
     else:
-        sortino = annual_return * 10 if annual_return > 0 else 0
+        sortino = 0
     sortino = np.clip(sortino, -20, 20)
 
     # Maximum Drawdown
@@ -620,7 +620,7 @@ def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, fl
     max_drawdown = drawdown_series.min()
     
     # Calmar Ratio
-    calmar = annual_return / abs(max_drawdown) if max_drawdown < -0.001 else (annual_return * 10 if annual_return > 0 else 0)
+    calmar = annual_return / abs(max_drawdown) if max_drawdown < -0.001 else 0
     calmar = np.clip(calmar, -20, 20)
     
     # Win Rate
@@ -2289,10 +2289,10 @@ def _compute_backtest_metrics(daily_values: List[float], periods_per_year: float
         if downside_vol > 0.001:
             sortino = ann_return / downside_vol
         else:
-            sortino = ann_return * 100 if ann_return > 0 else 0  # Very low downside = good
+            sortino = 0
     else:
-        # No negative days - excellent performance
-        sortino = ann_return * 100 if ann_return > 0 else 0
+        sortino = 0
+    sortino = np.clip(sortino, -20, 20)
     result['sortino'] = sortino
     
     # Maximum Drawdown
@@ -2305,8 +2305,8 @@ def _compute_backtest_metrics(daily_values: List[float], periods_per_year: float
     if max_dd < -0.001:  # At least 0.1% drawdown
         calmar = ann_return / abs(max_dd)
     else:
-        # No meaningful drawdown
-        calmar = ann_return * 100 if ann_return > 0 else 0
+        calmar = 0
+    calmar = np.clip(calmar, -20, 20)
     result['calmar'] = calmar
     
     # Win Rate
@@ -3005,7 +3005,7 @@ def main():
 
         if st.button("Run Analysis", width='stretch', type="primary"):
             
-            lookback_files = 25
+            lookback_files = 100
             
             selected_date_obj = st.session_state.get('analysis_date_str')
             if not selected_date_obj:
