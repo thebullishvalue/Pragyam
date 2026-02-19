@@ -114,17 +114,13 @@ except ImportError:
     DYNAMIC_SELECTION_AVAILABLE = False
     logging.warning("backtest_engine.py not found. Using static strategy selection.")
 
-# --- Import Omega Engine (Self-Evolving Intelligence) ---
-from omega_engine import get_omega, OmegaEngine
-_omega = get_omega()
-
 
 # --- System Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
-VERSION = "Ω-4.0.0"  # Omega Engine — Self-Evolving Intelligence Architecture
+VERSION = "v3.2.0"  # Unified UI/UX + Trigger-Based Backtest + Hedge Fund Grade Analytics
 PRODUCT_NAME = "Pragyam"
 COMPANY = "Hemrek Capital"
 
@@ -581,21 +577,182 @@ def compute_portfolio_return(portfolio: pd.DataFrame, next_prices: pd.DataFrame)
 
 def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, float]:
     """
-    Ω Enhanced metrics with uncertainty quantification.
-    Delegates to OmegaEngine for Bayesian confidence intervals on all ratios.
+    Calculate comprehensive risk-adjusted performance metrics.
+    
+    Mathematical Framework:
+    - CAGR: Compound Annual Growth Rate via geometric mean
+    - Sharpe: Excess return per unit of total volatility (annualized)
+    - Sortino: Excess return per unit of downside deviation
+    - Calmar: CAGR / |Max Drawdown| - recovery efficiency metric
+    - Kelly: f* = p - q/b where p=win_rate, q=1-p, b=avg_win/avg_loss
+    
+    Uses proper time-weighted annualization factor.
     """
-    return _omega.calculate_advanced_metrics(returns_with_dates)
+    default_metrics = {
+        'total_return': 0, 'annual_return': 0, 'volatility': 0, 
+        'sharpe': 0, 'sortino': 0, 'max_drawdown': 0, 'calmar': 0, 
+        'win_rate': 0, 'kelly_criterion': 0, 'omega_ratio': 1.0,
+        'tail_ratio': 1.0, 'gain_to_pain': 0, 'profit_factor': 1.0
+    }
+    if len(returns_with_dates) < 2: 
+        return default_metrics, 52
+
+    returns_df = pd.DataFrame(returns_with_dates).sort_values('date').set_index('date')
+    time_deltas = returns_df.index.to_series().diff().dt.days
+    avg_period_days = time_deltas.mean()
+    periods_per_year = 365.25 / avg_period_days if pd.notna(avg_period_days) and avg_period_days > 0 else 52
+
+    returns = returns_df['return']
+    n_periods = len(returns)
+    
+    # Total Return (geometric)
+    total_return = (1 + returns).prod() - 1
+    
+    # CAGR: Correct annualization formula
+    # CAGR = (Final/Initial)^(1/years) - 1 = (1 + total_return)^(periods_per_year/n_periods) - 1
+    years = n_periods / periods_per_year
+    if years > 0 and total_return > -1:
+        annual_return = (1 + total_return) ** (1 / years) - 1
+    else:
+        annual_return = 0
+    
+    # Volatility (annualized standard deviation)
+    volatility = returns.std(ddof=1) * np.sqrt(periods_per_year)
+    
+    # Sharpe Ratio (assuming risk-free rate = 0)
+    sharpe = annual_return / volatility if volatility > 0.001 else 0
+    sharpe = np.clip(sharpe, -10, 10)
+
+    # Sortino Ratio (downside deviation)
+    downside_returns = returns[returns < 0]
+    if len(downside_returns) >= 2:
+        downside_vol = downside_returns.std(ddof=1) * np.sqrt(periods_per_year)
+        sortino = annual_return / downside_vol if downside_vol > 0.001 else 0
+    else:
+        sortino = 0
+    sortino = np.clip(sortino, -20, 20)
+
+    # Maximum Drawdown
+    cumulative = (1 + returns).cumprod()
+    running_max = cumulative.expanding(min_periods=1).max()
+    drawdown_series = (cumulative / running_max) - 1
+    max_drawdown = drawdown_series.min()
+    
+    # Calmar Ratio
+    calmar = annual_return / abs(max_drawdown) if max_drawdown < -0.001 else 0
+    calmar = np.clip(calmar, -20, 20)
+    
+    # Win Rate
+    win_rate = (returns > 0).mean()
+
+    # Win/Loss Statistics
+    gains = returns[returns > 0]
+    losses = returns[returns < 0]
+    avg_win = gains.mean() if len(gains) > 0 else 0
+    avg_loss = abs(losses.mean()) if len(losses) > 0 else 0
+    total_gains = gains.sum() if len(gains) > 0 else 0
+    total_losses = abs(losses.sum()) if len(losses) > 0 else 0
+    
+    # Kelly Criterion: f* = W - (1-W)/R where W=win_rate, R=avg_win/avg_loss
+    win_loss_ratio = avg_win / avg_loss if avg_loss > 0.0001 else 0
+    kelly = (win_rate - ((1 - win_rate) / win_loss_ratio)) if win_loss_ratio > 0 else 0
+    kelly = np.clip(kelly, -1, 1)
+    
+    # Omega Ratio: ∫(gains) / ∫(losses) above/below threshold=0
+    omega_ratio = total_gains / total_losses if total_losses > 0.0001 else (total_gains * 10 if total_gains > 0 else 1.0)
+    omega_ratio = np.clip(omega_ratio, 0, 50)
+    
+    # Profit Factor: Sum(gains) / Sum(losses)
+    profit_factor = total_gains / total_losses if total_losses > 0.0001 else (10.0 if total_gains > 0 else 1.0)
+    profit_factor = np.clip(profit_factor, 0, 50)
+    
+    # Tail Ratio: 95th percentile / |5th percentile|
+    upper_tail = np.percentile(returns, 95) if len(returns) >= 20 else returns.max()
+    lower_tail = abs(np.percentile(returns, 5)) if len(returns) >= 20 else abs(returns.min())
+    tail_ratio = upper_tail / lower_tail if lower_tail > 0.0001 else (10.0 if upper_tail > 0 else 1.0)
+    tail_ratio = np.clip(tail_ratio, 0, 20)
+    
+    # Gain-to-Pain Ratio: Total return / Sum(abs(negative returns))
+    pain = abs(losses.sum()) if len(losses) > 0 else 0
+    gain_to_pain = returns.sum() / pain if pain > 0.0001 else (returns.sum() * 10 if returns.sum() > 0 else 0)
+    gain_to_pain = np.clip(gain_to_pain, -20, 20)
+
+    metrics = {
+        'total_return': total_return, 
+        'annual_return': annual_return, 
+        'volatility': volatility, 
+        'sharpe': sharpe, 
+        'sortino': sortino, 
+        'max_drawdown': max_drawdown, 
+        'calmar': calmar, 
+        'win_rate': win_rate, 
+        'kelly_criterion': kelly,
+        'omega_ratio': omega_ratio,
+        'tail_ratio': tail_ratio,
+        'gain_to_pain': gain_to_pain,
+        'profit_factor': profit_factor
+    }
+    return metrics, periods_per_year
 
 def calculate_strategy_weights(performance: Dict) -> Dict[str, float]:
-    """
-    Ω Bayesian strategy weights: Weight ∝ Sharpe × confidence.
-    Replaces naive softmax-on-shifted-Sharpe with uncertainty-aware allocation.
-    """
-    return _omega.calculate_strategy_weights(performance)
+    strat_names = list(performance['strategy'].keys())
+    if not strat_names:
+        return {}
+
+    # Handle both flat format (sharpe at top level) and nested format (sharpe inside 'metrics')
+    sharpe_values = []
+    for name in strat_names:
+        strat_data = performance['strategy'][name]
+        if isinstance(strat_data, dict) and 'metrics' in strat_data and isinstance(strat_data['metrics'], dict):
+            sharpe = strat_data['metrics'].get('sharpe', 0)
+        else:
+            sharpe = strat_data.get('sharpe', 0)
+        # Ensure numeric
+        if not isinstance(sharpe, (int, float)) or not np.isfinite(sharpe):
+            sharpe = 0
+        sharpe_values.append(sharpe + 2)
+    
+    sharpe_values = np.array(sharpe_values)
+
+    if sharpe_values.size == 0:
+        return {name: 1.0 / len(strat_names) for name in strat_names} if strat_names else {}
+
+    # Stabilize the exp calculation to prevent overflow
+    stable_sharpes = sharpe_values - np.max(sharpe_values)
+    exp_sharpes = np.exp(stable_sharpes)
+    total_score = np.sum(exp_sharpes)
+
+    if total_score == 0 or not np.isfinite(total_score):
+        return {name: 1.0 / len(strat_names) for name in strat_names}
+
+    weights = exp_sharpes / total_score
+    return {name: weights[i] for i, name in enumerate(strat_names)}
 
 def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFrame]], strategies: Dict[str, BaseStrategy], training_capital: float) -> Dict:
-    """Ω Window performance calculation with uncertainty-aware metrics."""
-    return _omega._calc_window_performance(window_data, strategies, training_capital)
+    performance = {name: {'returns': []} for name in strategies}
+    subset_performance = {name: {} for name in strategies}
+    for i in range(len(window_data) - 1):
+        date, df = window_data[i]
+        next_date, next_df = window_data[i+1]
+        for name, strategy in strategies.items():
+            try:
+                portfolio = strategy.generate_portfolio(df, training_capital)
+                if portfolio.empty: continue
+                performance[name]['returns'].append({'return': compute_portfolio_return(portfolio, next_df), 'date': next_date})
+                n, tier_size = len(portfolio), 10
+                num_tiers = n // tier_size
+                if num_tiers == 0: continue
+                for j in range(num_tiers):
+                    tier_name = f'tier_{j+1}'
+                    if tier_name not in subset_performance[name]: subset_performance[name][tier_name] = []
+                    sub_df = portfolio.iloc[j*tier_size : (j+1)*tier_size]
+                    if not sub_df.empty:
+                        sub_ret = compute_portfolio_return(sub_df, next_df)
+                        subset_performance[name][tier_name].append({'return': sub_ret, 'date': next_date})
+            except Exception as e: logging.error(f"Window Calc Error ({name}, {date}): {e}")
+    final_performance = {name: {'metrics': calculate_advanced_metrics(perf['returns'])[0], 'sharpe': calculate_advanced_metrics(perf['returns'])[0]['sharpe']} for name, perf in performance.items()}
+    final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
+    return {'strategy': final_performance, 'subset': final_sub_performance}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1170,52 +1327,458 @@ def evaluate_historical_performance(
     historical_data: List[Tuple[datetime, pd.DataFrame]]
 ) -> Dict:
     """
-    Ω Walk-forward evaluation with adaptive windows, uncertainty tracking,
-    signal relevance computation, and Governor-modulated weights.
-    Every day is a rebalancing day (pure stock-picking measurement).
+    Standard walk-forward evaluation WITHOUT trigger signals.
+    Every day is a rebalancing day.
     """
-    return _omega.evaluate_historical_performance(
-        _strategies, historical_data,
-        compute_portfolio_return_fn=compute_portfolio_return
-    )
+    MIN_TRAIN_FILES = 2
+    TRAINING_CAPITAL = 2500000.0
+    
+    if len(historical_data) < MIN_TRAIN_FILES + 1:
+        st.error(f"Not enough historical data. Need at least {MIN_TRAIN_FILES + 1} files.")
+        return {}
+    
+    all_names = list(_strategies.keys()) + ['System_Curated']
+    oos_perf = {name: {'returns': []} for name in all_names}
+    weight_entropies = []
+    strategy_weights_history = []
+    subset_weights_history = []
+    
+    progress_bar = st.progress(0, text="Initializing backtest...")
+    total_steps = len(historical_data) - MIN_TRAIN_FILES - 1
+    
+    if total_steps <= 0:
+        st.error(f"Not enough data for backtest steps. Need at least {MIN_TRAIN_FILES + 2} days.")
+        progress_bar.empty()
+        return {}
+    
+    for i in range(MIN_TRAIN_FILES, len(historical_data) - 1):
+        train_window = historical_data[:i]
+        test_date, test_df = historical_data[i]
+        next_date, next_df = historical_data[i + 1]
+        
+        progress_text = f"Processing step {i - MIN_TRAIN_FILES + 1}/{total_steps}"
+        progress_bar.progress((i - MIN_TRAIN_FILES + 1) / total_steps, text=progress_text)
+        
+        in_sample_perf = _calculate_performance_on_window(train_window, _strategies, TRAINING_CAPITAL)
+        
+        try:
+            curated_port, strat_wts, sub_wts = curate_final_portfolio(
+                _strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0
+            )
+            
+            strategy_weights_history.append({'date': test_date, **strat_wts})
+            subset_weights_history.append({'date': test_date, **sub_wts})
+            
+            if curated_port.empty:
+                oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+            else:
+                oos_perf['System_Curated']['returns'].append({
+                    'return': compute_portfolio_return(curated_port, next_df),
+                    'date': next_date
+                })
+                weights = curated_port['weightage_pct'] / 100
+                valid_w = weights[weights > 0]
+                if len(valid_w) > 0:
+                    entropy = -np.sum(valid_w * np.log2(valid_w))
+                    weight_entropies.append(entropy)
+        except Exception as e:
+            logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
+            oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
+        
+        for name, strategy in _strategies.items():
+            try:
+                portfolio = strategy.generate_portfolio(test_df, TRAINING_CAPITAL)
+                oos_perf[name]['returns'].append({
+                    'return': compute_portfolio_return(portfolio, next_df),
+                    'date': next_date
+                })
+            except Exception as e:
+                logging.error(f"OOS Strategy Error ({name}, {test_date.date()}): {e}")
+                oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
+    
+    progress_bar.empty()
+    
+    final_oos_perf = {}
+    for name, data in oos_perf.items():
+        metrics, _ = calculate_advanced_metrics(data['returns'])
+        final_oos_perf[name] = {
+            'returns': data['returns'],
+            'metrics': metrics
+        }
+    
+    if weight_entropies:
+        final_oos_perf['System_Curated']['metrics']['avg_weight_entropy'] = np.mean(weight_entropies)
+    
+    full_history_subset_perf = _calculate_performance_on_window(historical_data, _strategies, TRAINING_CAPITAL)['subset']
+    
+    return {
+        'strategy': final_oos_perf,
+        'subset': full_history_subset_perf,
+        'strategy_weights_history': strategy_weights_history,
+        'subset_weights_history': subset_weights_history
+    }
 
 
 def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dict, current_df: pd.DataFrame, sip_amount: float, num_positions: int, min_pos_pct: float, max_pos_pct: float) -> Tuple[pd.DataFrame, Dict, Dict]:
-    """
-    Ω Portfolio Materialization: conviction-weighted sizing with
-    Governor-imposed exposure scaling and drawdown-sensitive limits.
-    """
-    return _omega.curate_final_portfolio(
-        strategies, performance, current_df,
-        sip_amount, num_positions, min_pos_pct, max_pos_pct
-    )
+    strategy_weights = calculate_strategy_weights(performance)
+    subset_weights = {}
+    for name in strategies:
+        sub_perfs = performance.get('subset', {}).get(name, {})
+        tier_names = sorted(sub_perfs.keys())
+        if not tier_names:
+            subset_weights[name] = {}
+            continue
 
-# --- Ω: Bayesian Market Regime Inference (replaces MarketRegimeDetectorV2) ---
-# The Omega engine's BayesianBeliefEngine provides continuous regime inference
-# with uncertainty quantification, transition probability modeling, and
-# particle-filter-inspired multi-hypothesis tracking. No hardcoded thresholds.
-#
-# Original MarketRegimeDetectorV2 used 45+ hardcoded thresholds across 7
-# dimension analyzers. Omega replaces ALL of them with distribution-relative
-# measures that adapt to market conditions.
+        tier_sharpes = np.array([sub_perfs.get(tier, 1.0 - (int(tier.split('_')[1]) * 0.05)) + 2 for tier in tier_names])
+        
+        if tier_sharpes.size == 0:
+            subset_weights[name] = {}
+            continue
 
+        stable_sharpes = tier_sharpes - np.max(tier_sharpes)
+        exp_sharpes = np.exp(stable_sharpes)
+        total_exp = np.sum(exp_sharpes)
+
+        if total_exp > 0 and np.isfinite(total_exp):
+            subset_weights[name] = {tier: exp_sharpes[i] / total_exp for i, tier in enumerate(tier_names)}
+        else:
+            equal_weight = 1.0 / len(tier_names) if tier_names else 0
+            subset_weights[name] = {tier: equal_weight for tier in tier_names}
+
+    aggregated_holdings = {}
+    for name, strategy in strategies.items():
+        port = strategy.generate_portfolio(current_df, sip_amount)
+        if port.empty: continue
+        n, tier_size = len(port), 10
+        num_tiers = n // tier_size
+        if num_tiers == 0: continue
+        for j in range(num_tiers):
+            tier_name = f'tier_{j+1}'
+            if tier_name not in subset_weights.get(name, {}): continue
+            sub_df = port.iloc[j*tier_size:(j+1)*tier_size]
+            tier_weight = subset_weights[name][tier_name]
+            for _, row in sub_df.iterrows():
+                symbol, price, weight_pct = row['symbol'], row['price'], row['weightage_pct']
+                final_weight = (weight_pct / 100) * tier_weight * strategy_weights.get(name, 0)
+                if symbol in aggregated_holdings: aggregated_holdings[symbol]['weight'] += final_weight
+                else: aggregated_holdings[symbol] = {'price': price, 'weight': final_weight}
+    if not aggregated_holdings: 
+        return pd.DataFrame(), {}, {}
+        
+    final_port = pd.DataFrame([{'symbol': s, **d} for s, d in aggregated_holdings.items()]).sort_values('weight', ascending=False).head(num_positions)
+    total_weight = final_port['weight'].sum()
+    final_port['weightage_pct'] = final_port['weight'] * 100 / total_weight
+    final_port['weightage_pct'] = final_port['weightage_pct'].clip(lower=min_pos_pct, upper=max_pos_pct)
+    final_port['weightage_pct'] = (final_port['weightage_pct'] / final_port['weightage_pct'].sum()) * 100
+    final_port['units'] = np.floor((sip_amount * final_port['weightage_pct'] / 100) / final_port['price'])
+    final_port['value'] = final_port['units'] * final_port['price']
+    
+    final_port_df = final_port.sort_values('weightage_pct', ascending=False).reset_index(drop=True)
+    return final_port_df, strategy_weights, subset_weights
+
+# --- NEW: Production-Grade Market Regime Detection System (v2 - Corrected Logic) ---
 class MarketRegimeDetectorV2:
     """
-    Ω Backward-compatible wrapper around OmegaEngine's Bayesian Belief Engine.
-    Preserves the exact interface: detect_regime() → (name, mix, confidence, details)
-    while replacing all internal logic with adaptive inference.
+    Institutional-grade market regime detection (v2) with corrected scoring and
+    classification logic.
     """
     
     def __init__(self):
-        pass  # All state lives in _omega.beliefs
+        self.regime_thresholds = {
+            'CRISIS': {'score': -1.0, 'confidence': 0.85},
+            'BEAR': {'score': -0.5, 'confidence': 0.75},
+            'WEAK_BEAR': {'score': -0.1, 'confidence': 0.65},
+            'CHOP': {'score': 0.1, 'confidence': 0.60},
+            'WEAK_BULL': {'score': 0.5, 'confidence': 0.65},
+            'BULL': {'score': 1.0, 'confidence': 0.75},
+            'STRONG_BULL': {'score': 1.5, 'confidence': 0.85},
+        }
     
     def detect_regime(self, historical_data: list) -> Tuple[str, str, float, Dict]:
-        """Delegates to Omega's continuous regime inference."""
-        return _omega.detect_regime(historical_data)
+        if len(historical_data) < 10:
+            return "INSUFFICIENT_DATA", "🐂 Bull Market Mix", 0.3, {}
+        
+        analysis_window = historical_data[-10:]
+        latest_date, latest_df = analysis_window[-1]
+        
+        metrics = {
+            'momentum': self._analyze_momentum_regime(analysis_window),
+            'trend': self._analyze_trend_quality(analysis_window),
+            'breadth': self._analyze_market_breadth(latest_df),
+            'volatility': self._analyze_volatility_regime(analysis_window),
+            'extremes': self._analyze_statistical_extremes(latest_df),
+            'correlation': self._analyze_correlation_regime(latest_df),
+            'velocity': self._analyze_velocity(analysis_window)
+        }
+        
+        regime_score = self._calculate_composite_score(metrics)
+        regime_name, confidence = self._classify_regime(regime_score, metrics)
+        mix_name = self._map_regime_to_mix(regime_name)
+        explanation = self._generate_explanation(regime_name, confidence, metrics, regime_score)
+        
+        return regime_name, mix_name, confidence, {
+            'score': regime_score,
+            'metrics': metrics,
+            'explanation': explanation,
+            'analysis_date': latest_date.strftime('%Y-%m-%d')
+        }
+
+    def _analyze_momentum_regime(self, window: list) -> Dict:
+        rsi_values = [df['rsi latest'].mean() for _, df in window]
+        osc_values = [df['osc latest'].mean() for _, df in window]
+        
+        current_rsi = rsi_values[-1]
+        rsi_trend = np.polyfit(range(len(rsi_values)), rsi_values, 1)[0]
+        current_osc = osc_values[-1]
+        osc_trend = np.polyfit(range(len(osc_values)), osc_values, 1)[0]
+        
+        if current_rsi > 65 and rsi_trend > 0.5:
+            strength, score = 'STRONG_BULLISH', 2.0
+        elif current_rsi > 55 and rsi_trend >= 0:
+            strength, score = 'BULLISH', 1.0
+        elif current_rsi < 35 and rsi_trend < -0.5:
+            strength, score = 'STRONG_BEARISH', -2.0
+        elif current_rsi < 45 and rsi_trend <= 0:
+            strength, score = 'BEARISH', -1.0
+        else:
+            strength, score = 'NEUTRAL', 0.0
+            
+        return {'strength': strength, 'score': score, 'current_rsi': current_rsi, 'rsi_trend': rsi_trend, 'current_osc': current_osc, 'osc_trend': osc_trend}
+
+    def _analyze_trend_quality(self, window: list) -> Dict:
+        above_ma200_pct = [(df['price'] > df['ma200 latest']).mean() for _, df in window]
+        ma_alignment = [(df['ma90 latest'] > df['ma200 latest']).mean() for _, df in window]
+        
+        current_above_200 = above_ma200_pct[-1]
+        current_alignment = ma_alignment[-1]
+        trend_consistency = np.polyfit(range(len(above_ma200_pct)), above_ma200_pct, 1)[0]
+        
+        if current_above_200 > 0.75 and current_alignment > 0.70 and trend_consistency >= 0:
+            quality, score = 'STRONG_UPTREND', 2.0
+        elif current_above_200 > 0.60 and current_alignment > 0.55:
+            quality, score = 'UPTREND', 1.0
+        elif current_above_200 < 0.30 and current_alignment < 0.30 and trend_consistency < 0:
+            quality, score = 'STRONG_DOWNTREND', -2.0
+        elif current_above_200 < 0.45 and current_alignment < 0.45:
+            quality, score = 'DOWNTREND', -1.0
+        else:
+            quality, score = 'TRENDLESS', 0.0
+            
+        return {'quality': quality, 'score': score, 'above_200dma': current_above_200, 'ma_alignment': current_alignment, 'trend_consistency': trend_consistency}
+
+    def _analyze_market_breadth(self, df: pd.DataFrame) -> Dict:
+        rsi_bullish = (df['rsi latest'] > 50).mean()
+        osc_positive = (df['osc latest'] > 0).mean()
+        rsi_weak = (df['rsi latest'] < 40).mean()
+        osc_oversold = (df['osc latest'] < -50).mean()
+        divergence = abs(rsi_bullish - osc_positive)
+        
+        if rsi_bullish > 0.70 and osc_positive > 0.60 and divergence < 0.15:
+            quality, score = 'STRONG_BROAD', 2.0
+        elif rsi_bullish > 0.55 and osc_positive > 0.45:
+            quality, score = 'HEALTHY', 1.0
+        elif rsi_weak > 0.60 and osc_oversold > 0.50:
+            quality, score = 'CAPITULATION', -2.0
+        elif rsi_weak > 0.45 and osc_oversold > 0.35:
+            quality, score = 'WEAK', -1.0
+        elif divergence > 0.25:
+            quality, score = 'DIVERGENT', -0.5
+        else:
+            quality, score = 'MIXED', 0.0
+            
+        return {'quality': quality, 'score': score, 'rsi_bullish_pct': rsi_bullish, 'osc_positive_pct': osc_positive, 'divergence': divergence}
+
+    def _analyze_volatility_regime(self, window: list) -> Dict:
+        bb_widths = [((4 * df['dev20 latest']) / (df['ma20 latest'] + 1e-6)).mean() for _, df in window]
+        current_bbw = bb_widths[-1]
+        vol_trend = np.polyfit(range(len(bb_widths)), bb_widths, 1)[0]
+        
+        if current_bbw < 0.08 and vol_trend < 0:
+            regime, score = 'SQUEEZE', 0.5 
+        elif current_bbw > 0.15 and vol_trend > 0:
+            regime, score = 'PANIC', -1.0 
+        elif current_bbw > 0.12:
+            regime, score = 'ELEVATED', -0.5
+        else:
+            regime, score = 'NORMAL', 0.0
+            
+        return {'regime': regime, 'score': score, 'current_bbw': current_bbw, 'vol_trend': vol_trend}
+
+    def _analyze_statistical_extremes(self, df: pd.DataFrame) -> Dict:
+        extreme_oversold = (df['zscore latest'] < -2.0).mean()
+        extreme_overbought = (df['zscore latest'] > 2.0).mean()
+        
+        if extreme_oversold > 0.40:
+            extreme_type, score = 'DEEPLY_OVERSOLD', 1.5 
+        elif extreme_overbought > 0.40:
+            extreme_type, score = 'DEEPLY_OVERBOUGHT', -1.5
+        elif extreme_oversold > 0.20:
+            extreme_type, score = 'OVERSOLD', 0.75
+        elif extreme_overbought > 0.20:
+            extreme_type, score = 'OVERBOUGHT', -0.75
+        else:
+            extreme_type, score = 'NORMAL', 0.0
+            
+        return {'type': extreme_type, 'score': score, 'zscore_extreme_oversold_pct': extreme_oversold, 'zscore_extreme_overbought_pct': extreme_overbought}
+
+    def _analyze_correlation_regime(self, df: pd.DataFrame) -> Dict:
+        """
+        Analyze cross-sectional correlation structure.
+        
+        High correlation (herding) often precedes market stress.
+        Low correlation indicates stock-picking environment.
+        
+        Mathematical approach: Compute pairwise correlation proxy via 
+        indicator agreement across the cross-section.
+        """
+        # Cross-sectional correlation proxy via indicator agreement
+        # When indicators agree across stocks, correlation is high
+        rsi_median = df['rsi latest'].median()
+        osc_median = df['osc latest'].median()
+        
+        # Fraction of stocks on same side of median (herding measure)
+        rsi_above = (df['rsi latest'] > rsi_median).mean()
+        rsi_agreement = max(rsi_above, 1 - rsi_above)  # Closer to 1 = more agreement
+        
+        osc_above = (df['osc latest'] > osc_median).mean()
+        osc_agreement = max(osc_above, 1 - osc_above)
+        
+        # Cross-indicator agreement (both oversold or both overbought)
+        both_oversold = ((df['rsi latest'] < 40) & (df['osc latest'] < -30)).mean()
+        both_overbought = ((df['rsi latest'] > 60) & (df['osc latest'] > 30)).mean()
+        indicator_agreement = both_oversold + both_overbought
+        
+        # Dispersion as inverse correlation proxy
+        rsi_dispersion = df['rsi latest'].std() / 50  # Normalized
+        osc_dispersion = df['osc latest'].std() / 100
+        avg_dispersion = (rsi_dispersion + osc_dispersion) / 2
+        
+        # Combined correlation score (0 = dispersed, 1 = correlated)
+        correlation_score = (rsi_agreement + osc_agreement) / 2 * (1 - avg_dispersion) + indicator_agreement * 0.3
+        correlation_score = np.clip(correlation_score, 0, 1)
+        
+        if correlation_score > 0.7:
+            regime, score = 'HIGH_CORRELATION', -0.5  # High corr often precedes stress
+        elif correlation_score < 0.4:
+            regime, score = 'LOW_CORRELATION', 0.5  # Good for stock picking
+        else:
+            regime, score = 'NORMAL', 0.0
+            
+        return {
+            'regime': regime, 
+            'score': score, 
+            'correlation_score': correlation_score,
+            'dispersion': avg_dispersion,
+            'indicator_agreement': indicator_agreement
+        }
+
+    def _analyze_velocity(self, window: list) -> Dict:
+        """
+        Analyze momentum velocity and acceleration.
+        
+        Velocity: First derivative of RSI (rate of change)
+        Acceleration: Second derivative (rate of change of velocity)
+        
+        Positive acceleration with positive velocity = strengthening momentum
+        Negative acceleration with positive velocity = momentum fading
+        """
+        if len(window) < 5: 
+            return {'acceleration': 'UNKNOWN', 'score': 0.0, 'avg_velocity': 0.0, 'acceleration_value': 0.0}
+        
+        recent_rsis = np.array([w[1]['rsi latest'].mean() for w in window[-5:]])
+        
+        # Velocity: First differences (first derivative)
+        velocity = np.diff(recent_rsis)  # 4 values
+        avg_velocity = np.mean(velocity)
+        current_velocity = velocity[-1]
+        
+        # Acceleration: Second differences (second derivative)
+        acceleration_values = np.diff(velocity)  # 3 values
+        avg_acceleration = np.mean(acceleration_values)
+        current_acceleration = acceleration_values[-1]
+        
+        # Classification based on velocity and acceleration
+        if avg_velocity > 1.5 and current_acceleration > 0:
+            velocity_regime, score = 'ACCELERATING_UP', 1.5
+        elif avg_velocity > 1.0 and current_acceleration >= 0:
+            velocity_regime, score = 'RISING_FAST', 1.0
+        elif avg_velocity > 0.5:
+            velocity_regime, score = 'RISING', 0.5
+        elif avg_velocity < -1.5 and current_acceleration < 0:
+            velocity_regime, score = 'ACCELERATING_DOWN', -1.5
+        elif avg_velocity < -1.0 and current_acceleration <= 0:
+            velocity_regime, score = 'FALLING_FAST', -1.0
+        elif avg_velocity < -0.5:
+            velocity_regime, score = 'FALLING', -0.5
+        elif abs(avg_velocity) < 0.5 and abs(current_acceleration) > 0.5:
+            # Momentum building from stable base
+            if current_acceleration > 0:
+                velocity_regime, score = 'COILING_UP', 0.3
+            else:
+                velocity_regime, score = 'COILING_DOWN', -0.3
+        else:
+            velocity_regime, score = 'STABLE', 0.0
+            
+        return {
+            'acceleration': velocity_regime, 
+            'score': score, 
+            'avg_velocity': avg_velocity,
+            'current_velocity': current_velocity,
+            'acceleration_value': current_acceleration
+        }
+
+    def _calculate_composite_score(self, metrics: Dict) -> float:
+        weights = { 'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15, 'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15 }
+        return sum(metrics[factor]['score'] * weight for factor, weight in weights.items())
+    
+    def _classify_regime(self, score: float, metrics: Dict) -> Tuple[str, float]:
+        if metrics['volatility']['regime'] == 'PANIC' and score < -0.5 and metrics['breadth']['quality'] == 'CAPITULATION':
+            return 'CRISIS', 0.90
+            
+        sorted_thresholds = sorted(self.regime_thresholds.items(), key=lambda item: item[1]['score'])
+        
+        for regime, threshold in reversed(sorted_thresholds):
+            if score >= threshold['score']:
+                confidence = threshold['confidence'] * 0.75 if metrics['breadth']['quality'] == 'DIVERGENT' else threshold['confidence']
+                return regime, confidence
+
+        return 'CRISIS', 0.85
+    
+    def _map_regime_to_mix(self, regime: str) -> str:
+        mapping = {
+            'STRONG_BULL': 'Bull Market Mix', 'BULL': 'Bull Market Mix',
+            'WEAK_BULL': 'Chop/Consolidate Mix', 'CHOP': 'Chop/Consolidate Mix',
+            'WEAK_BEAR': 'Chop/Consolidate Mix', 'BEAR': 'Bear Market Mix',
+            'CRISIS': 'Bear Market Mix'
+        }
+        return mapping.get(regime, 'Chop/Consolidate Mix')
+    
+    def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float) -> str:
+        lines = [f"**Detected Regime:** {regime} (Score: {score:.2f}, Confidence: {confidence:.0%})", ""]
+        rationales = {
+            'STRONG_BULL': "Strong upward momentum with broad participation. Favor momentum strategies.",
+            'BULL': "Positive trend with healthy breadth. Conditions support growth strategies.",
+            'WEAK_BULL': "Uptrend showing signs of fatigue or divergence. Rotate to defensive positions.",
+            'CHOP': "No clear directional bias. Favors mean reversion and relative value strategies.",
+            'WEAK_BEAR': "Downtrend developing. Begin defensive positioning.",
+            'BEAR': "Established downtrend with weak breadth. Favor defensive strategies.",
+            'CRISIS': "Severe market stress. Focus on capital preservation and oversold opportunities."
+        }
+        lines.append(f"**Rationale:** {rationales.get(regime, 'Market conditions unclear.')}")
+        if metrics['breadth']['quality'] == 'DIVERGENT':
+            lines.append("⚠️ **Warning:** Breadth divergence detected - narrow leadership may not be sustainable.")
+        lines.append("\n**Key Factors:**")
+        lines.append(f"• **Momentum:** {metrics['momentum']['strength']} (RSI: {metrics['momentum']['current_rsi']:.1f})")
+        lines.append(f"• **Trend:** {metrics['trend']['quality']} ({metrics['trend']['above_200dma']:.0%} > 200DMA)")
+        lines.append(f"• **Breadth:** {metrics['breadth']['quality']} ({metrics['breadth']['rsi_bullish_pct']:.0%} bullish)")
+        lines.append(f"• **Volatility:** {metrics['volatility']['regime']} (BBW: {metrics['volatility']['current_bbw']:.3f})")
+        if metrics['extremes']['type'] != 'NORMAL':
+            lines.append(f"• **Extremes:** {metrics['extremes']['type']} detected")
+        return "\n".join(lines)
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, Dict]:
-    """Ω Bayesian regime inference with continuous belief state."""
+    detector = MarketRegimeDetectorV2()
     regime_days_to_fetch = int(MAX_INDICATOR_PERIOD * 1.5) + 30 
     fetch_start_date = end_date - timedelta(days=regime_days_to_fetch)
     
@@ -1232,11 +1795,9 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
                 "⚠️ Insufficient historical data (< 10 periods). Defaulting to Bull Mix.",
                 0.30, {}
             )
-        
-        # Use Omega's Bayesian Belief Engine
-        regime_name, mix_name, confidence, details = _omega.detect_regime(historical_data)
-        explanation = details.get('explanation', f"Regime: {regime_name}")
-        return mix_name, explanation, confidence, details
+            
+        regime_name, mix_name, confidence, details = detector.detect_regime(historical_data)
+        return mix_name, details['explanation'], confidence, details
 
     except Exception as e:
         logging.error(f"Error in get_market_mix_suggestion_v3: {e}")
@@ -1862,23 +2423,362 @@ def _run_dynamic_strategy_selection(
     trigger_config: Optional[Dict] = None
 ) -> Tuple[Optional[List[str]], Dict[str, Dict]]:
     """
-    Ω Strategy Tournament: Multi-objective, correlation-penalized,
-    dynamic-count strategy selection with uncertainty-aware scoring.
+    Backtest all strategies using TRIGGER-BASED methodology (aligned with backtest.py)
+    and select top 4 based on performance metrics.
     
-    Replaces fixed "top 4 by single metric" with:
-    - Regime-adaptive criteria weighting
-    - Correlation-penalized greedy selection
-    - Dynamic count (3-6 strategies based on diversity benefit)
-    - Confidence-weighted allocation within selected set
+    Selection Criteria:
+    - SIP Investment: Top 4 by Calmar Ratio (drawdown recovery)
+    - Swing Trading: Top 4 by Sortino Ratio (risk-adjusted returns)
     
-    Trigger system preserved exactly (0.42 / 0.50 thresholds untouched).
+    Trigger-Based Methodology:
+    - Buy when REL_BREADTH < buy_threshold
+    - Sell when REL_BREADTH > sell_threshold (Swing mode only)
+    - SIP: Accumulate on each buy trigger
+    - Swing: Single position, hold until sell trigger
     """
-    return _omega.run_dynamic_selection(
-        historical_data, all_strategies, selected_style,
-        progress_bar=progress_bar, status_text=status_text,
-        trigger_df=trigger_df, trigger_config=trigger_config,
-        compute_portfolio_return_fn=compute_portfolio_return
-    )
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # CONFIGURATION
+    # ─────────────────────────────────────────────────────────────────────
+    
+    is_sip = "SIP" in selected_style
+    metric_key = 'calmar' if is_sip else 'sortino'
+    metric_label = "Calmar" if is_sip else "Sortino"
+    
+    # Get trigger configuration from TRIGGER_CONFIG or use provided
+    if trigger_config is None:
+        trigger_config = TRIGGER_CONFIG.get(selected_style, TRIGGER_CONFIG.get('SIP Investment', {}))
+    
+    buy_threshold = trigger_config.get('buy_threshold', 0.42 if is_sip else 0.52)
+    sell_threshold = trigger_config.get('sell_threshold', 1.5 if is_sip else 1.2)
+    sell_enabled = trigger_config.get('sell_enabled', not is_sip)  # Swing = enabled, SIP = disabled
+    
+    _dss_logger.info("=" * 70)
+    _dss_logger.info("DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
+    _dss_logger.info("=" * 70)
+    _dss_logger.info(f"Investment Style: {selected_style}")
+    _dss_logger.info(f"Selection Metric: {metric_label} Ratio")
+    _dss_logger.info(f"Trigger Mode: BUY < {buy_threshold} | SELL > {sell_threshold} (enabled={sell_enabled})")
+    
+    # Validation
+    if not DYNAMIC_SELECTION_AVAILABLE:
+        _dss_logger.warning("backtest_engine.py not available - using static selection")
+        return None, {}
+    
+    if not historical_data or len(historical_data) < 10:
+        _dss_logger.warning(f"Insufficient data ({len(historical_data) if historical_data else 0} days) - using static selection")
+        return None, {}
+    
+    # Extract date range
+    date_start = historical_data[0][0]
+    date_end = historical_data[-1][0]
+    n_days = len(historical_data)
+    capital = 10_000_000
+    
+    _dss_logger.info(f"Backtest Period: {date_start.strftime('%Y-%m-%d')} to {date_end.strftime('%Y-%m-%d')} ({n_days} days)")
+    _dss_logger.info(f"Strategies to evaluate: {len(all_strategies)}")
+    _dss_logger.info("-" * 70)
+    
+    if status_text:
+        status_text.text(f"Building price matrix for {n_days} days...")
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # BUILD PRICE MATRIX & DATE INDEX
+    # ─────────────────────────────────────────────────────────────────────
+    
+    # Collect all symbols
+    all_symbols = set()
+    for _, df in historical_data:
+        all_symbols.update(df['symbol'].tolist())
+    all_symbols = sorted(all_symbols)
+    
+    # Build price matrix and date lookup
+    price_matrix = {}
+    date_to_df = {}
+    simulation_dates = []
+    
+    for date_obj, df in historical_data:
+        sim_date = date_obj.date() if hasattr(date_obj, 'date') else date_obj
+        simulation_dates.append(sim_date)
+        date_to_df[sim_date] = df
+    
+    for symbol in all_symbols:
+        prices = []
+        last_valid = np.nan
+        for _, df in historical_data:
+            sym_df = df[df['symbol'] == symbol]
+            if not sym_df.empty and 'price' in sym_df.columns:
+                price = sym_df['price'].iloc[0]
+                if pd.notna(price) and price > 0:
+                    last_valid = price
+            prices.append(last_valid)
+        price_matrix[symbol] = prices
+    
+    _dss_logger.info(f"Price matrix: {len(all_symbols)} symbols × {n_days} days")
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # PREPARE TRIGGER MASKS (REL_BREADTH-based)
+    # ─────────────────────────────────────────────────────────────────────
+    
+    buy_dates_mask = [False] * n_days
+    sell_dates_mask = [False] * n_days
+    
+    if trigger_df is not None and not trigger_df.empty and 'REL_BREADTH' in trigger_df.columns:
+        _dss_logger.info("Using provided trigger data (REL_BREADTH)")
+        
+        # Ensure trigger_df index is date-comparable
+        if hasattr(trigger_df.index, 'date'):
+            trigger_date_map = {idx.date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        else:
+            trigger_date_map = {pd.to_datetime(idx).date(): val for idx, val in trigger_df['REL_BREADTH'].items() if pd.notna(val)}
+        
+        # Build masks
+        for i, sim_date in enumerate(simulation_dates):
+            if sim_date in trigger_date_map:
+                rel_breadth = trigger_date_map[sim_date]
+                if rel_breadth < buy_threshold:
+                    buy_dates_mask[i] = True
+                if sell_enabled and rel_breadth > sell_threshold:
+                    sell_dates_mask[i] = True
+        
+        _dss_logger.info(f"  Buy triggers: {sum(buy_dates_mask)} days | Sell triggers: {sum(sell_dates_mask)} days")
+    else:
+        # Fallback: Use first day as entry (simple hold)
+        _dss_logger.warning("No trigger data - using first-day entry fallback")
+        buy_dates_mask[0] = True
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # BACKTEST EACH STRATEGY (TRIGGER-BASED)
+    # ─────────────────────────────────────────────────────────────────────
+    
+    _dss_logger.info("-" * 70)
+    _dss_logger.info("BACKTESTING STRATEGIES (TRIGGER-BASED)")
+    _dss_logger.info("-" * 70)
+    
+    results = {}
+    valid_strategies = []
+    
+    for idx, (name, strategy) in enumerate(all_strategies.items()):
+        
+        if progress_bar:
+            pct = 0.25 + (idx / len(all_strategies)) * 0.35
+            progress_bar.progress(pct, text=f"Backtesting: {name}")
+        
+        if status_text:
+            status_text.text(f"Testing: {name} ({idx+1}/{len(all_strategies)})")
+        
+        try:
+            daily_values = []
+            portfolio_units = {}
+            buy_signal_active = False
+            trade_log = []
+            
+            if is_sip:
+                # ─────────────────────────────────────────────────────────
+                # SIP MODE: Accumulate on each buy trigger, track TWR
+                # ─────────────────────────────────────────────────────────
+                # Uses Time-Weighted Return (NAV-index) methodology to
+                # measure pure investment performance independent of 
+                # capital injection effects. Same approach as mutual fund NAV.
+                nav_index = 1.0
+                prev_portfolio_value = 0.0
+                has_position = False
+                sip_amount = capital  # Each SIP installment
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    prices_today = df.set_index('symbol')['price']
+                    
+                    # Step 1: Compute current value of EXISTING holdings
+                    current_value = 0.0
+                    if portfolio_units:
+                        current_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    # Step 2: Update NAV based on market movement BEFORE any new investment
+                    if has_position and prev_portfolio_value > 0:
+                        day_return = (current_value - prev_portfolio_value) / prev_portfolio_value
+                        nav_index *= (1 + day_return)
+                    
+                    # Step 3: Check buy/sell triggers
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    else:
+                        buy_signal_active = False
+                    
+                    # Sell (SIP rarely sells, but support it)
+                    if sell_dates_mask[j] and portfolio_units and sell_enabled:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        portfolio_units = {}
+                        has_position = False
+                        current_value = 0.0
+                    
+                    # Step 4: Execute SIP buy (does NOT affect nav_index — TWR principle)
+                    if actual_buy_trigger:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), sip_amount)
+                        
+                        if buy_portfolio is not None and not buy_portfolio.empty and 'value' in buy_portfolio.columns:
+                            for _, row in buy_portfolio.iterrows():
+                                sym = row['symbol']
+                                units = row.get('units', 0)
+                                if units > 0:
+                                    portfolio_units[sym] = portfolio_units.get(sym, 0) + units
+                            has_position = True
+                            
+                            # Recalculate value after addition for next day's return base
+                            current_value = sum(
+                                units * prices_today.get(sym, 0)
+                                for sym, units in portfolio_units.items()
+                            )
+                    
+                    prev_portfolio_value = current_value
+                    daily_values.append(nav_index)
+            
+            else:
+                # ─────────────────────────────────────────────────────────
+                # SWING MODE: Single position, hold until sell trigger
+                # ─────────────────────────────────────────────────────────
+                current_capital = capital
+                
+                for j, sim_date in enumerate(simulation_dates):
+                    df = date_to_df[sim_date]
+                    
+                    is_buy_day = buy_dates_mask[j]
+                    actual_buy_trigger = is_buy_day and not buy_signal_active
+                    
+                    if is_buy_day:
+                        buy_signal_active = True
+                    else:
+                        buy_signal_active = False
+                    
+                    # Check sell trigger
+                    if sell_dates_mask[j] and portfolio_units:
+                        trade_log.append({'Event': 'SELL', 'Date': sim_date})
+                        prices_today = df.set_index('symbol')['price']
+                        sell_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                        current_capital += sell_value
+                        portfolio_units = {}
+                        buy_signal_active = False
+                    
+                    # Execute buy (only if no position)
+                    if actual_buy_trigger and not portfolio_units and current_capital > 1000:
+                        trade_log.append({'Event': 'BUY', 'Date': sim_date})
+                        buy_portfolio = strategy.generate_portfolio(df.copy(), current_capital)
+                        
+                        if buy_portfolio is not None and not buy_portfolio.empty and 'units' in buy_portfolio.columns:
+                            portfolio_units = pd.Series(
+                                buy_portfolio['units'].values,
+                                index=buy_portfolio['symbol']
+                            ).to_dict()
+                            current_capital -= buy_portfolio['value'].sum()
+                    
+                    # Calculate current value
+                    portfolio_value = 0
+                    if portfolio_units:
+                        prices_today = df.set_index('symbol')['price']
+                        portfolio_value = sum(
+                            units * prices_today.get(sym, 0)
+                            for sym, units in portfolio_units.items()
+                        )
+                    
+                    daily_values.append(portfolio_value + current_capital)
+            
+            # ─────────────────────────────────────────────────────────
+            # COMPUTE METRICS
+            # ─────────────────────────────────────────────────────────
+            
+            if len(daily_values) < 10 or daily_values[0] <= 0:
+                _dss_logger.debug(f"  {name}: Invalid daily values - SKIP")
+                results[name] = {'status': 'skip', 'reason': 'Invalid values'}
+                continue
+            
+            # Compute metrics
+            metrics = _compute_backtest_metrics(daily_values)
+            
+            total_ret = metrics['total_return']
+            max_dd = metrics['max_dd']
+            sharpe = metrics['sharpe']
+            sortino = metrics['sortino']
+            calmar = metrics['calmar']
+            score = metrics[metric_key]
+            
+            # Add trade info
+            metrics['buy_events'] = len([t for t in trade_log if t['Event'] == 'BUY'])
+            metrics['sell_events'] = len([t for t in trade_log if t['Event'] == 'SELL'])
+            metrics['trade_events'] = len(trade_log)
+            
+            # Validate score
+            if not np.isfinite(score):
+                _dss_logger.debug(f"  {name}: Invalid {metric_key} ({score}) - SKIP")
+                results[name] = {'status': 'skip', 'reason': f'Invalid {metric_key}'}
+                continue
+            
+            # Store results
+            results[name] = {
+                'status': 'ok',
+                'metrics': metrics,
+                'score': score,
+                'positions': len(portfolio_units) if portfolio_units else 0,
+                'trade_log': trade_log
+            }
+            valid_strategies.append((name, score, metrics))
+            
+            # Log result
+            _dss_logger.info(
+                f"  {name:<28} │ Ret: {total_ret:>+6.1%} │ MaxDD: {max_dd:>+6.1%} │ "
+                f"Sharpe: {sharpe:>+5.2f} │ Sortino: {sortino:>+6.2f} │ Calmar: {calmar:>+6.2f} │ Trades: {len(trade_log)}"
+            )
+            
+        except Exception as e:
+            _dss_logger.error(f"  {name}: Error - {str(e)[:50]}")
+            results[name] = {'status': 'error', 'reason': str(e)}
+            continue
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # SELECT TOP 4
+    # ─────────────────────────────────────────────────────────────────────
+    
+    _dss_logger.info("-" * 70)
+    _dss_logger.info(f"SELECTION BY {metric_label.upper()} RATIO ({selected_style})")
+    _dss_logger.info("-" * 70)
+    
+    if len(valid_strategies) < 4:
+        _dss_logger.warning(f"Only {len(valid_strategies)} valid strategies (need 4) - using static selection")
+        return None, results
+    
+    # Sort by score
+    valid_strategies.sort(key=lambda x: x[1], reverse=True)
+    
+    # Select top 4
+    top_4 = valid_strategies[:4]
+    selected = [name for name, _, _ in top_4]
+    
+    # Log rankings
+    for rank, (name, score, metrics) in enumerate(valid_strategies, 1):
+        marker = ">>>" if rank <= 4 else "   "
+        status = "[SELECTED]" if rank <= 4 else ""
+        ret = metrics['total_return']
+        trades = metrics.get('trade_events', 0)
+        _dss_logger.info(f"  {marker} #{rank:<2} {name:<28} │ {metric_label}: {score:>+7.2f} │ Return: {ret:>+6.1%} │ Trades: {trades} {status}")
+    
+    _dss_logger.info("-" * 70)
+    _dss_logger.info(f"SELECTED: {', '.join(selected)}")
+    _dss_logger.info("=" * 70)
+    
+    if status_text:
+        status_text.text(f"Selected: {', '.join(selected)}")
+    
+    return selected, results
+
 
 # --- Main Application ---
 def main():
