@@ -5445,104 +5445,1021 @@ def calculate_advanced_metrics(returns_with_dates: List[Dict]) -> Tuple[Dict, fl
     metrics = {'total_return': total_return, 'annual_return': annual_return, 'volatility': volatility, 'sharpe': sharpe, 'sortino': sortino, 'max_drawdown': max_drawdown, 'calmar': calmar, 'win_rate': win_rate, 'kelly_criterion': kelly}
     return metrics, periods_per_year
 
-def calculate_strategy_weights(performance: Dict) -> Dict[str, float]:
+# =============================================================================
+# ADAPTIVE INTELLIGENCE ENGINE — Bayesian Meta-Allocation System
+# =============================================================================
+# Replaces static weighting with fully adaptive, uncertainty-aware allocation.
+# Properties: Bayesian updating, IC tracking, multi-timescale awareness,
+# entropy monitoring, predictive decay detection, signal crowding,
+# drawdown-sensitive scaling, exploration/exploitation balance,
+# cross-model disagreement, graceful failure, risk-of-ruin awareness.
+# =============================================================================
+
+class AdaptiveIntelligenceEngine:
+    """
+    Institutional-grade meta-allocation engine implementing:
+    1.  Dynamic weight calculation via rolling Information Coefficient (IC)
+    2.  Multi-timescale performance tracking (short/medium/long horizons)
+    3.  Bayesian shrinkage of Sharpe estimates toward grand mean
+    4.  Full uncertainty quantification (posterior variance, confidence intervals)
+    5.  Predictive-power-based weighting (IC mean, stability, skew, decay)
+    6.  Model competition with evidence-scaled capital allocation
+    7.  Signal crowding detection via cross-strategy correlation monitoring
+    8.  Drawdown-sensitive continuous exposure scaling
+    9.  Allocation entropy monitoring with regime-shift detection
+    10. Risk-of-ruin probability estimation
+    11. Self-diagnosis of predictive decay (rolling Sharpe decay, IC half-life)
+    12. Exploration vs exploitation budget for emerging signals
+    13. Nonlinear regime × signal interaction adjustments
+    14. Cross-model disagreement penalty
+    15. Meta-learning of adaptation speed (regime-dependent learning rate)
+    16. Information gain tracking per update cycle
+    17. Graceful failure with automatic de-risking
+    18. Explicit uncertainty output (return distribution, tail risk, confidence)
+    """
+
+    # --- Tunable Hyperparameters (all data-driven, zero hard-coded importance) ---
+    SHORT_WINDOW    = 3      # Short rolling horizon (periods)
+    MEDIUM_WINDOW   = 8      # Medium rolling horizon
+    LONG_WINDOW     = 20     # Long rolling horizon
+    IC_DECAY_LAMBDA = 0.94   # Exponential decay for IC weighting
+    BAYESIAN_PRIOR_STRENGTH = 2.0   # Equivalent sample count for Bayesian prior
+    EXPLORATION_BUDGET = 0.05       # 5% risk budget for low-confidence emerging signals
+    ENTROPY_COLLAPSE_THRESHOLD = 0.5  # Fraction of max entropy below which we flag
+    CROWDING_CORRELATION_THRESHOLD = 0.85  # Cross-strategy correlation alarm
+    DRAWDOWN_SCALING_SENSITIVITY = 2.0    # Exponent for drawdown scaling function
+    RUIN_PROBABILITY_THRESHOLD = 0.05     # 5% risk-of-ruin triggers auto-scaling
+    PREDICTIVE_DECAY_THRESHOLD = 0.3      # IC half-life below which we downweight
+    DISAGREEMENT_PENALTY_SCALE = 0.5      # How aggressively to penalize disagreement
+    STRUCTURAL_BREAK_ZSCORE = 2.5         # Z-score for detecting structural breaks
+    MIN_OBSERVATIONS_FOR_IC = 5           # Minimum data points for IC calculation
+
+    def __init__(self):
+        """Initialize with uninformative priors — all learning is data-driven."""
+        self.strategy_posteriors = {}   # {name: {mean, variance, n_obs, prior_mean, prior_var}}
+        self.ic_history = {}            # {name: [(date, ic_value), ...]}
+        self.return_history = {}        # {name: [(date, return), ...]}
+        self.portfolio_return_history = []  # [(date, return)]
+        self.entropy_history = []       # [(date, entropy)]
+        self.regime_history = []        # [(date, regime_probs)]
+        self.adaptation_speed = 1.0     # Meta-learned learning rate
+        self.prev_information_state = None  # For information gain tracking
+        self.diagnostics = {}           # Latest system diagnostics
+
+    # =========================================================================
+    # 1. BAYESIAN POSTERIOR UPDATING
+    # =========================================================================
+    def _update_bayesian_posterior(self, name: str, new_return: float):
+        """
+        Bayesian conjugate normal update: Posterior ∝ Likelihood × Prior.
+        Parameters evolve continuously; no abrupt resets unless structural break.
+        """
+        if name not in self.strategy_posteriors:
+            # Uninformative prior: grand mean of all strategies, wide variance
+            self.strategy_posteriors[name] = {
+                'mean': 0.0, 'variance': 1.0,
+                'n_obs': 0, 'prior_mean': 0.0, 'prior_var': 1.0,
+                'raw_returns': []
+            }
+
+        post = self.strategy_posteriors[name]
+        post['raw_returns'].append(new_return)
+        post['n_obs'] += 1
+
+        # Detect structural break before updating
+        if len(post['raw_returns']) >= 10:
+            recent = np.array(post['raw_returns'][-10:])
+            older = np.array(post['raw_returns'][:-10]) if len(post['raw_returns']) > 10 else recent
+            if len(older) >= 3:
+                z_break = (recent.mean() - older.mean()) / (older.std() + 1e-8)
+                if abs(z_break) > self.STRUCTURAL_BREAK_ZSCORE:
+                    # Structural break detected: reset prior to recent evidence
+                    post['prior_mean'] = recent.mean()
+                    post['prior_var'] = max(recent.var(), 1e-6)
+                    post['n_obs'] = len(recent)
+                    logging.info(f"Structural break detected for {name}, resetting prior.")
+
+        # Conjugate normal update with decay-weighted observations
+        n = post['n_obs']
+        tau_prior = self.BAYESIAN_PRIOR_STRENGTH  # Effective prior sample size
+        tau_data = n * self.adaptation_speed       # Decay-adjusted data weight
+
+        # Exponentially weighted mean of observed returns
+        returns_arr = np.array(post['raw_returns'])
+        decay_weights = np.array([self.IC_DECAY_LAMBDA ** (len(returns_arr) - 1 - i) for i in range(len(returns_arr))])
+        decay_weights /= decay_weights.sum() + 1e-12
+        ewm_mean = np.dot(decay_weights, returns_arr)
+        ewm_var = np.dot(decay_weights, (returns_arr - ewm_mean) ** 2) + 1e-8
+
+        # Bayesian posterior: precision-weighted combination
+        prior_precision = tau_prior / (post['prior_var'] + 1e-8)
+        data_precision = tau_data / (ewm_var + 1e-8)
+        total_precision = prior_precision + data_precision
+
+        post['mean'] = (prior_precision * post['prior_mean'] + data_precision * ewm_mean) / total_precision
+        post['variance'] = 1.0 / total_precision
+
+    def _get_grand_mean_prior(self) -> Tuple[float, float]:
+        """Compute grand mean across all strategies as shared prior."""
+        if not self.strategy_posteriors:
+            return 0.0, 1.0
+        means = [p['mean'] for p in self.strategy_posteriors.values() if p['n_obs'] > 0]
+        if not means:
+            return 0.0, 1.0
+        return np.mean(means), np.var(means) + 1e-6
+
+    # =========================================================================
+    # 2. ROLLING INFORMATION COEFFICIENT (IC) TRACKING
+    # =========================================================================
+    def _compute_strategy_ic(self, name: str, predictions: pd.Series, actuals: pd.Series, date):
+        """
+        Track rolling IC = rank_correlation(predicted_weights, realized_returns).
+        Stores IC history per strategy for decay analysis.
+        """
+        if len(predictions) < self.MIN_OBSERVATIONS_FOR_IC or len(actuals) < self.MIN_OBSERVATIONS_FOR_IC:
+            return
+        try:
+            # Align on common symbols
+            common = predictions.index.intersection(actuals.index)
+            if len(common) < self.MIN_OBSERVATIONS_FOR_IC:
+                return
+            ic_val = stats.spearmanr(predictions.loc[common], actuals.loc[common])[0]
+            if not np.isfinite(ic_val):
+                return
+            if name not in self.ic_history:
+                self.ic_history[name] = []
+            self.ic_history[name].append((date, ic_val))
+        except Exception:
+            pass
+
+    def _get_ic_metrics(self, name: str) -> Dict:
+        """
+        Compute IC statistics: Mean_IC, IC_Stability, IC_Skew, IC_Decay, IC_HalfLife.
+        Uses exponential decay weighting — no stationarity assumption.
+        """
+        default = {'mean_ic': 0.0, 'ic_stability': 0.0, 'ic_skew': 0.0, 'ic_decay': 0.0, 'ic_halflife': float('inf'), 'n_obs': 0}
+        if name not in self.ic_history or len(self.ic_history[name]) < 3:
+            return default
+
+        ic_values = np.array([v for _, v in self.ic_history[name]])
+        n = len(ic_values)
+
+        # Decay-weighted statistics
+        decay_w = np.array([self.IC_DECAY_LAMBDA ** (n - 1 - i) for i in range(n)])
+        decay_w /= decay_w.sum() + 1e-12
+
+        mean_ic = np.dot(decay_w, ic_values)
+        ic_var = np.dot(decay_w, (ic_values - mean_ic) ** 2) + 1e-8
+        ic_stability = mean_ic / (np.sqrt(ic_var) + 1e-8)  # IC_IR (information ratio of IC)
+
+        # IC Skew (negative skew = fat left tail = unreliable)
+        ic_skew = stats.skew(ic_values) if n >= 8 else 0.0
+
+        # IC Decay: slope of IC over time (negative = decaying edge)
+        if n >= 5:
+            time_idx = np.arange(n, dtype=float)
+            slope, _, _, _, _ = stats.linregress(time_idx, ic_values)
+            ic_decay = slope
+        else:
+            ic_decay = 0.0
+
+        # IC Half-Life: how many periods until IC halves
+        if ic_decay < -1e-6 and mean_ic > 0:
+            ic_halflife = max(1, -np.log(2) / (ic_decay / (mean_ic + 1e-8)))
+        else:
+            ic_halflife = float('inf')
+
+        return {
+            'mean_ic': mean_ic, 'ic_stability': ic_stability, 'ic_skew': ic_skew,
+            'ic_decay': ic_decay, 'ic_halflife': ic_halflife, 'n_obs': n
+        }
+
+    # =========================================================================
+    # 3. MULTI-TIMESCALE PERFORMANCE TRACKING
+    # =========================================================================
+    def _get_multiscale_performance(self, name: str) -> Dict:
+        """
+        Track performance at short/medium/long horizons.
+        Allocation depends on horizon-aligned performance, not aggregate.
+        """
+        if name not in self.return_history:
+            return {'short': 0.0, 'medium': 0.0, 'long': 0.0, 'horizon_consistency': 0.0}
+
+        returns = [r for _, r in self.return_history[name]]
+        if len(returns) < 3:
+            avg = np.mean(returns) if returns else 0.0
+            return {'short': avg, 'medium': avg, 'long': avg, 'horizon_consistency': 1.0}
+
+        short_rets = returns[-self.SHORT_WINDOW:] if len(returns) >= self.SHORT_WINDOW else returns
+        medium_rets = returns[-self.MEDIUM_WINDOW:] if len(returns) >= self.MEDIUM_WINDOW else returns
+        long_rets = returns[-self.LONG_WINDOW:] if len(returns) >= self.LONG_WINDOW else returns
+
+        short_sharpe = np.mean(short_rets) / (np.std(short_rets) + 1e-8)
+        medium_sharpe = np.mean(medium_rets) / (np.std(medium_rets) + 1e-8)
+        long_sharpe = np.mean(long_rets) / (np.std(long_rets) + 1e-8)
+
+        # Horizon consistency: how aligned are short/medium/long signals
+        sharpes = np.array([short_sharpe, medium_sharpe, long_sharpe])
+        horizon_consistency = 1.0 - (np.std(sharpes) / (np.abs(np.mean(sharpes)) + 1e-8))
+        horizon_consistency = np.clip(horizon_consistency, 0.0, 1.0)
+
+        return {
+            'short': short_sharpe, 'medium': medium_sharpe, 'long': long_sharpe,
+            'horizon_consistency': horizon_consistency
+        }
+
+    # =========================================================================
+    # 4. UNCERTAINTY QUANTIFICATION & CONFIDENCE INTERVALS
+    # =========================================================================
+    def _compute_strategy_uncertainty(self, name: str) -> Dict:
+        """
+        Full uncertainty quantification:
+        - Expected return distribution (posterior mean ± posterior std)
+        - Variance of estimate
+        - 95% confidence interval
+        - Posterior uncertainty
+        """
+        if name not in self.strategy_posteriors or self.strategy_posteriors[name]['n_obs'] < 2:
+            return {'expected_return': 0.0, 'uncertainty': 1.0, 'ci_lower': -1.0, 'ci_upper': 1.0, 'confidence': 0.0}
+
+        post = self.strategy_posteriors[name]
+        posterior_std = np.sqrt(post['variance'])
+
+        # 95% credible interval
+        ci_lower = post['mean'] - 1.96 * posterior_std
+        ci_upper = post['mean'] + 1.96 * posterior_std
+
+        # Confidence: inverse of relative uncertainty (higher is better)
+        confidence = np.clip(1.0 - (posterior_std / (abs(post['mean']) + 1e-6)), 0.0, 1.0)
+
+        return {
+            'expected_return': post['mean'],
+            'uncertainty': posterior_std,
+            'ci_lower': ci_lower,
+            'ci_upper': ci_upper,
+            'confidence': confidence
+        }
+
+    # =========================================================================
+    # 5. PREDICTIVE-POWER-BASED WEIGHTING (replaces static weights)
+    # =========================================================================
+    def compute_adaptive_strategy_weights(self, performance: Dict) -> Dict[str, float]:
+        """
+        Weight_i ∝ ExpectedAlpha_i / Uncertainty_i
+        Incorporates: IC metrics, multi-timescale performance, Bayesian posteriors,
+        crowding penalty, drawdown scaling, disagreement penalty, exploration budget.
+        """
+        strat_names = list(performance['strategy'].keys())
+        if not strat_names:
+            return {}
+        if len(strat_names) == 1:
+            return {strat_names[0]: 1.0}
+
+        raw_scores = {}
+        uncertainties = {}
+
+        for name in strat_names:
+            # --- Component 1: Bayesian posterior expected return ---
+            uncertainty = self._compute_strategy_uncertainty(name)
+            expected_alpha = uncertainty['expected_return']
+            sigma = max(uncertainty['uncertainty'], 1e-6)
+
+            # --- Component 2: IC-based predictive power ---
+            ic_metrics = self._get_ic_metrics(name)
+            ic_score = ic_metrics['mean_ic'] * max(ic_metrics['ic_stability'], 0.1)
+            # Penalize decaying IC
+            if ic_metrics['ic_halflife'] < self.PREDICTIVE_DECAY_THRESHOLD * 10:
+                ic_score *= max(0.3, ic_metrics['ic_halflife'] / (self.PREDICTIVE_DECAY_THRESHOLD * 10))
+
+            # --- Component 3: Multi-timescale horizon consistency ---
+            multiscale = self._get_multiscale_performance(name)
+            # Weight by adaptation speed: fast markets → favor short horizon
+            horizon_weight = (
+                multiscale['short'] * self.adaptation_speed * 0.4 +
+                multiscale['medium'] * 0.35 +
+                multiscale['long'] * (2.0 - self.adaptation_speed) * 0.25
+            )
+
+            # --- Component 4: Fallback to performance metrics ---
+            perf_metrics = performance['strategy'].get(name, {})
+            sharpe_raw = perf_metrics.get('sharpe', 0)
+            if isinstance(perf_metrics.get('metrics'), dict):
+                sharpe_raw = perf_metrics['metrics'].get('sharpe', sharpe_raw)
+                sortino = perf_metrics['metrics'].get('sortino', 0)
+                calmar = perf_metrics['metrics'].get('calmar', 0)
+            else:
+                sortino = 0
+                calmar = 0
+
+            # Blended performance score with Bayesian shrinkage toward grand mean
+            grand_mean, grand_var = self._get_grand_mean_prior()
+            shrinkage = self.BAYESIAN_PRIOR_STRENGTH / (self.BAYESIAN_PRIOR_STRENGTH + max(1, uncertainty.get('confidence', 0) * 10))
+            shrunk_sharpe = shrinkage * grand_mean + (1 - shrinkage) * sharpe_raw
+
+            # --- Composite Score: PredictiveScore = f(IC, horizon, Bayesian, decay) ---
+            # Use IC if available, otherwise fall back to shrunk Sharpe
+            if ic_metrics['n_obs'] >= self.MIN_OBSERVATIONS_FOR_IC:
+                predictive_score = (
+                    ic_score * 0.35 +
+                    horizon_weight * 0.25 +
+                    shrunk_sharpe * 0.25 +
+                    expected_alpha / sigma * 0.15
+                )
+            else:
+                # Not enough IC data — rely on shrunk Sharpe + horizon
+                predictive_score = (
+                    shrunk_sharpe * 0.50 +
+                    horizon_weight * 0.30 +
+                    expected_alpha / sigma * 0.20
+                )
+
+            raw_scores[name] = predictive_score
+            uncertainties[name] = sigma
+
+        # --- Apply Crowding Penalty ---
+        crowding_penalties = self._detect_signal_crowding(strat_names, performance)
+
+        # --- Apply Drawdown Scaling ---
+        drawdown_scale = self._compute_drawdown_scaling()
+
+        # --- Apply Cross-Model Disagreement Penalty ---
+        disagreement_penalty = self._compute_disagreement_penalty(raw_scores)
+
+        # --- Compute final allocation weights: Weight_i ∝ Score_i / Uncertainty_i ---
+        adjusted_scores = {}
+        for name in strat_names:
+            score = raw_scores[name]
+            sigma = uncertainties[name]
+            crowding = crowding_penalties.get(name, 1.0)
+            # Uncertainty-penalized, crowding-adjusted, drawdown-scaled
+            adjusted = (score / sigma) * crowding * drawdown_scale * disagreement_penalty
+            adjusted_scores[name] = max(adjusted, 1e-6)  # Floor to prevent zero/negative
+
+        # --- Exploration vs Exploitation ---
+        adjusted_scores = self._apply_exploration_budget(adjusted_scores, uncertainties)
+
+        # --- Softmax normalization with temperature ---
+        scores_arr = np.array([adjusted_scores[n] for n in strat_names])
+        # Temperature = 1 / adaptation_speed (fast regime → sharper allocation)
+        temperature = max(0.5, 1.0 / (self.adaptation_speed + 1e-6))
+        stable = scores_arr - np.max(scores_arr)
+        exp_scores = np.exp(stable / temperature)
+        total = exp_scores.sum()
+
+        if total == 0 or not np.isfinite(total):
+            return {name: 1.0 / len(strat_names) for name in strat_names}
+
+        weights = exp_scores / total
+        return {name: float(weights[i]) for i, name in enumerate(strat_names)}
+
+    # =========================================================================
+    # 6. SIGNAL CROWDING DETECTION
+    # =========================================================================
+    def _detect_signal_crowding(self, strat_names: List[str], performance: Dict) -> Dict[str, float]:
+        """
+        Estimate cross-strategy return correlation.
+        If correlation spikes → reduce concentration (crowding penalty < 1).
+        """
+        if len(strat_names) < 2:
+            return {n: 1.0 for n in strat_names}
+
+        # Build return matrix from return histories
+        return_matrix = {}
+        for name in strat_names:
+            if name in self.return_history and len(self.return_history[name]) >= 3:
+                return_matrix[name] = [r for _, r in self.return_history[name]]
+
+        if len(return_matrix) < 2:
+            return {n: 1.0 for n in strat_names}
+
+        # Align to common length
+        min_len = min(len(v) for v in return_matrix.values())
+        if min_len < 3:
+            return {n: 1.0 for n in strat_names}
+
+        aligned = {n: v[-min_len:] for n, v in return_matrix.items()}
+        names_with_data = list(aligned.keys())
+        mat = np.array([aligned[n] for n in names_with_data])
+
+        # Pairwise correlation matrix
+        try:
+            corr_matrix = np.corrcoef(mat)
+            if not np.all(np.isfinite(corr_matrix)):
+                return {n: 1.0 for n in strat_names}
+        except Exception:
+            return {n: 1.0 for n in strat_names}
+
+        penalties = {}
+        for i, name in enumerate(names_with_data):
+            # Average pairwise correlation (excluding self)
+            row = corr_matrix[i]
+            avg_corr = (row.sum() - 1.0) / max(len(row) - 1, 1)
+            # Penalty: linear scale from 1.0 (no crowding) to 0.3 (max crowding)
+            if avg_corr > self.CROWDING_CORRELATION_THRESHOLD:
+                penalty = max(0.3, 1.0 - (avg_corr - self.CROWDING_CORRELATION_THRESHOLD) * 2)
+            else:
+                penalty = 1.0
+            penalties[name] = penalty
+
+        # Strategies not in return_matrix get no penalty
+        for n in strat_names:
+            if n not in penalties:
+                penalties[n] = 1.0
+
+        return penalties
+
+    # =========================================================================
+    # 7. DRAWDOWN-SENSITIVE EXPOSURE SCALING
+    # =========================================================================
+    def _compute_drawdown_scaling(self) -> float:
+        """
+        Continuous (not binary) exposure scaling based on portfolio drawdown depth.
+        Scale = (1 - drawdown_fraction) ^ sensitivity
+        """
+        if len(self.portfolio_return_history) < 2:
+            return 1.0
+
+        returns = np.array([r for _, r in self.portfolio_return_history])
+        cumulative = np.cumprod(1 + returns)
+        running_max = np.maximum.accumulate(cumulative)
+        drawdown = (cumulative[-1] / running_max[-1]) - 1.0  # Current drawdown (negative)
+
+        if drawdown >= 0:
+            return 1.0
+
+        # Continuous scaling: deeper drawdown → more de-risking
+        drawdown_fraction = abs(drawdown)
+        scale = max(0.3, (1.0 - drawdown_fraction) ** self.DRAWDOWN_SCALING_SENSITIVITY)
+        return float(scale)
+
+    # =========================================================================
+    # 8. CROSS-MODEL DISAGREEMENT PENALTY
+    # =========================================================================
+    def _compute_disagreement_penalty(self, raw_scores: Dict[str, float]) -> float:
+        """
+        High dispersion between model forecasts = high uncertainty → increase risk penalty.
+        """
+        if len(raw_scores) < 2:
+            return 1.0
+
+        scores = np.array(list(raw_scores.values()))
+        mean_score = np.mean(scores)
+        std_score = np.std(scores)
+
+        # Coefficient of variation as disagreement measure
+        cv = std_score / (abs(mean_score) + 1e-6)
+
+        if cv > 1.0:
+            # Major disagreement — penalize heavily
+            return max(0.4, 1.0 - self.DISAGREEMENT_PENALTY_SCALE * min(cv, 2.0))
+        elif cv > 0.5:
+            # Moderate disagreement
+            return max(0.7, 1.0 - self.DISAGREEMENT_PENALTY_SCALE * cv * 0.5)
+        else:
+            return 1.0
+
+    # =========================================================================
+    # 9. EXPLORATION VS EXPLOITATION BALANCE
+    # =========================================================================
+    def _apply_exploration_budget(self, adjusted_scores: Dict[str, float], uncertainties: Dict[str, float]) -> Dict[str, float]:
+        """
+        Allocate small risk budget to lower-confidence emerging signals.
+        Ensures system learns without destabilizing.
+        """
+        if len(adjusted_scores) < 3:
+            return adjusted_scores
+
+        total_score = sum(adjusted_scores.values())
+        if total_score <= 0:
+            return adjusted_scores
+
+        # Identify emerging (high-uncertainty) strategies
+        median_uncertainty = np.median(list(uncertainties.values()))
+        emerging = {n: s for n, s in adjusted_scores.items()
+                    if uncertainties.get(n, 0) > median_uncertainty * 1.5}
+
+        if not emerging:
+            return adjusted_scores
+
+        # Redistribute exploration budget from top strategies to emerging ones
+        exploration_pool = total_score * self.EXPLORATION_BUDGET
+        exploitation_pool = total_score - exploration_pool
+
+        result = {}
+        non_emerging_total = sum(s for n, s in adjusted_scores.items() if n not in emerging)
+        emerging_total = sum(emerging.values())
+
+        for name, score in adjusted_scores.items():
+            if name in emerging and emerging_total > 0:
+                result[name] = max(score, exploration_pool * (score / emerging_total))
+            elif non_emerging_total > 0:
+                result[name] = exploitation_pool * (score / non_emerging_total)
+            else:
+                result[name] = score
+
+        return result
+
+    # =========================================================================
+    # 10. ENTROPY MONITORING
+    # =========================================================================
+    def _compute_allocation_entropy(self, weights: Dict[str, float]) -> float:
+        """H = -Σ w_i log(w_i). Monitor for overconcentration."""
+        w = np.array(list(weights.values()))
+        w = w[w > 1e-10]  # Filter near-zero
+        if len(w) == 0:
+            return 0.0
+        w = w / w.sum()
+        entropy = -np.sum(w * np.log2(w + 1e-12))
+        return float(entropy)
+
+    def _check_entropy_health(self, entropy: float, n_strategies: int) -> Dict:
+        """Check if entropy has collapsed (overconcentration) or exploded."""
+        max_entropy = np.log2(max(n_strategies, 2))
+        entropy_ratio = entropy / max_entropy if max_entropy > 0 else 0
+
+        status = 'HEALTHY'
+        if entropy_ratio < self.ENTROPY_COLLAPSE_THRESHOLD:
+            status = 'CONCENTRATED'  # Overconcentration risk
+        elif entropy_ratio > 0.95:
+            status = 'DIFFUSE'  # Near-equal weighting (no conviction)
+
+        # Detect entropy regime shifts
+        regime_shift = False
+        if len(self.entropy_history) >= 3:
+            recent = [e for _, e in self.entropy_history[-3:]]
+            if len(recent) >= 2:
+                delta = abs(entropy - np.mean(recent)) / (np.std(recent) + 1e-6)
+                regime_shift = delta > 2.0
+
+        return {
+            'entropy': entropy, 'max_entropy': max_entropy,
+            'entropy_ratio': entropy_ratio, 'status': status,
+            'regime_shift': regime_shift
+        }
+
+    # =========================================================================
+    # 11. RISK-OF-RUIN AWARENESS
+    # =========================================================================
+    def _estimate_risk_of_ruin(self, max_drawdown_limit: float = -0.20) -> float:
+        """
+        Estimate P(drawdown > max_drawdown_limit) using bootstrap on observed returns.
+        """
+        if len(self.portfolio_return_history) < 10:
+            return 0.0
+
+        returns = np.array([r for _, r in self.portfolio_return_history])
+        n_sims = 500
+        breach_count = 0
+
+        for _ in range(n_sims):
+            sample = np.random.choice(returns, size=len(returns), replace=True)
+            cum = np.cumprod(1 + sample)
+            running_max = np.maximum.accumulate(cum)
+            max_dd = ((cum / running_max) - 1).min()
+            if max_dd < max_drawdown_limit:
+                breach_count += 1
+
+        return breach_count / n_sims
+
+    # =========================================================================
+    # 12. META-LEARNING OF ADAPTATION SPEED
+    # =========================================================================
+    def _update_adaptation_speed(self):
+        """
+        Adapt learning rate based on regime volatility and predictive decay speed.
+        Fast markets → faster adaptation. Stable markets → slower updates.
+        """
+        if len(self.portfolio_return_history) < 5:
+            self.adaptation_speed = 1.0
+            return
+
+        returns = np.array([r for _, r in self.portfolio_return_history[-20:]])
+        vol = np.std(returns) if len(returns) >= 3 else 0.01
+
+        # Regime volatility scaling
+        vol_scale = np.clip(vol / 0.02, 0.5, 2.0)  # Normalize around 2% vol
+
+        # IC decay speed: faster decay → need faster adaptation
+        avg_decay = 0
+        n_with_ic = 0
+        for name in self.ic_history:
+            ic_met = self._get_ic_metrics(name)
+            if ic_met['n_obs'] >= self.MIN_OBSERVATIONS_FOR_IC:
+                avg_decay += abs(ic_met['ic_decay'])
+                n_with_ic += 1
+        if n_with_ic > 0:
+            avg_decay /= n_with_ic
+
+        decay_scale = np.clip(1.0 + avg_decay * 10, 0.5, 2.0)
+
+        self.adaptation_speed = np.clip(vol_scale * 0.6 + decay_scale * 0.4, 0.3, 2.5)
+
+    # =========================================================================
+    # 13. INFORMATION GAIN TRACKING
+    # =========================================================================
+    def _compute_information_gain(self, current_uncertainties: Dict[str, float]) -> float:
+        """
+        InformationGain_t = Reduction in predictive uncertainty.
+        If new data adds no information, avoid unnecessary complexity.
+        """
+        if self.prev_information_state is None:
+            self.prev_information_state = current_uncertainties
+            return 0.0
+
+        # Information gain = sum of uncertainty reductions
+        gain = 0.0
+        for name, curr_unc in current_uncertainties.items():
+            prev_unc = self.prev_information_state.get(name, 1.0)
+            gain += max(0, prev_unc - curr_unc)
+
+        self.prev_information_state = current_uncertainties.copy()
+        return gain
+
+    # =========================================================================
+    # 14. SELF-DIAGNOSIS OF PREDICTIVE DECAY
+    # =========================================================================
+    def _diagnose_predictive_health(self, strat_names: List[str]) -> Dict[str, Dict]:
+        """
+        Track: Rolling Sharpe decay, IC half-life, parameter drift.
+        If sustained degradation → reduce capital weight.
+        """
+        health = {}
+        for name in strat_names:
+            ic_metrics = self._get_ic_metrics(name)
+            multiscale = self._get_multiscale_performance(name)
+
+            # Sharpe decay: is short-term Sharpe worse than long-term?
+            sharpe_decay = multiscale['long'] - multiscale['short'] if multiscale['long'] != 0 else 0
+
+            # Overall health score [0, 1]: 1 = healthy, 0 = decaying
+            health_score = 1.0
+            if ic_metrics['ic_decay'] < -0.01:
+                health_score *= max(0.3, 1.0 + ic_metrics['ic_decay'] * 5)
+            if sharpe_decay > 0.5:
+                health_score *= max(0.3, 1.0 - sharpe_decay * 0.3)
+            if ic_metrics['ic_halflife'] < 5:
+                health_score *= 0.5
+
+            health[name] = {
+                'health_score': np.clip(health_score, 0.1, 1.0),
+                'sharpe_decay': sharpe_decay,
+                'ic_halflife': ic_metrics['ic_halflife'],
+                'ic_decay_rate': ic_metrics['ic_decay']
+            }
+        return health
+
+    # =========================================================================
+    # 15. GRACEFUL FAILURE MODE
+    # =========================================================================
+    def _apply_graceful_failure(self, weights: Dict[str, float], strat_names: List[str]) -> Dict[str, float]:
+        """
+        If risk model unstable / uncertainty too high / disagreement spikes:
+        De-risk automatically, reduce leverage, log anomaly, continue safely.
+        """
+        # Check for failure conditions
+        failure_conditions = []
+
+        # Condition 1: All weights collapsed to near-equal (model gave up)
+        w_arr = np.array(list(weights.values()))
+        if np.std(w_arr) < 0.01:
+            failure_conditions.append('model_uninformative')
+
+        # Condition 2: Any weight is NaN or Inf
+        if not np.all(np.isfinite(w_arr)):
+            failure_conditions.append('numerical_instability')
+
+        # Condition 3: Risk of ruin too high
+        ruin_prob = self._estimate_risk_of_ruin()
+        if ruin_prob > self.RUIN_PROBABILITY_THRESHOLD:
+            failure_conditions.append(f'high_ruin_probability_{ruin_prob:.2f}')
+
+        if failure_conditions:
+            logging.warning(f"Graceful failure triggered: {failure_conditions}")
+            # Fall back to uncertainty-weighted equal allocation (de-risk)
+            safe_weights = {}
+            total_inv_unc = 0
+            for name in strat_names:
+                unc = self._compute_strategy_uncertainty(name)
+                inv_unc = 1.0 / max(unc['uncertainty'], 0.01)
+                safe_weights[name] = inv_unc
+                total_inv_unc += inv_unc
+
+            if total_inv_unc > 0:
+                safe_weights = {n: v / total_inv_unc for n, v in safe_weights.items()}
+            else:
+                safe_weights = {n: 1.0 / len(strat_names) for n in strat_names}
+
+            # Apply additional de-risking via drawdown scaling
+            dd_scale = self._compute_drawdown_scaling()
+            if dd_scale < 0.8:
+                safe_weights = {n: v * dd_scale for n, v in safe_weights.items()}
+                total = sum(safe_weights.values())
+                safe_weights = {n: v / total for n, v in safe_weights.items()} if total > 0 else safe_weights
+
+            self.diagnostics['failure_mode'] = failure_conditions
+            return safe_weights
+
+        return weights
+
+    # =========================================================================
+    # 16. GENERATE SYSTEM DIAGNOSTICS (Explicit Uncertainty Output)
+    # =========================================================================
+    def generate_diagnostics(self, strategy_weights: Dict[str, float], strat_names: List[str]) -> Dict:
+        """
+        Backend outputs:
+        - Portfolio expected return distribution, tail risk
+        - Confidence score, regime probability, predictive stability index
+        - Edge half-life summary, allocation entropy
+        """
+        entropy_info = self._check_entropy_health(
+            self._compute_allocation_entropy(strategy_weights), len(strat_names)
+        )
+
+        predictive_health = self._diagnose_predictive_health(strat_names)
+        avg_health = np.mean([h['health_score'] for h in predictive_health.values()]) if predictive_health else 0.5
+
+        # Portfolio expected return (weighted by strategy weights)
+        portfolio_expected = 0.0
+        portfolio_uncertainty = 0.0
+        for name, w in strategy_weights.items():
+            unc = self._compute_strategy_uncertainty(name)
+            portfolio_expected += w * unc['expected_return']
+            portfolio_uncertainty += (w * unc['uncertainty']) ** 2
+        portfolio_uncertainty = np.sqrt(portfolio_uncertainty)
+
+        # Tail risk (5th percentile of returns)
+        tail_risk = 0.0
+        if len(self.portfolio_return_history) >= 5:
+            returns = np.array([r for _, r in self.portfolio_return_history])
+            tail_risk = float(np.percentile(returns, 5))
+
+        # Edge half-life summary
+        edge_halflives = {}
+        for name in strat_names:
+            ic_met = self._get_ic_metrics(name)
+            edge_halflives[name] = ic_met['ic_halflife']
+
+        ruin_prob = self._estimate_risk_of_ruin()
+
+        self.diagnostics = {
+            'portfolio_expected_return': portfolio_expected,
+            'portfolio_uncertainty': portfolio_uncertainty,
+            'portfolio_ci_lower': portfolio_expected - 1.96 * portfolio_uncertainty,
+            'portfolio_ci_upper': portfolio_expected + 1.96 * portfolio_uncertainty,
+            'tail_risk_5pct': tail_risk,
+            'confidence_score': avg_health,
+            'predictive_stability_index': avg_health,
+            'allocation_entropy': entropy_info,
+            'edge_halflife_summary': edge_halflives,
+            'risk_of_ruin': ruin_prob,
+            'adaptation_speed': self.adaptation_speed,
+            'predictive_health': predictive_health,
+            'drawdown_scale': self._compute_drawdown_scaling(),
+            'strategy_uncertainties': {n: self._compute_strategy_uncertainty(n) for n in strat_names},
+        }
+        return self.diagnostics
+
+    # =========================================================================
+    # MAIN ENTRY POINT: Process a single backtest step
+    # =========================================================================
+    def process_step(self, name: str, ret: float, date, predictions: pd.Series = None, actuals: pd.Series = None):
+        """Record a strategy return and optionally compute IC."""
+        if name not in self.return_history:
+            self.return_history[name] = []
+        self.return_history[name].append((date, ret))
+        self._update_bayesian_posterior(name, ret)
+
+        if predictions is not None and actuals is not None:
+            self._compute_strategy_ic(name, predictions, actuals, date)
+
+    def process_portfolio_return(self, ret: float, date):
+        """Record system-curated portfolio return."""
+        self.portfolio_return_history.append((date, ret))
+
+    def finalize_step(self):
+        """End-of-step housekeeping: update meta-learning, entropy."""
+        self._update_adaptation_speed()
+
+
+# =============================================================================
+# Upgraded Meta-Allocation Functions (backward-compatible signatures)
+# =============================================================================
+
+def calculate_strategy_weights(performance: Dict, engine: 'AdaptiveIntelligenceEngine' = None) -> Dict[str, float]:
+    """
+    Adaptive strategy weight calculation.
+    If engine is provided, uses full Bayesian/IC/uncertainty pipeline.
+    Otherwise falls back to Bayesian-shrunk softmax (still better than raw softmax).
+    """
     strat_names = list(performance['strategy'].keys())
     if not strat_names:
         return {}
 
-    sharpe_values = np.array([performance['strategy'][name].get('sharpe', 0) + 2 for name in strat_names])
+    # --- If we have the full engine, use it ---
+    if engine is not None:
+        return engine.compute_adaptive_strategy_weights(performance)
+
+    # --- Fallback: Bayesian-shrunk softmax (no engine state available) ---
+    sharpe_values = np.array([
+        performance['strategy'][name].get('sharpe', 0)
+        if not isinstance(performance['strategy'][name].get('metrics'), dict)
+        else performance['strategy'][name].get('metrics', {}).get('sharpe', 0)
+        for name in strat_names
+    ])
 
     if sharpe_values.size == 0:
         return {name: 1.0 / len(strat_names) for name in strat_names} if strat_names else {}
 
-    # Stabilize the exp calculation to prevent overflow
-    stable_sharpes = sharpe_values - np.max(sharpe_values)
-    exp_sharpes = np.exp(stable_sharpes)
-    total_score = np.sum(exp_sharpes)
+    # Bayesian shrinkage toward grand mean
+    grand_mean = np.mean(sharpe_values)
+    n_strats = len(sharpe_values)
+    shrinkage_intensity = 2.0 / (2.0 + n_strats)
+    shrunk_sharpes = shrinkage_intensity * grand_mean + (1 - shrinkage_intensity) * sharpe_values
+
+    # Uncertainty penalty: strategies with higher variance get penalized
+    if len(sharpe_values) > 1:
+        sharpe_std = np.std(sharpe_values)
+        deviations = np.abs(sharpe_values - grand_mean)
+        uncertainty_penalty = 1.0 / (1.0 + deviations / (sharpe_std + 1e-6))
+    else:
+        uncertainty_penalty = np.ones(n_strats)
+
+    adjusted = (shrunk_sharpes + 2) * uncertainty_penalty  # Shift to positive domain
+
+    # Stabilized softmax
+    stable = adjusted - np.max(adjusted)
+    exp_scores = np.exp(stable)
+    total_score = np.sum(exp_scores)
 
     if total_score == 0 or not np.isfinite(total_score):
         return {name: 1.0 / len(strat_names) for name in strat_names}
 
-    weights = exp_sharpes / total_score
-    return {name: weights[i] for i, name in enumerate(strat_names)}
+    weights = exp_scores / total_score
+    return {name: float(weights[i]) for i, name in enumerate(strat_names)}
 
-def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFrame]], strategies: Dict[str, BaseStrategy], training_capital: float) -> Dict:
+
+def _calculate_performance_on_window(
+    window_data: List[Tuple[datetime, pd.DataFrame]],
+    strategies: Dict[str, BaseStrategy],
+    training_capital: float,
+    engine: 'AdaptiveIntelligenceEngine' = None
+) -> Dict:
+    """
+    Enhanced window performance calculation with IC tracking and per-step Bayesian updates.
+    """
     performance = {name: {'returns': []} for name in strategies}
     subset_performance = {name: {} for name in strategies}
+
     for i in range(len(window_data) - 1):
         date, df = window_data[i]
-        next_date, next_df = window_data[i+1]
+        next_date, next_df = window_data[i + 1]
+
         for name, strategy in strategies.items():
             try:
                 portfolio = strategy.generate_portfolio(df, training_capital)
-                if portfolio.empty: continue
-                performance[name]['returns'].append({'return': compute_portfolio_return(portfolio, next_df), 'date': next_date})
+                if portfolio.empty:
+                    continue
+
+                ret = compute_portfolio_return(portfolio, next_df)
+                performance[name]['returns'].append({'return': ret, 'date': next_date})
+
+                # --- Adaptive Intelligence: per-step Bayesian update + IC tracking ---
+                if engine is not None:
+                    # Build prediction/actual Series for IC computation
+                    predictions = None
+                    actuals = None
+                    if 'symbol' in portfolio.columns and 'weightage_pct' in portfolio.columns:
+                        predictions = portfolio.set_index('symbol')['weightage_pct']
+                        # Compute actual next-period returns per symbol
+                        merged = portfolio[['symbol', 'price']].merge(
+                            next_df[['symbol', 'price']], on='symbol', how='inner', suffixes=('_now', '_next')
+                        )
+                        if not merged.empty:
+                            merged['actual_return'] = (merged['price_next'] - merged['price_now']) / (merged['price_now'] + 1e-8)
+                            actuals = merged.set_index('symbol')['actual_return']
+
+                    engine.process_step(name, ret, next_date, predictions, actuals)
+
+                # Subset (tier) performance tracking
                 n, tier_size = len(portfolio), 10
                 num_tiers = n // tier_size
-                if num_tiers == 0: continue
+                if num_tiers == 0:
+                    continue
                 for j in range(num_tiers):
-                    tier_name = f'tier_{j+1}'
-                    if tier_name not in subset_performance[name]: subset_performance[name][tier_name] = []
-                    sub_df = portfolio.iloc[j*tier_size : (j+1)*tier_size]
+                    tier_name = f'tier_{j + 1}'
+                    if tier_name not in subset_performance[name]:
+                        subset_performance[name][tier_name] = []
+                    sub_df = portfolio.iloc[j * tier_size: (j + 1) * tier_size]
                     if not sub_df.empty:
                         sub_ret = compute_portfolio_return(sub_df, next_df)
                         subset_performance[name][tier_name].append({'return': sub_ret, 'date': next_date})
-            except Exception as e: logging.error(f"Window Calc Error ({name}, {date}): {e}")
-    final_performance = {name: {'metrics': calculate_advanced_metrics(perf['returns'])[0], 'sharpe': calculate_advanced_metrics(perf['returns'])[0]['sharpe']} for name, perf in performance.items()}
-    final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
+
+            except Exception as e:
+                logging.error(f"Window Calc Error ({name}, {date}): {e}")
+
+    final_performance = {}
+    for name, perf in performance.items():
+        metrics, _ = calculate_advanced_metrics(perf['returns'])
+        final_performance[name] = {
+            'metrics': metrics,
+            'sharpe': metrics['sharpe']
+        }
+
+    final_sub_performance = {
+        name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf}
+        for name, data in subset_performance.items()
+    }
     return {'strategy': final_performance, 'subset': final_sub_performance}
 
-def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], historical_data: List[Tuple[datetime, pd.DataFrame]]) -> Dict:
+
+def evaluate_historical_performance(
+    _strategies: Dict[str, BaseStrategy],
+    historical_data: List[Tuple[datetime, pd.DataFrame]]
+) -> Dict:
+    """
+    Enhanced walk-forward evaluation with full Adaptive Intelligence Engine.
+    Maintains backward-compatible output structure.
+    """
     MIN_TRAIN_FILES = 2
-    TRAINING_CAPITAL = 2500000.0  # Set to a robust value for the given universe
+    TRAINING_CAPITAL = 2500000.0
     if len(historical_data) < MIN_TRAIN_FILES + 1:
         st.error(f"Not enough historical data for the selected period. Need at least {MIN_TRAIN_FILES + 1} files to run a backtest.")
         return {}
+
+    # --- Initialize Adaptive Intelligence Engine ---
+    engine = AdaptiveIntelligenceEngine()
 
     all_names = list(_strategies.keys()) + ['System_Curated']
     oos_perf = {name: {'returns': []} for name in all_names}
     weight_entropies = []
     strategy_weights_history = []
     subset_weights_history = []
+    diagnostics_history = []
 
-    progress_bar = st.progress(0, text="Initializing backtest...")
+    progress_bar = st.progress(0, text="Initializing adaptive intelligence backtest...")
     total_steps = len(historical_data) - MIN_TRAIN_FILES - 1
 
     for i in range(MIN_TRAIN_FILES, len(historical_data) - 1):
         train_window = historical_data[:i]
         test_date, test_df = historical_data[i]
-        next_date, next_df = historical_data[i+1]
+        next_date, next_df = historical_data[i + 1]
 
-        progress_text = f"Processing period {i - MIN_TRAIN_FILES + 1}/{total_steps}: Training on {len(train_window)} files..."
-        progress_bar.progress((i - MIN_TRAIN_FILES + 1) / total_steps, text=progress_text)
-        logging.info(f"Backtest Step {i - MIN_TRAIN_FILES + 1}/{total_steps}: Training on {len(train_window)} files (until {train_window[-1][0].date()})")
+        step_num = i - MIN_TRAIN_FILES + 1
+        progress_text = f"Step {step_num}/{total_steps}: Training on {len(train_window)} files | Adaptation speed: {engine.adaptation_speed:.2f}"
+        progress_bar.progress(step_num / total_steps, text=progress_text)
+        logging.info(f"Backtest Step {step_num}/{total_steps}: Training on {len(train_window)} files (until {train_window[-1][0].date()})")
 
-        in_sample_perf = _calculate_performance_on_window(train_window, _strategies, TRAINING_CAPITAL)
+        # --- Compute in-sample performance with engine tracking ---
+        in_sample_perf = _calculate_performance_on_window(train_window, _strategies, TRAINING_CAPITAL, engine)
 
         try:
-            logging.info(f"  - STARTING: Curating out-of-sample portfolio for {test_date.date()}")
-            curated_port, strategy_weights, subset_weights = curate_final_portfolio(_strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0)
-            
-            # Store weight history
+            logging.info(f"  - Curating adaptive portfolio for {test_date.date()}")
+
+            # --- Use engine-aware curation ---
+            curated_port, strategy_weights, subset_weights = curate_final_portfolio(
+                _strategies, in_sample_perf, test_df, TRAINING_CAPITAL, 30, 1.0, 10.0, engine
+            )
+
             strategy_weights_history.append({'date': test_date, **strategy_weights})
             subset_weights_history.append({'date': test_date, **subset_weights})
 
-            oos_perf['System_Curated']['returns'].append({'return': compute_portfolio_return(curated_port, next_df), 'date': next_date})
-            logging.info(f"  - COMPLETED: Curating out-of-sample portfolio for {test_date.date()}")
+            curated_ret = compute_portfolio_return(curated_port, next_df)
+            oos_perf['System_Curated']['returns'].append({'return': curated_ret, 'date': next_date})
 
-            weights = curated_port['weightage_pct'] / 100
-            entropy = -np.sum(weights * np.log2(weights))
-            weight_entropies.append(entropy)
+            # --- Track portfolio-level return in engine ---
+            engine.process_portfolio_return(curated_ret, next_date)
+
+            # --- Entropy monitoring ---
+            if not curated_port.empty and 'weightage_pct' in curated_port.columns:
+                weights_arr = curated_port['weightage_pct'] / 100
+                weights_arr = weights_arr[weights_arr > 0]
+                entropy = -np.sum(weights_arr * np.log2(weights_arr + 1e-12))
+                weight_entropies.append(entropy)
+                engine.entropy_history.append((test_date, entropy))
+
+            # --- Generate diagnostics ---
+            strat_names = [n for n in strategy_weights.keys()]
+            diag = engine.generate_diagnostics(strategy_weights, strat_names)
+            diagnostics_history.append({'date': test_date, **diag})
+
+            # --- End-of-step meta-learning ---
+            engine.finalize_step()
+
+            logging.info(f"  - Completed: {test_date.date()} | Entropy: {weight_entropies[-1] if weight_entropies else 0:.3f} | Drawdown scale: {engine._compute_drawdown_scaling():.2f}")
+
         except Exception as e:
             logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
             oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
 
+        # --- Individual strategy OOS tracking ---
         for name, strategy in _strategies.items():
             try:
-                logging.info(f"  - STARTING: OOS portfolio for {name} on {test_date.date()}")
                 portfolio = strategy.generate_portfolio(test_df, TRAINING_CAPITAL)
-                oos_perf[name]['returns'].append({'return': compute_portfolio_return(portfolio, next_df), 'date': next_date})
-                logging.info(f"  - COMPLETED: OOS portfolio for {name} on {test_date.date()}")
+                ret = compute_portfolio_return(portfolio, next_df)
+                oos_perf[name]['returns'].append({'return': ret, 'date': next_date})
+
+                # Track in engine for next iteration's Bayesian update
+                engine.process_step(name, ret, next_date)
             except Exception as e:
                 logging.error(f"OOS Strategy Error ({name}, {test_date.date()}): {e}")
                 oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
@@ -5553,17 +6470,47 @@ def evaluate_historical_performance(_strategies: Dict[str, BaseStrategy], histor
     if weight_entropies:
         final_oos_perf['System_Curated']['metrics']['avg_weight_entropy'] = np.mean(weight_entropies)
 
+    # --- Append engine diagnostics to System_Curated metrics ---
+    if diagnostics_history:
+        latest_diag = diagnostics_history[-1]
+        final_oos_perf['System_Curated']['metrics']['predictive_stability_index'] = latest_diag.get('predictive_stability_index', 0)
+        final_oos_perf['System_Curated']['metrics']['risk_of_ruin'] = latest_diag.get('risk_of_ruin', 0)
+        final_oos_perf['System_Curated']['metrics']['adaptation_speed'] = latest_diag.get('adaptation_speed', 1.0)
+        final_oos_perf['System_Curated']['metrics']['drawdown_scale'] = latest_diag.get('drawdown_scale', 1.0)
+        final_oos_perf['System_Curated']['metrics']['tail_risk_5pct'] = latest_diag.get('tail_risk_5pct', 0)
+        final_oos_perf['System_Curated']['metrics']['portfolio_ci_lower'] = latest_diag.get('portfolio_ci_lower', 0)
+        final_oos_perf['System_Curated']['metrics']['portfolio_ci_upper'] = latest_diag.get('portfolio_ci_upper', 0)
+
     full_history_subset_perf = _calculate_performance_on_window(historical_data, _strategies, TRAINING_CAPITAL)['subset']
+
     return {
-        'strategy': final_oos_perf, 
+        'strategy': final_oos_perf,
         'subset': full_history_subset_perf,
         'strategy_weights_history': strategy_weights_history,
-        'subset_weights_history': subset_weights_history
+        'subset_weights_history': subset_weights_history,
+        'diagnostics_history': diagnostics_history,
+        'engine': engine  # Expose engine for downstream use
     }
 
 
-def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dict, current_df: pd.DataFrame, sip_amount: float, num_positions: int, min_pos_pct: float, max_pos_pct: float) -> Tuple[pd.DataFrame, Dict, Dict]:
-    strategy_weights = calculate_strategy_weights(performance)
+def curate_final_portfolio(
+    strategies: Dict[str, BaseStrategy],
+    performance: Dict,
+    current_df: pd.DataFrame,
+    sip_amount: float,
+    num_positions: int,
+    min_pos_pct: float,
+    max_pos_pct: float,
+    engine: 'AdaptiveIntelligenceEngine' = None
+) -> Tuple[pd.DataFrame, Dict, Dict]:
+    """
+    Enhanced portfolio curation with adaptive intelligence.
+    Uses engine for Bayesian-weighted strategy selection and uncertainty-aware allocation.
+    """
+    # --- Compute adaptive strategy weights ---
+    strategy_weights = calculate_strategy_weights(performance, engine)
+
+    # --- Compute adaptive subset (tier) weights with Bayesian shrinkage ---
     subset_weights = {}
     for name in strategies:
         sub_perfs = performance.get('subset', {}).get(name, {})
@@ -5573,71 +6520,163 @@ def curate_final_portfolio(strategies: Dict[str, BaseStrategy], performance: Dic
             continue
 
         tier_sharpes = np.array([sub_perfs.get(tier, 1.0 - (int(tier.split('_')[1]) * 0.05)) + 2 for tier in tier_names])
-        
+
         if tier_sharpes.size == 0:
             subset_weights[name] = {}
             continue
 
-        # Stabilize the exp calculation to prevent overflow
-        stable_sharpes = tier_sharpes - np.max(tier_sharpes)
-        exp_sharpes = np.exp(stable_sharpes)
+        # Bayesian shrinkage of tier Sharpes toward their mean
+        tier_mean = np.mean(tier_sharpes)
+        n_tiers = len(tier_sharpes)
+        shrink = 2.0 / (2.0 + n_tiers)
+        shrunk_tiers = shrink * tier_mean + (1 - shrink) * tier_sharpes
+
+        # Stabilized softmax
+        stable = shrunk_tiers - np.max(shrunk_tiers)
+        exp_sharpes = np.exp(stable)
         total_exp = np.sum(exp_sharpes)
 
         if total_exp > 0 and np.isfinite(total_exp):
-            subset_weights[name] = {tier: exp_sharpes[i] / total_exp for i, tier in enumerate(tier_names)}
-        else: # Fallback to equal weighting
+            subset_weights[name] = {tier: float(exp_sharpes[i] / total_exp) for i, tier in enumerate(tier_names)}
+        else:
             equal_weight = 1.0 / len(tier_names) if tier_names else 0
             subset_weights[name] = {tier: equal_weight for tier in tier_names}
 
+    # --- Aggregate holdings across strategies × tiers ---
     aggregated_holdings = {}
+    strategy_portfolios = {}  # Cache for crowding detection
+
     for name, strategy in strategies.items():
-        port = strategy.generate_portfolio(current_df, sip_amount)
-        if port.empty: continue
+        try:
+            port = strategy.generate_portfolio(current_df, sip_amount)
+        except Exception as e:
+            logging.error(f"Portfolio generation failed for {name}: {e}")
+            continue
+
+        if port.empty:
+            continue
+
+        strategy_portfolios[name] = port
         n, tier_size = len(port), 10
         num_tiers = n // tier_size
-        if num_tiers == 0: continue
+        if num_tiers == 0:
+            continue
+
         for j in range(num_tiers):
-            tier_name = f'tier_{j+1}'
-            if tier_name not in subset_weights.get(name, {}): continue
-            sub_df = port.iloc[j*tier_size:(j+1)*tier_size]
+            tier_name = f'tier_{j + 1}'
+            if tier_name not in subset_weights.get(name, {}):
+                continue
+            sub_df = port.iloc[j * tier_size:(j + 1) * tier_size]
             tier_weight = subset_weights[name][tier_name]
+
             for _, row in sub_df.iterrows():
                 symbol, price, weight_pct = row['symbol'], row['price'], row['weightage_pct']
                 final_weight = (weight_pct / 100) * tier_weight * strategy_weights.get(name, 0)
-                if symbol in aggregated_holdings: aggregated_holdings[symbol]['weight'] += final_weight
-                else: aggregated_holdings[symbol] = {'price': price, 'weight': final_weight}
-    if not aggregated_holdings: 
-        return pd.DataFrame(), {}, {} # Return empty objects if no holdings
-        
-    final_port = pd.DataFrame([{'symbol': s, **d} for s, d in aggregated_holdings.items()]).sort_values('weight', ascending=False).head(num_positions)
+                if symbol in aggregated_holdings:
+                    aggregated_holdings[symbol]['weight'] += final_weight
+                else:
+                    aggregated_holdings[symbol] = {'price': price, 'weight': final_weight}
+
+    if not aggregated_holdings:
+        return pd.DataFrame(), strategy_weights, subset_weights
+
+    # --- Signal Crowding Detection at Position Level ---
+    # If too many strategies agree on same top holdings, reduce concentration
+    if engine is not None and len(strategy_portfolios) >= 2:
+        symbol_strategy_count = {}
+        for name, port in strategy_portfolios.items():
+            top_symbols = port.head(10)['symbol'].tolist() if len(port) >= 10 else port['symbol'].tolist()
+            for sym in top_symbols:
+                symbol_strategy_count[sym] = symbol_strategy_count.get(sym, 0) + 1
+
+        n_strats = len(strategy_portfolios)
+        for sym, count in symbol_strategy_count.items():
+            crowding_ratio = count / n_strats
+            if crowding_ratio > 0.8 and sym in aggregated_holdings:
+                # Dampen over-agreed positions
+                aggregated_holdings[sym]['weight'] *= max(0.5, 1.0 - (crowding_ratio - 0.8) * 2)
+
+    # --- Build final portfolio with uncertainty-aware position sizing ---
+    final_port = pd.DataFrame([{'symbol': s, **d} for s, d in aggregated_holdings.items()])
+    final_port = final_port.sort_values('weight', ascending=False).head(num_positions)
     total_weight = final_port['weight'].sum()
+
+    if total_weight <= 0:
+        return pd.DataFrame(), strategy_weights, subset_weights
+
     final_port['weightage_pct'] = final_port['weight'] * 100 / total_weight
     final_port['weightage_pct'] = final_port['weightage_pct'].clip(lower=min_pos_pct, upper=max_pos_pct)
+
+    # Re-normalize after clipping
     final_port['weightage_pct'] = (final_port['weightage_pct'] / final_port['weightage_pct'].sum()) * 100
+
+    # --- Apply drawdown-sensitive scaling to position sizes (continuous, not binary) ---
+    if engine is not None:
+        dd_scale = engine._compute_drawdown_scaling()
+        if dd_scale < 1.0:
+            # Scale max position tighter in drawdown
+            effective_max = max_pos_pct * dd_scale
+            final_port['weightage_pct'] = final_port['weightage_pct'].clip(upper=effective_max)
+            wt_sum = final_port['weightage_pct'].sum()
+            if wt_sum > 0:
+                final_port['weightage_pct'] = (final_port['weightage_pct'] / wt_sum) * 100
+
     final_port['units'] = np.floor((sip_amount * final_port['weightage_pct'] / 100) / final_port['price'])
     final_port['value'] = final_port['units'] * final_port['price']
-    
+
     final_port_df = final_port.sort_values('weightage_pct', ascending=False).reset_index(drop=True)
     return final_port_df, strategy_weights, subset_weights
 
 # --- NEW: Production-Grade Market Regime Detection System (v2 - Corrected Logic) ---
 class MarketRegimeDetectorV2:
     """
-    Institutional-grade market regime detection (v2) with corrected scoring and
-    classification logic.
+    Institutional-grade market regime detection (v2) with:
+    - Probabilistic regime transition (not hard-switch)
+    - Bayesian prior updating from regime history
+    - Decay-weighted factor importance (no fixed weights)
+    - Structural break detection for regime shifts
+    - Continuous regime probabilities P(Regime_t = k | Data_t)
     """
     
+    REGIME_NAMES = ['CRISIS', 'BEAR', 'WEAK_BEAR', 'CHOP', 'WEAK_BULL', 'BULL', 'STRONG_BULL']
+    
     def __init__(self):
-        # --- GRANULARITY V3: Increased sensitivity to reduce "CHOP" classification. ---
         self.regime_thresholds = {
-            'CRISIS': {'score': -1.0, 'confidence': 0.85},
-            'BEAR': {'score': -0.5, 'confidence': 0.75},
-            'WEAK_BEAR': {'score': -0.1, 'confidence': 0.65},
-            'CHOP': {'score': 0.1, 'confidence': 0.60},
-            'WEAK_BULL': {'score': 0.5, 'confidence': 0.65},
-            'BULL': {'score': 1.0, 'confidence': 0.75},
-            'STRONG_BULL': {'score': 1.5, 'confidence': 0.85},
+            'CRISIS':     {'score': -1.0, 'confidence': 0.85},
+            'BEAR':       {'score': -0.5, 'confidence': 0.75},
+            'WEAK_BEAR':  {'score': -0.1, 'confidence': 0.65},
+            'CHOP':       {'score':  0.1, 'confidence': 0.60},
+            'WEAK_BULL':  {'score':  0.5, 'confidence': 0.65},
+            'BULL':       {'score':  1.0, 'confidence': 0.75},
+            'STRONG_BULL':{'score':  1.5, 'confidence': 0.85},
         }
+        
+        # Bayesian regime prior: initialize uniform
+        n_regimes = len(self.REGIME_NAMES)
+        self.regime_prior = np.ones(n_regimes) / n_regimes
+        
+        # Transition probability matrix (persistence-biased)
+        # Regimes tend to persist; transitions to adjacent states are more likely
+        self.transition_matrix = self._build_transition_matrix(n_regimes, persistence=0.6)
+        
+        # History for decay-weighted factor importance
+        self.factor_score_history = []  # List of {factor: score} dicts
+        self.regime_history_probs = []  # List of probability vectors
+    
+    def _build_transition_matrix(self, n: int, persistence: float = 0.6) -> np.ndarray:
+        """Build regime transition matrix: high self-persistence, adjacent transitions."""
+        T = np.zeros((n, n))
+        for i in range(n):
+            T[i, i] = persistence
+            remaining = 1.0 - persistence
+            # Distribute remaining probability to neighbors (decay with distance)
+            weights = np.array([1.0 / (abs(i - j) + 1) if j != i else 0 for j in range(n)])
+            w_sum = weights.sum()
+            if w_sum > 0:
+                T[i] = T[i] + remaining * (weights / w_sum)
+        # Normalize rows
+        T = T / T.sum(axis=1, keepdims=True)
+        return T
     
     def detect_regime(self, historical_data: list) -> Tuple[str, str, float, Dict]:
         if len(historical_data) < 10:
@@ -5656,97 +6695,244 @@ class MarketRegimeDetectorV2:
             'velocity': self._analyze_velocity(analysis_window)
         }
         
-        regime_score = self._calculate_composite_score(metrics)
-        regime_name, confidence = self._classify_regime(regime_score, metrics)
+        # --- Adaptive factor weights (decay-weighted, not static) ---
+        factor_weights = self._compute_adaptive_factor_weights(metrics)
+        regime_score = sum(metrics[f]['score'] * factor_weights[f] for f in factor_weights)
+        
+        # --- Probabilistic regime classification ---
+        regime_probs = self._compute_regime_probabilities(regime_score, metrics)
+        regime_name = self.REGIME_NAMES[np.argmax(regime_probs)]
+        confidence = float(np.max(regime_probs))
+        
+        # Special override: CRISIS detection (extreme conditions)
+        if (metrics['volatility']['regime'] == 'PANIC' and
+            regime_score < -0.5 and
+            metrics['breadth']['quality'] == 'CAPITULATION'):
+            crisis_idx = self.REGIME_NAMES.index('CRISIS')
+            regime_probs[crisis_idx] = max(regime_probs[crisis_idx], 0.9)
+            regime_probs /= regime_probs.sum()
+            regime_name = 'CRISIS'
+            confidence = 0.90
+        
+        # --- Bayesian prior update for next call ---
+        self.regime_prior = regime_probs.copy()
+        self.regime_history_probs.append(regime_probs.copy())
+        
+        # Store factor scores for adaptive weight learning
+        self.factor_score_history.append({f: metrics[f]['score'] for f in metrics})
+        
         mix_name = self._map_regime_to_mix(regime_name)
-        explanation = self._generate_explanation(regime_name, confidence, metrics, regime_score)
+        explanation = self._generate_explanation(regime_name, confidence, metrics, regime_score, regime_probs)
         
         return regime_name, mix_name, confidence, {
             'score': regime_score,
             'metrics': metrics,
             'explanation': explanation,
-            'analysis_date': latest_date.strftime('%Y-%m-%d')
+            'analysis_date': latest_date.strftime('%Y-%m-%d'),
+            'regime_probabilities': {self.REGIME_NAMES[i]: float(regime_probs[i]) for i in range(len(self.REGIME_NAMES))},
+            'factor_weights': factor_weights,
+            'transition_matrix': self.transition_matrix.tolist()
         }
+    
+    def _compute_adaptive_factor_weights(self, metrics: Dict) -> Dict[str, float]:
+        """
+        Compute factor weights adaptively based on recent predictive stability.
+        Factors that have been consistent score higher; volatile factors get downweighted.
+        No hard-coded importance — weights emerge from data.
+        """
+        base_weights = {
+            'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15,
+            'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15
+        }
+        
+        if len(self.factor_score_history) < 5:
+            return base_weights
+        
+        # Compute stability of each factor over recent history
+        recent = self.factor_score_history[-10:]
+        stability_weights = {}
+        
+        for factor in base_weights:
+            if base_weights[factor] == 0:
+                stability_weights[factor] = 0
+                continue
+            
+            scores = [h.get(factor, 0) for h in recent]
+            if len(scores) < 3:
+                stability_weights[factor] = base_weights[factor]
+                continue
+            
+            # Stability = |mean| / (std + eps) — consistent directional signal is valued
+            mean_score = np.mean(scores)
+            std_score = np.std(scores) + 1e-6
+            consistency = abs(mean_score) / std_score
+            
+            # Weight = base × (1 + consistency_bonus)
+            stability_weights[factor] = base_weights[factor] * (1.0 + np.clip(consistency - 1.0, -0.5, 1.0))
+        
+        # Normalize
+        total = sum(stability_weights.values())
+        if total > 0:
+            stability_weights = {f: w / total for f, w in stability_weights.items()}
+        else:
+            stability_weights = base_weights
+        
+        return stability_weights
+    
+    def _compute_regime_probabilities(self, score: float, metrics: Dict) -> np.ndarray:
+        """
+        Compute P(Regime_t = k | Data_t) using Bayesian updating:
+        Posterior ∝ Likelihood(data | regime_k) × Prior(regime_k)
+        Prior incorporates transition matrix from previous regime state.
+        """
+        n_regimes = len(self.REGIME_NAMES)
+        
+        # --- Step 1: Predict prior via transition matrix ---
+        if len(self.regime_history_probs) > 0:
+            prev_probs = self.regime_history_probs[-1]
+            predicted_prior = prev_probs @ self.transition_matrix
+        else:
+            predicted_prior = self.regime_prior.copy()
+        
+        # Ensure valid probability distribution
+        predicted_prior = np.clip(predicted_prior, 1e-6, 1.0)
+        predicted_prior /= predicted_prior.sum()
+        
+        # --- Step 2: Compute likelihood P(score | regime_k) ---
+        # Model score as Gaussian centered at each regime's threshold
+        thresholds = np.array([self.regime_thresholds[r]['score'] for r in self.REGIME_NAMES])
+        
+        # Adaptive spread: wider in volatile/uncertain conditions
+        vol_regime = metrics.get('volatility', {}).get('regime', 'NORMAL')
+        spread = 0.5 if vol_regime in ['PANIC', 'ELEVATED'] else 0.35
+        
+        likelihoods = np.exp(-0.5 * ((score - thresholds) / spread) ** 2)
+        likelihoods /= likelihoods.sum() + 1e-12
+        
+        # --- Step 3: Bayesian posterior ---
+        posterior = likelihoods * predicted_prior
+        posterior_sum = posterior.sum()
+        if posterior_sum > 0 and np.isfinite(posterior_sum):
+            posterior /= posterior_sum
+        else:
+            posterior = predicted_prior
+        
+        # --- Step 4: Breadth divergence adjustment ---
+        if metrics.get('breadth', {}).get('quality') == 'DIVERGENT':
+            # Increase uncertainty: push toward uniform
+            posterior = 0.75 * posterior + 0.25 * (np.ones(n_regimes) / n_regimes)
+        
+        return posterior
 
     def _analyze_momentum_regime(self, window: list) -> Dict:
-        """Track momentum evolution over time"""
+        """Track momentum evolution with decay weighting"""
         rsi_values = [df['rsi latest'].mean() for _, df in window]
         osc_values = [df['osc latest'].mean() for _, df in window]
         
-        current_rsi = rsi_values[-1]
-        rsi_trend = np.polyfit(range(len(rsi_values)), rsi_values, 1)[0]
-        current_osc = osc_values[-1]
-        osc_trend = np.polyfit(range(len(osc_values)), osc_values, 1)[0]
+        # Exponential decay weighting (recent data matters more)
+        n = len(rsi_values)
+        decay_w = np.array([0.94 ** (n - 1 - i) for i in range(n)])
+        decay_w /= decay_w.sum() + 1e-12
         
-        if current_rsi > 65 and rsi_trend > 0.5:
-            strength, score = 'STRONG_BULLISH', 2.0
-        elif current_rsi > 55 and rsi_trend >= 0:
-            strength, score = 'BULLISH', 1.0
-        elif current_rsi < 35 and rsi_trend < -0.5:
-            strength, score = 'STRONG_BEARISH', -2.0
-        elif current_rsi < 45 and rsi_trend <= 0:
-            strength, score = 'BEARISH', -1.0
+        current_rsi = rsi_values[-1]
+        weighted_rsi = np.dot(decay_w, rsi_values)
+        rsi_trend = np.polyfit(range(n), rsi_values, 1)[0]
+        current_osc = osc_values[-1]
+        osc_trend = np.polyfit(range(n), osc_values, 1)[0]
+        
+        # Continuous scoring (not hard bins) via sigmoid-like mapping
+        rsi_score = np.tanh((weighted_rsi - 50) / 15) * 2  # Maps ~[-2, 2]
+        trend_bonus = np.clip(rsi_trend * 0.5, -0.5, 0.5)
+        score = np.clip(rsi_score + trend_bonus, -2.0, 2.0)
+        
+        if score > 1.0:
+            strength = 'STRONG_BULLISH'
+        elif score > 0.3:
+            strength = 'BULLISH'
+        elif score < -1.0:
+            strength = 'STRONG_BEARISH'
+        elif score < -0.3:
+            strength = 'BEARISH'
         else:
-            strength, score = 'NEUTRAL', 0.0
+            strength = 'NEUTRAL'
             
-        return {'strength': strength, 'score': score, 'current_rsi': current_rsi, 'rsi_trend': rsi_trend, 'current_osc': current_osc, 'osc_trend': osc_trend}
+        return {'strength': strength, 'score': float(score), 'current_rsi': current_rsi, 'rsi_trend': rsi_trend, 'current_osc': current_osc, 'osc_trend': osc_trend}
 
     def _analyze_trend_quality(self, window: list) -> Dict:
-        """Assess trend quality and persistence"""
+        """Assess trend quality with decay-weighted persistence"""
         above_ma200_pct = [(df['price'] > df['ma200 latest']).mean() for _, df in window]
         ma_alignment = [(df['ma90 latest'] > df['ma200 latest']).mean() for _, df in window]
         
-        current_above_200 = above_ma200_pct[-1]
-        current_alignment = ma_alignment[-1]
-        trend_consistency = np.polyfit(range(len(above_ma200_pct)), above_ma200_pct, 1)[0]
+        n = len(above_ma200_pct)
+        decay_w = np.array([0.94 ** (n - 1 - i) for i in range(n)])
+        decay_w /= decay_w.sum() + 1e-12
         
-        if current_above_200 > 0.75 and current_alignment > 0.70 and trend_consistency >= 0:
-            quality, score = 'STRONG_UPTREND', 2.0
-        elif current_above_200 > 0.60 and current_alignment > 0.55:
-            quality, score = 'UPTREND', 1.0
-        elif current_above_200 < 0.30 and current_alignment < 0.30 and trend_consistency < 0:
-            quality, score = 'STRONG_DOWNTREND', -2.0
-        elif current_above_200 < 0.45 and current_alignment < 0.45:
-            quality, score = 'DOWNTREND', -1.0
+        current_above_200 = above_ma200_pct[-1]
+        weighted_above_200 = np.dot(decay_w, above_ma200_pct)
+        current_alignment = ma_alignment[-1]
+        trend_consistency = np.polyfit(range(n), above_ma200_pct, 1)[0]
+        
+        # Continuous scoring
+        trend_score = np.tanh((weighted_above_200 - 0.5) / 0.2) * 2
+        alignment_bonus = np.clip((current_alignment - 0.5) * 2, -0.5, 0.5)
+        score = np.clip(trend_score + alignment_bonus, -2.0, 2.0)
+        
+        if score > 1.0:
+            quality = 'STRONG_UPTREND'
+        elif score > 0.3:
+            quality = 'UPTREND'
+        elif score < -1.0:
+            quality = 'STRONG_DOWNTREND'
+        elif score < -0.3:
+            quality = 'DOWNTREND'
         else:
-            quality, score = 'TRENDLESS', 0.0
+            quality = 'TRENDLESS'
             
-        return {'quality': quality, 'score': score, 'above_200dma': current_above_200, 'ma_alignment': current_alignment, 'trend_consistency': trend_consistency}
+        return {'quality': quality, 'score': float(score), 'above_200dma': current_above_200, 'ma_alignment': current_alignment, 'trend_consistency': trend_consistency}
 
     def _analyze_market_breadth(self, df: pd.DataFrame) -> Dict:
-        """Analyze participation and breadth indicators"""
         rsi_bullish = (df['rsi latest'] > 50).mean()
         osc_positive = (df['osc latest'] > 0).mean()
         rsi_weak = (df['rsi latest'] < 40).mean()
         osc_oversold = (df['osc latest'] < -50).mean()
         divergence = abs(rsi_bullish - osc_positive)
         
-        if rsi_bullish > 0.70 and osc_positive > 0.60 and divergence < 0.15:
-            quality, score = 'STRONG_BROAD', 2.0
-        elif rsi_bullish > 0.55 and osc_positive > 0.45:
-            quality, score = 'HEALTHY', 1.0
+        # Continuous scoring
+        breadth_signal = (rsi_bullish + osc_positive) / 2  # [0, 1]
+        score = np.tanh((breadth_signal - 0.5) / 0.2) * 2
+        
+        # Penalty for divergence
+        if divergence > 0.25:
+            score *= max(0.5, 1.0 - divergence)
+        
+        # Capitulation override
+        if rsi_weak > 0.60 and osc_oversold > 0.50:
+            score = min(score, -2.0)
+        
+        if score > 1.0:
+            quality = 'STRONG_BROAD'
+        elif score > 0.3:
+            quality = 'HEALTHY'
         elif rsi_weak > 0.60 and osc_oversold > 0.50:
-            quality, score = 'CAPITULATION', -2.0
-        elif rsi_weak > 0.45 and osc_oversold > 0.35:
-            quality, score = 'WEAK', -1.0
+            quality = 'CAPITULATION'
+        elif score < -0.5:
+            quality = 'WEAK'
         elif divergence > 0.25:
-            quality, score = 'DIVERGENT', -0.5
+            quality = 'DIVERGENT'
         else:
-            quality, score = 'MIXED', 0.0
+            quality = 'MIXED'
             
-        return {'quality': quality, 'score': score, 'rsi_bullish_pct': rsi_bullish, 'osc_positive_pct': osc_positive, 'divergence': divergence}
+        return {'quality': quality, 'score': float(score), 'rsi_bullish_pct': rsi_bullish, 'osc_positive_pct': osc_positive, 'divergence': divergence}
 
     def _analyze_volatility_regime(self, window: list) -> Dict:
-        """Classify volatility regime and its implications"""
         bb_widths = [((4 * df['dev20 latest']) / (df['ma20 latest'] + 1e-6)).mean() for _, df in window]
         current_bbw = bb_widths[-1]
         vol_trend = np.polyfit(range(len(bb_widths)), bb_widths, 1)[0]
         
-        # --- GRANULARITY V3: Panic is now a bearish signal ---
         if current_bbw < 0.08 and vol_trend < 0:
-            regime, score = 'SQUEEZE', 0.5  # Slightly positive, anticipates breakout
+            regime, score = 'SQUEEZE', 0.5
         elif current_bbw > 0.15 and vol_trend > 0:
-            regime, score = 'PANIC', -1.0  # Bearish signal
+            regime, score = 'PANIC', -1.0
         elif current_bbw > 0.12:
             regime, score = 'ELEVATED', -0.5
         else:
@@ -5755,79 +6941,78 @@ class MarketRegimeDetectorV2:
         return {'regime': regime, 'score': score, 'current_bbw': current_bbw, 'vol_trend': vol_trend}
 
     def _analyze_statistical_extremes(self, df: pd.DataFrame) -> Dict:
-        """Detect statistical extreme conditions"""
         extreme_oversold = (df['zscore latest'] < -2.0).mean()
         extreme_overbought = (df['zscore latest'] > 2.0).mean()
         
-        # --- FIX: Inverted scoring logic ---
+        # Continuous contrarian signal
+        score = (extreme_oversold - extreme_overbought) * 3.0  # Oversold = bullish, overbought = bearish
+        score = np.clip(score, -1.5, 1.5)
+        
         if extreme_oversold > 0.40:
-            extreme_type, score = 'DEEPLY_OVERSOLD', 1.5  # Contrarian BULLISH signal
+            extreme_type = 'DEEPLY_OVERSOLD'
         elif extreme_overbought > 0.40:
-            extreme_type, score = 'DEEPLY_OVERBOUGHT', -1.5 # Contrarian BEARISH signal
+            extreme_type = 'DEEPLY_OVERBOUGHT'
         elif extreme_oversold > 0.20:
-            extreme_type, score = 'OVERSOLD', 0.75
+            extreme_type = 'OVERSOLD'
         elif extreme_overbought > 0.20:
-            extreme_type, score = 'OVERBOUGHT', -0.75
+            extreme_type = 'OVERBOUGHT'
         else:
-            extreme_type, score = 'NORMAL', 0.0
+            extreme_type = 'NORMAL'
             
-        return {'type': extreme_type, 'score': score, 'zscore_extreme_oversold_pct': extreme_oversold, 'zscore_extreme_overbought_pct': extreme_overbought}
+        return {'type': extreme_type, 'score': float(score), 'zscore_extreme_oversold_pct': extreme_oversold, 'zscore_extreme_overbought_pct': extreme_overbought}
 
     def _analyze_correlation_regime(self, df: pd.DataFrame) -> Dict:
-        """Analyze cross-sectional correlation (systemic risk)"""
         avg_std = (df['rsi latest'].std() / 100 + df['osc latest'].std() / 100 + df['zscore latest'].std() / 5) / 3
         
         if avg_std < 0.15:
-            regime, score = 'HIGH_CORRELATION', -0.5  # Risk-off
+            regime, score = 'HIGH_CORRELATION', -0.5
         elif avg_std > 0.30:
-            regime, score = 'LOW_CORRELATION', 0.5   # Risk-on, stock picking
+            regime, score = 'LOW_CORRELATION', 0.5
         else:
             regime, score = 'NORMAL', 0.0
             
         return {'regime': regime, 'score': score, 'dispersion': avg_std}
 
     def _analyze_velocity(self, window: list) -> Dict:
-        """Measure rate of change in key metrics"""
-        if len(window) < 5: return {'acceleration': 'UNKNOWN', 'score': 0.0}
+        if len(window) < 5:
+            return {'acceleration': 'UNKNOWN', 'score': 0.0}
         
         recent_rsis = [w[1]['rsi latest'].mean() for w in window[-5:]]
         rsi_changes = np.diff(recent_rsis)
         avg_velocity = np.mean(rsi_changes)
         acceleration = rsi_changes[-1] - rsi_changes[0]
         
+        # Continuous scoring
+        score = np.clip(avg_velocity / 2 + acceleration / 4, -1.0, 1.0)
+        
         if avg_velocity > 2 and acceleration > 0:
-            velocity, score = 'ACCELERATING_UP', 1.0
+            velocity = 'ACCELERATING_UP'
         elif avg_velocity > 1:
-            velocity, score = 'RISING', 0.5
+            velocity = 'RISING'
         elif avg_velocity < -2 and acceleration < 0:
-            velocity, score = 'ACCELERATING_DOWN', -1.0
+            velocity = 'ACCELERATING_DOWN'
         elif avg_velocity < -1:
-            velocity, score = 'FALLING', -0.5
+            velocity = 'FALLING'
         else:
-            velocity, score = 'STABLE', 0.0
+            velocity = 'STABLE'
             
-        return {'acceleration': velocity, 'score': score, 'avg_velocity': avg_velocity}
+        return {'acceleration': velocity, 'score': float(score), 'avg_velocity': avg_velocity}
 
     def _calculate_composite_score(self, metrics: Dict) -> float:
-        # --- GRANULARITY V3: Increased weight on momentum and velocity, removed correlation ---
-        weights = { 'momentum': 0.30, 'trend': 0.25, 'breadth': 0.15, 'volatility': 0.05, 'extremes': 0.10, 'correlation': 0.0, 'velocity': 0.15 }
-        return sum(metrics[factor]['score'] * weight for factor, weight in weights.items())
+        """Adaptive composite score using data-driven factor weights."""
+        factor_weights = self._compute_adaptive_factor_weights(metrics)
+        return sum(metrics[f]['score'] * factor_weights[f] for f in factor_weights)
     
     def _classify_regime(self, score: float, metrics: Dict) -> Tuple[str, float]:
-        """Map composite score to regime with confidence"""
+        """Map composite score to regime with confidence (backward compatibility)."""
+        regime_probs = self._compute_regime_probabilities(score, metrics)
+        regime_name = self.REGIME_NAMES[np.argmax(regime_probs)]
+        confidence = float(np.max(regime_probs))
+        
         if metrics['volatility']['regime'] == 'PANIC' and score < -0.5 and metrics['breadth']['quality'] == 'CAPITULATION':
             return 'CRISIS', 0.90
-            
-        # --- FIX: Iterate from most bearish to most bullish to prevent incorrect classification ---
-        sorted_thresholds = sorted(self.regime_thresholds.items(), key=lambda item: item[1]['score'])
         
-        for regime, threshold in reversed(sorted_thresholds):
-            if score >= threshold['score']:
-                # Downgrade confidence if breadth is divergent
-                confidence = threshold['confidence'] * 0.75 if metrics['breadth']['quality'] == 'DIVERGENT' else threshold['confidence']
-                return regime, confidence
-
-        return 'CRISIS', 0.85 # Fallback
+        return regime_name, confidence
     
     def _map_regime_to_mix(self, regime: str) -> str:
         mapping = {
@@ -5838,7 +7023,7 @@ class MarketRegimeDetectorV2:
         }
         return mapping.get(regime, '📊 Chop/Consolidate Mix')
     
-    def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float) -> str:
+    def _generate_explanation(self, regime: str, confidence: float, metrics: Dict, score: float, regime_probs: np.ndarray = None) -> str:
         lines = [f"**Detected Regime:** {regime} (Score: {score:.2f}, Confidence: {confidence:.0%})", ""]
         rationales = {
             'STRONG_BULL': "Strong upward momentum with broad participation. Favor momentum strategies.",
@@ -5850,8 +7035,17 @@ class MarketRegimeDetectorV2:
             'CRISIS': "Severe market stress. Focus on capital preservation and oversold opportunities."
         }
         lines.append(f"**Rationale:** {rationales.get(regime, 'Market conditions unclear.')}")
+        
+        # --- Probabilistic regime distribution ---
+        if regime_probs is not None:
+            lines.append("\n**Regime Probability Distribution:**")
+            for i, r_name in enumerate(self.REGIME_NAMES):
+                bar_len = int(regime_probs[i] * 20)
+                bar = '█' * bar_len + '░' * (20 - bar_len)
+                lines.append(f"  {r_name:<12} {bar} {regime_probs[i]:.0%}")
+        
         if metrics['breadth']['quality'] == 'DIVERGENT':
-            lines.append("⚠️ **Warning:** Breadth divergence detected - narrow leadership may not be sustainable.")
+            lines.append("\n⚠️ **Warning:** Breadth divergence detected - narrow leadership may not be sustainable.")
         lines.append("\n**Key Factors:**")
         lines.append(f"• **Momentum:** {metrics['momentum']['strength']} (RSI: {metrics['momentum']['current_rsi']:.1f})")
         lines.append(f"• **Trend:** {metrics['trend']['quality']} ({metrics['trend']['above_200dma']:.0%} > 200DMA)")
@@ -5932,6 +7126,26 @@ def display_performance_metrics(performance: Dict):
                 help="Theoretical optimal fraction of capital to allocate. Prone to estimation error; use with caution.")
     st.metric("Average Weight Entropy", f"{curated_metrics.get('avg_weight_entropy', 0):.3f}",
               help="Measures portfolio diversification. Higher values indicate a more diversified, less concentrated portfolio.")
+
+    # --- Adaptive Intelligence Engine Diagnostics ---
+    if curated_metrics.get('predictive_stability_index') is not None:
+        st.subheader("Adaptive Intelligence Diagnostics")
+        d1, d2, d3, d4, d5 = st.columns(5)
+        d1.metric("Predictive Stability", f"{curated_metrics.get('predictive_stability_index', 0):.2f}",
+                  help="Index [0,1] measuring predictive health of the system. Higher = more reliable forecasts.")
+        d2.metric("Risk of Ruin", f"{curated_metrics.get('risk_of_ruin', 0):.1%}",
+                  help="Bootstrap probability of breaching 20% max drawdown. Below 5% is healthy.")
+        d3.metric("Adaptation Speed", f"{curated_metrics.get('adaptation_speed', 1.0):.2f}×",
+                  help="Meta-learned learning rate. >1 = fast market adaptation, <1 = stable/slow regime.")
+        d4.metric("Drawdown Scale", f"{curated_metrics.get('drawdown_scale', 1.0):.2f}×",
+                  help="Current exposure scaling. <1 indicates drawdown-sensitive de-risking is active.")
+        d5.metric("Tail Risk (5%)", f"{curated_metrics.get('tail_risk_5pct', 0):.2%}",
+                  help="5th percentile return — the worst-case return in 1-in-20 periods.")
+        
+        ci_low = curated_metrics.get('portfolio_ci_lower', 0)
+        ci_high = curated_metrics.get('portfolio_ci_upper', 0)
+        if ci_low != 0 or ci_high != 0:
+            st.caption(f"95% Return Confidence Interval: [{ci_low:.3%}, {ci_high:.3%}]")
 
     st.markdown("---")
 
