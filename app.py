@@ -3121,7 +3121,7 @@ def main():
 
         if st.button("Run Analysis", width='stretch', type="primary"):
             
-            lookback_files = 200
+            lookback_files = 100
             
             selected_date_obj = st.session_state.get('analysis_date_str')
             if not selected_date_obj:
