@@ -3260,7 +3260,7 @@ def main():
             # stocks day-by-day?" This is a pure walk-forward process — every
             # day is a rebalancing day. The resulting metrics (Sharpe, Sortino,
             # MaxDD) measure stock-picking ability, not timing ability.
-            PHASE3_LOOKBACK = 25
+            PHASE3_LOOKBACK = 50
             if len(training_data_window_with_current) > PHASE3_LOOKBACK:
                 phase3_data = training_data_window_with_current[-PHASE3_LOOKBACK:]
             else:
