@@ -3121,7 +3121,7 @@ def main():
 
         if st.button("Run Analysis", width='stretch', type="primary"):
             
-            lookback_files = 100
+            lookback_files = 200
             
             selected_date_obj = st.session_state.get('analysis_date_str')
             if not selected_date_obj:
@@ -3260,7 +3260,7 @@ def main():
             # stocks day-by-day?" This is a pure walk-forward process — every
             # day is a rebalancing day. The resulting metrics (Sharpe, Sortino,
             # MaxDD) measure stock-picking ability, not timing ability.
-            PHASE3_LOOKBACK = 50
+            PHASE3_LOOKBACK = 25
             if len(training_data_window_with_current) > PHASE3_LOOKBACK:
                 phase3_data = training_data_window_with_current[-PHASE3_LOOKBACK:]
             else:
