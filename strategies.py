@@ -7706,3 +7706,458 @@ class ContrastiveLearningStrategy(BaseStrategy):
         total_score = df['composite_score'].sum()
         df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
         return self._allocate_portfolio(df, sip_amount)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. BOLTZMANN ALLOCATION — Temperature-Based Softmax Weighting
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: In thermal equilibrium, P(state) ∝ exp(-E/kBT).
+# Market:  Weight stocks by oversold-energy / market-temperature.
+#          Cold markets → concentrate. Hot markets → diversify.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BoltzmannAllocation(BaseStrategy):
+    """
+    Boltzmann Distribution applied to stock selection.
+    
+    Each stock's "energy" = how oversold it is (lower energy = more oversold = more favorable).
+    Temperature T = cross-sectional volatility (BBW).
+    Weight_i = exp(-Energy_i / T) / Z(T)
+    
+    Cold market: weight concentrates in most oversold stocks (ground state).
+    Hot market: weight spreads equally (thermal equilibrium / max entropy).
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'osc latest', 'dev20 latest', 'ma20 latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Compute Market Temperature ---
+        # BBW as temperature proxy
+        bbw = (4 * df['dev20 latest']) / (df['ma20 latest'] + 1e-6)
+        temperature = max(bbw.mean() * 10, 0.1)  # Scale to useful range, floor at 0.1
+        
+        # --- Compute Stock "Energy" ---
+        # Energy = how far from the ground state (deeply oversold)
+        # Lower energy = more oversold = more favorable
+        rsi_energy = df['rsi latest'] / 100  # 0 = deepest oversold, 1 = most overbought
+        osc_energy = (df['osc latest'] + 100) / 200  # Normalize to [0, 1]
+        
+        # Combined energy (lower = more oversold = better for buying)
+        energy = 0.5 * rsi_energy + 0.5 * osc_energy
+        
+        # --- Boltzmann Weights ---
+        # w_i = exp(-E_i / T) / Z(T)
+        boltzmann_factor = np.exp(-energy / temperature)
+        Z = boltzmann_factor.sum()  # Partition function
+        
+        if Z <= 0 or not np.isfinite(Z):
+            df['weightage'] = 1.0 / len(df)
+        else:
+            df['weightage'] = boltzmann_factor / Z
+        
+        # --- Filter: only stocks below median energy (oversold half) ---
+        median_energy = energy.median()
+        df = df[energy <= median_energy].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # Renormalize weights after filtering
+        total_w = df['weightage'].sum()
+        if total_w > 0:
+            df['weightage'] = df['weightage'] / total_w
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. LYAPUNOV EDGE — Trading at the Chaos-Order Boundary
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: Maximum opportunity exists at the edge of chaos (λ ≈ 0),
+#          where the system is neither predictable nor random.
+# Market:  Select stocks whose individual indicator dynamics are near
+#          the chaos-order transition — not trending, not random.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class LyapunovEdge(BaseStrategy):
+    """
+    Chaos Theory: Select stocks at the edge of chaos.
+    
+    Stocks with RSI near 50 and oscillator near 0 are at the bifurcation point —
+    they could go either way. These are the highest information-density points.
+    
+    We combine edge-of-chaos detection with a directional tilt from weekly indicators
+    to trade the moment the bifurcation resolves.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+                     'zscore latest', 'ma90 latest', 'ma200 latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Edge of Chaos Detection ---
+        # Distance from the bifurcation point (RSI=50, OSC=0)
+        rsi_distance = np.abs(df['rsi latest'] - 50) / 50  # 0 = at edge, 1 = at extreme
+        osc_distance = np.abs(df['osc latest']) / 100       # 0 = at edge, 1 = at extreme
+        
+        # Edge score: closer to bifurcation = higher score
+        edge_score = 1 - (0.5 * rsi_distance + 0.5 * osc_distance)
+        
+        # --- Directional Tilt (which way will the bifurcation resolve?) ---
+        # Weekly indicators provide the macro-scale direction
+        weekly_bullish = (df['rsi weekly'] < 50) & (df['osc weekly'] < 0)  # Weekly oversold
+        direction_tilt = np.where(weekly_bullish, 1.3, 0.7)  # Tilt toward stocks with weekly oversold
+        
+        # --- Structural support: above long-term MA? ---
+        structural = np.where(df['ma90 latest'] > df['ma200 latest'], 1.1, 0.9)
+        
+        # --- Z-score proximity (near mean = high potential energy) ---
+        zscore_edge = 1 - np.abs(df['zscore latest']).clip(0, 3) / 3
+        
+        # --- Composite Weight ---
+        df['weightage'] = edge_score * direction_tilt * structural * (0.7 + 0.3 * zscore_edge)
+        df['weightage'] = df['weightage'].clip(lower=0.001)
+        
+        # Filter: top 40% by edge score (stocks actually at the bifurcation)
+        threshold = edge_score.quantile(0.60)
+        df = df[edge_score >= threshold].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        total = df['weightage'].sum()
+        if total > 0:
+            df['weightage'] = df['weightage'] / total
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. ENTROPY MINIMIZER — Find Pockets of Order in Chaos
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: Life is a local decrease in entropy sustained by energy.
+# Market:  Select stocks that show locally ordered behavior (low indicator
+#          entropy) — they have the clearest signal, the least noise.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class EntropyMinimizer(BaseStrategy):
+    """
+    Second Law of Thermodynamics: Find local entropy minima.
+    
+    Stocks where multiple indicators agree (all oversold OR all strong) have
+    low information entropy — they are in a locally ordered state.
+    
+    Low entropy = clear signal = strong conviction.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+                     'zscore latest', 'zscore weekly', 'ma90 latest', 'ma200 latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Compute per-stock indicator entropy ---
+        # Binary signals from each indicator
+        signals = pd.DataFrame(index=df.index)
+        signals['rsi_d'] = (df['rsi latest'] < 50).astype(int)
+        signals['rsi_w'] = (df['rsi weekly'] < 50).astype(int)
+        signals['osc_d'] = (df['osc latest'] < 0).astype(int)
+        signals['osc_w'] = (df['osc weekly'] < 0).astype(int)
+        signals['z_d'] = (df['zscore latest'] < 0).astype(int)
+        signals['z_w'] = (df['zscore weekly'] < 0).astype(int)
+        signals['ma_structure'] = (df['price'] < df['ma90 latest']).astype(int)
+        
+        n_indicators = len(signals.columns)
+        
+        # Per-stock entropy: how mixed are the signals?
+        # p = fraction of bearish signals
+        p_bearish = signals.mean(axis=1)
+        p_bullish = 1 - p_bearish
+        
+        # Shannon entropy per stock (0 = all agree, 1 = maximum disagreement)
+        stock_entropy = -(
+            p_bearish * np.log2(p_bearish.clip(lower=1e-10)) +
+            p_bullish * np.log2(p_bullish.clip(lower=1e-10))
+        )
+        
+        # --- Weight inversely proportional to entropy ---
+        # Low entropy = all indicators agree = strong signal
+        order_score = 1 - stock_entropy  # 1 = perfect order, 0 = maximum chaos
+        
+        # --- Direction: are the indicators agreeing on OVERSOLD? ---
+        # We want stocks where indicators unanimously say "oversold"
+        oversold_consensus = p_bearish  # Higher = more indicators say oversold
+        
+        # Combined: ordered + oversold consensus
+        df['weightage'] = order_score * (0.3 + 0.7 * oversold_consensus)
+        df['weightage'] = df['weightage'].clip(lower=0.001)
+        
+        # Filter: only stocks with entropy below median (the ordered ones)
+        median_entropy = stock_entropy.median()
+        df = df[stock_entropy <= median_entropy].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        total = df['weightage'].sum()
+        if total > 0:
+            df['weightage'] = df['weightage'] / total
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. DISSIPATIVE STRUCTURE RIDER — Trade Healthy Trends
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: Prigogine's dissipative structures — ordered systems sustained
+#          by continuous energy input far from equilibrium.
+# Market:  Trends sustained by broad participation and volume. Ride
+#          healthy structures, avoid starving ones.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class DissipativeStructureRider(BaseStrategy):
+    """
+    Prigogine's Dissipative Structures: Ride trends that are alive.
+    
+    Healthy trend = strong directional move + confirming indicators (energy input).
+    Dying trend = directional move on deteriorating indicators (energy loss).
+    
+    Select stocks that ARE the dissipative structure — strongly trending
+    with confirming momentum, oscillators, and structure.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+                     'ma90 latest', 'ma200 latest', 'ma20 latest', 'dev20 latest',
+                     'zscore latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Trend Strength (the structure's order) ---
+        trend_vs_200 = (df['price'] - df['ma200 latest']) / (df['ma200 latest'] + 1e-6)
+        trend_vs_90 = (df['price'] - df['ma90 latest']) / (df['ma90 latest'] + 1e-6)
+        
+        # MA alignment (strong structure has 20 > 90 > 200)
+        ma_alignment = (
+            (df['ma20 latest'] > df['ma90 latest']).astype(float) * 0.5 +
+            (df['ma90 latest'] > df['ma200 latest']).astype(float) * 0.5
+        )
+        
+        trend_strength = trend_vs_200.clip(-0.5, 0.5) + trend_vs_90.clip(-0.3, 0.3) + ma_alignment * 0.3
+        
+        # --- Energy Input (the fuel sustaining the structure) ---
+        # Indicators confirming the trend = energy flowing in
+        rsi_energy = np.where(
+            trend_strength > 0,
+            (df['rsi latest'] - 40) / 60,    # For uptrends: RSI > 40 is energy
+            (60 - df['rsi latest']) / 60      # For downtrends: RSI < 60 is energy
+        ).clip(0, 1)
+        
+        osc_energy = np.where(
+            trend_strength > 0,
+            (df['osc latest'] + 20) / 120,   # For uptrends: OSC > -20 is energy
+            (20 - df['osc latest']) / 120     # For downtrends: OSC < 20 is energy
+        ).clip(0, 1)
+        
+        weekly_confirmation = np.where(
+            trend_strength > 0,
+            ((df['rsi weekly'] > 45) & (df['osc weekly'] > -20)).astype(float),
+            ((df['rsi weekly'] < 55) & (df['osc weekly'] < 20)).astype(float)
+        )
+        
+        energy_input = 0.35 * rsi_energy + 0.35 * osc_energy + 0.30 * weekly_confirmation
+        
+        # --- Dissipative Structure Health ---
+        # Health = |Trend| × √(Energy) — strong trend + high energy = healthy
+        health = np.abs(trend_strength) * np.sqrt(energy_input + 0.01)
+        
+        # --- Filter for oversold uptrend structures (buy on dips in healthy trends) ---
+        # Prefer stocks that are in healthy uptrends but temporarily pulled back
+        pullback_bonus = np.where(
+            (trend_strength > 0) & (df['zscore latest'] < -0.5),
+            1.3,  # Bonus for pullback in uptrend
+            1.0
+        )
+        
+        df['weightage'] = health * pullback_bonus
+        df['weightage'] = df['weightage'].clip(lower=0.001)
+        
+        # Top half by health
+        threshold = health.quantile(0.50)
+        df = df[health >= threshold].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        total = df['weightage'].sum()
+        if total > 0:
+            df['weightage'] = df['weightage'] / total
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. FISHER OPTIMAL — Maximum Information Portfolio
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: Fisher information measures how much data tells you about a parameter.
+#          Cramér-Rao bound: Var(estimator) ≥ 1/I(θ).
+# Market:  Select stocks where indicators carry the most information
+#          about direction — the Cramér-Rao bound is tightest.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class FisherOptimal(BaseStrategy):
+    """
+    Fisher Information: Select stocks where indicators are most informative.
+    
+    High indicator dispersion + strong directional signal = high Fisher info.
+    The portfolio should be built from stocks where we have the tightest
+    Cramér-Rao bound on our prediction.
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest', 'osc weekly',
+                     'zscore latest', 'zscore weekly', 'dev20 latest', 'ma20 latest',
+                     '9ema osc latest', '21ema osc latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Per-stock Fisher Information ---
+        # Indicator signal strength (gradient of indicators w.r.t. direction)
+        # Strong signals = high derivative = high Fisher info
+        indicators = pd.DataFrame(index=df.index)
+        indicators['rsi_signal'] = (50 - df['rsi latest']) / 50        # How far from neutral
+        indicators['osc_signal'] = -df['osc latest'] / 100             # Normalized oscillator
+        indicators['z_signal'] = -df['zscore latest'].clip(-3, 3) / 3  # Z-score signal
+        indicators['ema9_signal'] = -df['9ema osc latest'] / 100
+        indicators['ema21_signal'] = -df['21ema osc latest'] / 100
+        indicators['weekly_rsi'] = (50 - df['rsi weekly']) / 50
+        indicators['weekly_osc'] = -df['osc weekly'] / 100
+        
+        # Signal strength = mean absolute signal
+        signal_strength = indicators.abs().mean(axis=1)
+        
+        # Signal agreement = 1 - std of signals (all pointing same way = low variance)
+        signal_agreement = 1 - indicators.std(axis=1).clip(0, 1)
+        
+        # Fisher info proxy: strong signal × high agreement / noise
+        noise = (df['dev20 latest'] / (df['ma20 latest'] + 1e-6)).clip(0.001, 0.5)
+        fisher_info = (signal_strength * signal_agreement) / noise
+        
+        # --- Direction: are the strong signals pointing to "oversold"? ---
+        avg_signal = indicators.mean(axis=1)  # Positive = oversold (our convention)
+        
+        # Only include stocks with positive signal (oversold direction)
+        df['weightage'] = fisher_info * np.where(avg_signal > 0, 1.0, 0.3)
+        df['weightage'] = df['weightage'].clip(lower=0.001)
+        
+        # Top 40% by Fisher info
+        threshold = fisher_info.quantile(0.60)
+        df = df[fisher_info >= threshold].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        total = df['weightage'].sum()
+        if total > 0:
+            df['weightage'] = df['weightage'] / total
+        
+        return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. ERGODIC GROWTH — Kelly-Optimal Time-Average Maximizer
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physics: Non-ergodic systems have E[X] ≠ time-average(X).
+#          Kelly criterion maximizes the geometric (time-average) growth.
+# Market:  Select stocks that maximize ln(1+R), not R. This penalizes
+#          high-volatility names and favors consistent growers.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ErgodicGrowth(BaseStrategy):
+    """
+    Ergodic Theory / Kelly Criterion: Maximize geometric growth rate.
+    
+    Instead of maximizing expected return E[R], maximize E[ln(1+R)] = g.
+    This naturally penalizes volatility (because ln is concave) and
+    favors consistent, low-volatility oversold setups.
+    
+    g ≈ μ - σ²/2 (for small returns)
+    
+    Kelly fraction per stock: f* = μ/σ² (capped at sensible levels)
+    """
+    
+    def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
+        required = ['symbol', 'price', 'rsi latest', 'rsi weekly', 'osc latest',
+                     'osc weekly', 'dev20 latest', 'ma20 latest', 'zscore latest',
+                     'ma90 latest', 'ma200 latest']
+        df = self._clean_data(df, required)
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        # --- Expected Return Proxy (μ) ---
+        # Oversold signals suggest positive expected return
+        weighted_rsi = df['rsi weekly'] * 0.55 + df['rsi latest'] * 0.45
+        rsi_mu = np.where(
+            weighted_rsi < 30, 0.03,   # Deeply oversold → high expected return
+            np.where(weighted_rsi < 45, 0.015,
+            np.where(weighted_rsi < 55, 0.005,
+            np.where(weighted_rsi < 70, -0.005, -0.02)))
+        )
+        
+        osc_mu = np.where(
+            df['osc weekly'] < -50, 0.02,
+            np.where(df['osc weekly'] < 0, 0.01,
+            np.where(df['osc weekly'] < 50, 0.0, -0.01))
+        )
+        
+        # Structural bonus
+        structure_mu = np.where(df['ma90 latest'] > df['ma200 latest'], 0.005, -0.005)
+        
+        mu = rsi_mu + osc_mu + structure_mu
+        
+        # --- Volatility Proxy (σ) ---
+        sigma = (df['dev20 latest'] / (df['ma20 latest'] + 1e-6)).clip(0.005, 0.10)
+        
+        # --- Geometric Growth Rate ---
+        # g = μ - σ²/2 (the ergodic correction!)
+        geometric_growth = mu - (sigma ** 2) / 2
+        
+        # --- Kelly Fraction ---
+        # f* = μ / σ² (fraction of capital per stock)
+        kelly = mu / (sigma ** 2 + 1e-6)
+        kelly = kelly.clip(0, 5)  # Cap at 5x
+        
+        # --- Only positive geometric growth stocks ---
+        df['weightage'] = np.where(geometric_growth > 0, geometric_growth * kelly, 0.001)
+        df['weightage'] = df['weightage'].clip(lower=0.001)
+        
+        # Filter: positive geometric growth
+        df = df[geometric_growth > 0].copy()
+        
+        if df.empty:
+            return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
+        
+        total = df['weightage'].sum()
+        if total > 0:
+            df['weightage'] = df['weightage'] / total
+        
+        return self._allocate_portfolio(df, sip_amount)
