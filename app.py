@@ -72,7 +72,8 @@ try:
         BootstrapConfidenceStrategy, KernelDensityStrategy, SurvivalAnalysisStrategy,
         PrincipalComponentStrategy, FactorMomentumStrategy, ElasticNetBlender, RobustRegressionStrategy,
         ConvexOptimizationStrategy, MonteCarloStrategy, VariationalInferenceStrategy,
-        NeuralNetworkInspired, GraphNeuralInspired, ContrastiveLearningStrategy
+        NeuralNetworkInspired, GraphNeuralInspired, ContrastiveLearningStrategy, BoltzmannAllocation,
+        LyapunovEdge, EntropyMinimizer, DissipativeStructureRider, FisherOptimal, ErgodicGrowth
     )
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
@@ -2878,6 +2879,12 @@ def main():
         'NeuralNetworkInspired': NeuralNetworkInspired(),
         'GraphNeuralInspired': GraphNeuralInspired(),
         'ContrastiveLearningStrategy': ContrastiveLearningStrategy(),
+        'ErgodicGrowth': ErgodicGrowth(),
+        'FisherOptimal': FisherOptimal(),
+        'DissipativeStructureRider': DissipativeStructureRider(),
+        'EntropyMinimizer': EntropyMinimizer(),
+        'LyapunovEdge': LyapunovEdge(),
+        'BoltzmannAllocation': BoltzmannAllocation(),
     }
 
     # Fallback static PORTFOLIO_STYLES (used if dynamic selection fails)
