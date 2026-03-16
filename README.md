@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.1.0-gold)
+![Version](https://img.shields.io/badge/version-3.2.0-gold)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-Proprietary-red)
 ![Status](https://img.shields.io/badge/status-Production-green)
@@ -130,18 +130,19 @@ The application will be available at `http://localhost:8501`
 
 ```
 pragyam/
-├── app.py                      # Main Streamlit application
-├── charts.py                   # Unified visualization components
+├── app.py                      # Main Streamlit application & portfolio curation
+├── charts.py                   # Unified Plotly visualization components
 ├── strategies.py               # 80+ strategy implementations
-├── advanced_strategy_selector.py  # TOPSIS & risk parity optimization
+├── strategy_selection.py       # Trigger-based strategy evaluation (REL_BREADTH)
 ├── backtest_engine.py          # Walk-forward backtesting framework
 ├── backdata.py                 # Data fetching & indicator computation
-├── pragati.py                  # Core portfolio construction logic
-├── symbols.txt                 # Universe of tradeable symbols
+├── symbols.txt                 # Universe of tradeable symbols (NSE tickers)
 ├── requirements.txt            # Python dependencies
+├── CHANGELOG.md                # Version history
 └── docs/
     ├── STRATEGY_GUIDE.md       # Strategy documentation
-    └── MATHEMATICAL_FRAMEWORK.md  # Quantitative methods
+    ├── MATHEMATICAL_FRAMEWORK.md  # Quantitative methods
+    └── PROCESS_ARCHITECTURE.md # System architecture details
 ```
 
 ### Data Flow
@@ -181,30 +182,15 @@ INFY.NS
 ...
 ```
 
-### Strategy Selection
+### Trigger Configuration
 
-Modify strategy weights in `app.py`:
-
-```python
-STRATEGY_WEIGHTS = {
-    'momentum': 0.30,
-    'mean_reversion': 0.20,
-    'volatility': 0.15,
-    'factor': 0.35
-}
-```
-
-### Regime Parameters
-
-Adjust regime detection sensitivity in `app.py`:
+Adjust trigger thresholds for buy/sell signals in `app.py` via `TRIGGER_CONFIG`:
 
 ```python
-REGIME_CONFIG = {
-    'momentum_threshold': 0.6,
-    'trend_ma_period': 200,
-    'volatility_lookback': 21,
-    'breadth_threshold': 0.5
-}
+# strategy_selection.py exposes these defaults
+SIP_TRIGGER = 0.42          # Accumulate when REL_BREADTH < threshold
+SWING_BUY_TRIGGER = 0.42    # Enter when breadth drops below
+SWING_SELL_TRIGGER = 0.50   # Exit when breadth rises above
 ```
 
 ---
@@ -231,33 +217,29 @@ REGIME_CONFIG = {
 
 ## API Reference
 
-### Core Functions
+### Core Components
 
 ```python
-# Generate portfolio for a specific date
-from pragati import generate_curated_portfolio
-
-portfolio = generate_curated_portfolio(
-    date='2024-01-15',
-    mode='sip',
-    lookback_weeks=52
-)
-
-# Run backtest
-from backtest_engine import UnifiedBacktestEngine
-
-engine = UnifiedBacktestEngine(strategies, data)
-results = engine.run_backtest(
-    start_date='2023-01-01',
-    end_date='2024-01-01',
-    rebalance_frequency='weekly'
-)
-
-# Get regime classification
+# Market regime detection
 from app import MarketRegimeDetectorV2
 
 detector = MarketRegimeDetectorV2()
 regime, mix, confidence, details = detector.detect_regime(data)
+
+# Strategy evaluation with trigger-based selection
+from strategy_selection import StrategySelectionEngine
+
+engine = StrategySelectionEngine(strategies, data, breadth_data)
+results = engine.evaluate()
+
+# Generate indicator snapshots
+from backdata import generate_historical_data
+
+snapshots = generate_historical_data(
+    symbols_to_process=["RELIANCE.NS", "TCS.NS"],
+    start_date=start,
+    end_date=end,
+)
 ```
 
 ---
@@ -290,11 +272,16 @@ This software is licensed exclusively to authorized users. Redistribution, modif
 
 ## Changelog
 
+### v3.2.0 (March 2026)
+- Code quality audit and refactoring
+- Fixed deprecated Streamlit APIs
+- Removed dead code and unused imports
+- Named loggers across all modules
+
 ### v3.1.0 (February 2026)
-- Unified chart styling (Nirnay design system)
-- Enhanced Performance & Strategy Deep Dive tabs
-- Fixed Plotly compatibility issues
-- Streamlit deprecation updates
+- Strategy selection framework with REL_BREADTH triggers
+- Unified chart styling (Hemrek design system)
+- Trigger-based backtesting (SIP & Swing modes)
 
 ### v3.0.0 (January 2026)
 - Advanced strategy selector with TOPSIS optimization
