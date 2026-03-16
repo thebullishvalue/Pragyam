@@ -14,13 +14,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import logging
-from abc import ABC, abstractmethod
+
+logger = logging.getLogger("pragyam")
 from typing import List, Dict, Tuple, Optional
 import io
 import base64
-from scipy import stats
-from sklearn.preprocessing import StandardScaler
-import time
 import warnings
 
 # --- Suppress known NumPy warnings during backtest warm-up ---
@@ -100,7 +98,7 @@ try:
     STRATEGY_SELECTION_AVAILABLE = True
 except ImportError:
     STRATEGY_SELECTION_AVAILABLE = False
-    logging.warning("strategy_selection.py not found. Trigger data must be uploaded manually.")
+    logger.warning("strategy_selection.py not found. Trigger data must be uploaded manually.")
 
 # --- Import Unified Backtest Engine for Dynamic Strategy Selection ---
 try:
@@ -112,11 +110,11 @@ try:
     DYNAMIC_SELECTION_AVAILABLE = True
 except ImportError:
     DYNAMIC_SELECTION_AVAILABLE = False
-    logging.warning("backtest_engine.py not found. Using static strategy selection.")
+    logger.warning("backtest_engine.py not found. Using static strategy selection.")
 
 
 # --- System Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('system.log'), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
@@ -538,12 +536,12 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
     Fetches and processes all historical data on-the-fly using the
     backdata.py module.
     """
-    logging.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
+    logger.info(f"--- START: Live Data Generation (End Date: {end_date.date()}, Training Lookback: {lookback_files}) ---")
     
     total_days_to_fetch = int((lookback_files + MAX_INDICATOR_PERIOD) * 12)
     fetch_start_date = end_date - timedelta(days=total_days_to_fetch)
     
-    logging.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
+    logger.info(f"Calculated fetch start date: {fetch_start_date.date()} (Total days: {total_days_to_fetch})")
 
     try:
         live_data = generate_historical_data(
@@ -553,14 +551,14 @@ def load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[
         )
         
         if not live_data:
-            logging.warning("Live data generation returned no data.")
+            logger.warning("Live data generation returned no data.")
             return []
             
-        logging.info(f"--- SUCCESS: Live Data Generation. {len(live_data)} total valid days generated. ---")
+        logger.info(f"--- SUCCESS: Live Data Generation. {len(live_data)} total valid days generated. ---")
         return live_data
         
     except Exception as e:
-        logging.error(f"Error during load_historical_data: {e}")
+        logger.error(f"Error during load_historical_data: {e}")
         st.error(f"Failed to fetch or process live data: {e}")
         return []
 
@@ -749,7 +747,7 @@ def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFr
                     if not sub_df.empty:
                         sub_ret = compute_portfolio_return(sub_df, next_df)
                         subset_performance[name][tier_name].append({'return': sub_ret, 'date': next_date})
-            except Exception as e: logging.error(f"Window Calc Error ({name}, {date}): {e}")
+            except Exception as e: logger.error(f"Window Calc Error ({name}, {date}): {e}")
     final_performance = {name: {'metrics': calculate_advanced_metrics(perf['returns'])[0], 'sharpe': calculate_advanced_metrics(perf['returns'])[0]['sharpe']} for name, perf in performance.items()}
     final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
     return {'strategy': final_performance, 'subset': final_sub_performance}
@@ -901,11 +899,11 @@ def run_trigger_based_backtest(
     Returns:
         Dictionary with strategy metrics and performance data
     """
-    logging.info(f"TRIGGER-BASED BACKTEST: {deployment_style} mode | {len(strategies)} strategies")
-    logging.info(f"  Buy: {buy_col} < {buy_threshold} | Sell: {sell_col} > {sell_threshold} (enabled={sell_enabled})")
+    logger.info(f"TRIGGER-BASED BACKTEST: {deployment_style} mode | {len(strategies)} strategies")
+    logger.info(f"  Buy: {buy_col} < {buy_threshold} | Sell: {sell_col} > {sell_threshold} (enabled={sell_enabled})")
     
     if not historical_data:
-        logging.error("No historical data provided")
+        logger.error("No historical data provided")
         return {}
     
     is_sip = 'SIP' in deployment_style
@@ -932,7 +930,7 @@ def run_trigger_based_backtest(
                 if pd.notna(val) and val < buy_threshold
             )
             buy_dates_mask = [d in buy_trigger_dates for d in simulation_dates]
-            logging.info(f"  Buy triggers found: {sum(buy_dates_mask)} days")
+            logger.info(f"  Buy triggers found: {sum(buy_dates_mask)} days")
         
         if sell_enabled and sell_col in trigger_df.columns:
             sell_trigger_dates = set(
@@ -941,10 +939,10 @@ def run_trigger_based_backtest(
                 if pd.notna(val) and val > sell_threshold
             )
             sell_dates_mask = [d in sell_trigger_dates for d in simulation_dates]
-            logging.info(f"  Sell triggers found: {sum(sell_dates_mask)} days")
+            logger.info(f"  Sell triggers found: {sum(sell_dates_mask)} days")
     else:
         # No trigger file - use simple entry on first day
-        logging.warning("No trigger data provided - using first-day entry")
+        logger.warning("No trigger data provided - using first-day entry")
         buy_dates_mask[0] = True
     
     # Run backtest for each strategy
@@ -976,9 +974,9 @@ def run_trigger_based_backtest(
                     
                     if is_buy_day:
                         buy_signal_active = True
-                    elif not is_buy_day:
+                    else:
                         buy_signal_active = False
-                    
+
                     # Check sell trigger
                     if sell_dates_mask[j] and portfolio_units:
                         trade_log.append({'Event': 'SELL', 'Date': sim_date})
@@ -1026,9 +1024,9 @@ def run_trigger_based_backtest(
                     
                     if is_buy_day:
                         buy_signal_active = True
-                    elif not is_buy_day:
+                    else:
                         buy_signal_active = False
-                    
+
                     # Check sell trigger
                     if sell_dates_mask[j] and portfolio_units:
                         trade_log.append({'Event': 'SELL', 'Date': sim_date})
@@ -1110,12 +1108,12 @@ def run_trigger_based_backtest(
                 'subset': subset_performance
             }
             
-            logging.info(f"  {name}: Return={metrics.get('total_return', 0):.1%}, "
+            logger.info(f"  {name}: Return={metrics.get('total_return', 0):.1%}, "
                         f"Sharpe={metrics.get('sharpe', 0):.2f}, "
                         f"Trades={len(trade_log)}")
         
         except Exception as e:
-            logging.error(f"Error backtesting {name}: {e}")
+            logger.error(f"Error backtesting {name}: {e}")
             all_results[name] = {
                 'metrics': {},
                 'daily_data': pd.DataFrame(),
@@ -1124,7 +1122,7 @@ def run_trigger_based_backtest(
                 'subset': {}
             }
     
-    logging.info(f"TRIGGER-BASED BACKTEST COMPLETE: {len(all_results)} strategies processed")
+    logger.info(f"TRIGGER-BASED BACKTEST COMPLETE: {len(all_results)} strategies processed")
     return all_results
 
 
@@ -1158,15 +1156,15 @@ def evaluate_historical_performance_trigger_based(
     MIN_TRAIN_DAYS = 5
     TRAINING_CAPITAL = 2500000.0
     
-    logging.info("=" * 70)
-    logging.info("WALK-FORWARD EVALUATION (TRIGGER-INTEGRATED)")
-    logging.info("=" * 70)
-    logging.info(f"  Style: {deployment_style} | Buy < {buy_threshold} | Sell >= {sell_threshold} (enabled={sell_enabled})")
-    logging.info(f"  Strategies: {list(_strategies.keys())}")
-    logging.info(f"  Data points: {len(historical_data)}")
+    logger.info("=" * 70)
+    logger.info("WALK-FORWARD EVALUATION (TRIGGER-INTEGRATED)")
+    logger.info("=" * 70)
+    logger.info(f"  Style: {deployment_style} | Buy < {buy_threshold} | Sell >= {sell_threshold} (enabled={sell_enabled})")
+    logger.info(f"  Strategies: {list(_strategies.keys())}")
+    logger.info(f"  Data points: {len(historical_data)}")
     
     if len(historical_data) < MIN_TRAIN_DAYS + 2:
-        logging.error(f"Not enough data ({len(historical_data)}) for walk-forward. Need {MIN_TRAIN_DAYS + 2}+")
+        logger.error(f"Not enough data ({len(historical_data)}) for walk-forward. Need {MIN_TRAIN_DAYS + 2}+")
         return {}
     
     # ─────────────────────────────────────────────────────────────────────
@@ -1195,10 +1193,10 @@ def evaluate_historical_performance_trigger_based(
                 if sell_enabled and breadth >= sell_threshold:
                     sell_mask[i] = True
         
-        logging.info(f"  Trigger masks: {sum(buy_mask)} buy days, {sum(sell_mask)} sell days")
+        logger.info(f"  Trigger masks: {sum(buy_mask)} buy days, {sum(sell_mask)} sell days")
     else:
         # No trigger data: treat every day as active (standard walk-forward)
-        logging.warning("  No trigger data: using standard walk-forward (every day active)")
+        logger.warning("  No trigger data: using standard walk-forward (every day active)")
         for i in range(len(historical_data)):
             buy_mask[i] = True
     
@@ -1220,7 +1218,7 @@ def evaluate_historical_performance_trigger_based(
     
     if total_steps <= 0:
         progress_bar.empty()
-        logging.error("Not enough data for walk-forward steps")
+        logger.error("Not enough data for walk-forward steps")
         return {}
     
     step_count = 0
@@ -1263,7 +1261,7 @@ def evaluate_historical_performance_trigger_based(
                         weight_entropies.append(entropy)
                         
             except Exception as e:
-                logging.error(f"Walk-forward curation error ({test_date}): {e}")
+                logger.error(f"Walk-forward curation error ({test_date}): {e}")
                 oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
         else:
             # Non-trigger day: portfolio held, compute return from previous positions
@@ -1284,7 +1282,7 @@ def evaluate_historical_performance_trigger_based(
                 else:
                     oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
             except Exception as e:
-                logging.error(f"OOS Strategy Error ({name}, {test_date}): {e}")
+                logger.error(f"OOS Strategy Error ({name}, {test_date}): {e}")
                 oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
     
     progress_bar.empty()
@@ -1306,11 +1304,11 @@ def evaluate_historical_performance_trigger_based(
     # Tier-level performance from full history
     full_history_subset_perf = _calculate_performance_on_window(historical_data, _strategies, TRAINING_CAPITAL)['subset']
     
-    logging.info("=" * 70)
+    logger.info("=" * 70)
     curated_metrics = final_oos_perf.get('System_Curated', {}).get('metrics', {})
-    logging.info(f"WALK-FORWARD COMPLETE | System_Curated CAGR: {curated_metrics.get('annual_return', 0):.1%} | "
+    logger.info(f"WALK-FORWARD COMPLETE | System_Curated CAGR: {curated_metrics.get('annual_return', 0):.1%} | "
                  f"Sharpe: {curated_metrics.get('sharpe', 0):.2f} | MaxDD: {curated_metrics.get('max_drawdown', 0):.1%}")
-    logging.info("=" * 70)
+    logger.info("=" * 70)
     
     return {
         'strategy': final_oos_perf,
@@ -1382,7 +1380,7 @@ def evaluate_historical_performance(
                     entropy = -np.sum(valid_w * np.log2(valid_w))
                     weight_entropies.append(entropy)
         except Exception as e:
-            logging.error(f"OOS Curation Error ({test_date.date()}): {e}")
+            logger.error(f"OOS Curation Error ({test_date.date()}): {e}")
             oos_perf['System_Curated']['returns'].append({'return': 0, 'date': next_date})
         
         for name, strategy in _strategies.items():
@@ -1393,7 +1391,7 @@ def evaluate_historical_performance(
                     'date': next_date
                 })
             except Exception as e:
-                logging.error(f"OOS Strategy Error ({name}, {test_date.date()}): {e}")
+                logger.error(f"OOS Strategy Error ({name}, {test_date.date()}): {e}")
                 oos_perf[name]['returns'].append({'return': 0, 'date': next_date})
     
     progress_bar.empty()
@@ -1800,7 +1798,7 @@ def get_market_mix_suggestion_v3(end_date: datetime) -> Tuple[str, str, float, D
         return mix_name, details['explanation'], confidence, details
 
     except Exception as e:
-        logging.error(f"Error in get_market_mix_suggestion_v3: {e}")
+        logger.error(f"Error in get_market_mix_suggestion_v3: {e}")
         return (
             "Bull Market Mix",
             f"⚠️ Error during regime detection: {e}. Defaulting to Bull Mix.",
@@ -1835,7 +1833,7 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     )
     fig.update_xaxes(gridcolor='rgba(255,255,255,0.05)')
     fig.update_yaxes(gridcolor='rgba(255,255,255,0.05)')
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def _section_header(title: str, subtitle: str = "") -> str:
     """Generate Swing-style section header HTML."""
@@ -1984,7 +1982,7 @@ def display_performance_metrics(performance: Dict):
             fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title_text="Portfolio Value", row=1, col=1, range=[y_min, y_max])
             fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title_text="Drawdown", tickformat='.0%', row=2, col=1)
         
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
     
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 3: EXTENDED RISK METRICS
@@ -2066,7 +2064,7 @@ def display_performance_metrics(performance: Dict):
             fig_rolling.update_xaxes(gridcolor='rgba(255,255,255,0.05)')
             fig_rolling.update_yaxes(gridcolor='rgba(255,255,255,0.05)', zeroline=True, zerolinecolor='#888888', title='Ratio')
         
-        st.plotly_chart(fig_rolling, width="stretch")
+        st.plotly_chart(fig_rolling, use_container_width=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 5: STRATEGY ATTRIBUTION
@@ -2099,7 +2097,7 @@ def display_performance_metrics(performance: Dict):
         df_display['Max DD'] = df_display['Max DD'].apply(lambda x: f"{x:.1%}")
         df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.0%}")
         
-        st.dataframe(df_display, width="stretch", hide_index=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 6: STRATEGY CORRELATION
@@ -2157,7 +2155,7 @@ def display_performance_metrics(performance: Dict):
             )
             fig_corr.update_layout(margin=dict(l=100, r=40, t=50, b=40))
         
-        st.plotly_chart(fig_corr, width="stretch")
+        st.plotly_chart(fig_corr, use_container_width=True)
         
         off_diag_mask = ~np.eye(len(corr_matrix), dtype=bool)
         avg_corr = corr_matrix.values[off_diag_mask].mean()
@@ -2180,7 +2178,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
     if UNIFIED_CHARTS_AVAILABLE:
         fig = create_tier_sharpe_heatmap(subset_perf, strategy_options)
         if fig:
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
             
             # Add insights
             all_values = []
@@ -2249,7 +2247,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
         margin=dict(l=10, r=10, t=50, b=40),
         title=dict(text="Sharpe Ratio by 10-Stock Tier", font=dict(size=11, color='#888888'), x=0, xanchor='left')
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def display_subset_weight_evolution(subset_weights_history: List[Dict], strategies: List[str]):
     if not subset_weights_history:
@@ -3044,7 +3042,7 @@ def main():
                             # Show recent data preview
                             recent = breadth_df.tail(5).copy()
                             recent['DATE'] = recent['DATE'].dt.strftime('%Y-%m-%d')
-                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, width='stretch')
+                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, use_container_width=True)
                         else:
                             st.warning("⚠️ No data from Google Sheets. Using first-day entry fallback.")
                     except Exception as e:
@@ -3119,7 +3117,7 @@ def main():
         st.session_state.trigger_df = trigger_df
         st.session_state.trigger_config = trigger_config
 
-        if st.button("Run Analysis", width='stretch', type="primary"):
+        if st.button("Run Analysis", use_container_width=True, type="primary"):
             
             lookback_files = 100
             
@@ -3145,12 +3143,12 @@ def main():
             progress_bar.progress(0.05, text="Fetching market data...")
             status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols")
             
-            logging.info("=" * 70)
-            logging.info("PRAGYAM ANALYSIS ENGINE v2.1")
-            logging.info("=" * 70)
-            logging.info(f"[PHASE 1/4] DATA FETCHING")
-            logging.info(f"  Symbols: {len(SYMBOLS_UNIVERSE)}")
-            logging.info(f"  Period: {fetch_start_date.date()} to {selected_date_dt.date()}")
+            logger.info("=" * 70)
+            logger.info("PRAGYAM ANALYSIS ENGINE v2.1")
+            logger.info("=" * 70)
+            logger.info(f"[PHASE 1/4] DATA FETCHING")
+            logger.info(f"  Symbols: {len(SYMBOLS_UNIVERSE)}")
+            logger.info(f"  Period: {fetch_start_date.date()} to {selected_date_dt.date()}")
             
             all_historical_data = load_historical_data(selected_date_dt, lookback_files)
             
@@ -3161,7 +3159,7 @@ def main():
                 st.stop()
 
             progress_bar.progress(0.20, text="Data loaded. Preparing...")
-            logging.info(f"  Result: {len(all_historical_data)} trading days loaded")
+            logger.info(f"  Result: {len(all_historical_data)} trading days loaded")
 
             current_date, current_df = all_historical_data[-1]
             training_data = all_historical_data[:-1]
@@ -3201,14 +3199,14 @@ def main():
             trigger_df = st.session_state.get('trigger_df', None)
             trigger_config = st.session_state.get('trigger_config', TRIGGER_CONFIG.get(selected_main_branch, {}))
             
-            logging.info("-" * 70)
-            logging.info(f"[PHASE 2/4] DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
-            logging.info(f"  Investment Style: {selected_main_branch}")
-            logging.info(f"  Market Regime: {final_mix_to_use}")
-            logging.info(f"  Trigger Mode: {use_trigger}")
+            logger.info("-" * 70)
+            logger.info(f"[PHASE 2/4] DYNAMIC STRATEGY SELECTION (TRIGGER-BASED)")
+            logger.info(f"  Investment Style: {selected_main_branch}")
+            logger.info(f"  Market Regime: {final_mix_to_use}")
+            logger.info(f"  Trigger Mode: {use_trigger}")
             if use_trigger:
-                logging.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
-                logging.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
+                logger.info(f"  Buy Threshold: {trigger_config.get('buy_threshold', 0.42)}")
+                logger.info(f"  Sell Enabled: {trigger_config.get('sell_enabled', False)}")
             
             dynamic_strategies, strategy_metrics = _run_dynamic_strategy_selection(
                 training_data_window_with_current, 
@@ -3227,12 +3225,12 @@ def main():
             if dynamic_strategies and len(dynamic_strategies) >= 4:
                 style_strategies = dynamic_strategies
                 selection_mode = "DYNAMIC"
-                logging.info(f"  Mode: DYNAMIC - Selected {len(dynamic_strategies)} strategies")
+                logger.info(f"  Mode: DYNAMIC - Selected {len(dynamic_strategies)} strategies")
                 st.toast(f"Selected: {', '.join(style_strategies[:2])}...", icon="✅")
             else:
                 style_strategies = PORTFOLIO_STYLES[selected_main_branch]["mixes"][final_mix_to_use]['strategies']
                 selection_mode = "STATIC"
-                logging.info(f"  Mode: STATIC (fallback) - Using predefined strategies")
+                logger.info(f"  Mode: STATIC (fallback) - Using predefined strategies")
                 st.toast(f"Using default strategies", icon="ℹ️")
             
             # Filter to only available strategies
@@ -3244,7 +3242,7 @@ def main():
                 st.error(f"None of the selected strategies are available: {style_strategies}")
                 st.stop()
             
-            logging.info(f"  Strategies for execution: {list(strategies_to_run.keys())}")
+            logger.info(f"  Strategies for execution: {list(strategies_to_run.keys())}")
             
             # ═══════════════════════════════════════════════════════════════════
             # PHASE 3: WALK-FORWARD PORTFOLIO CURATION (Pure — No Triggers)
@@ -3269,12 +3267,12 @@ def main():
             progress_bar.progress(0.65, text="Running walk-forward portfolio curation...")
             status_text.text(f"Walk-forward: {len(strategies_to_run)} strategies over {len(phase3_data)} days...")
             
-            logging.info("-" * 70)
-            logging.info(f"[PHASE 3/4] WALK-FORWARD PORTFOLIO CURATION (PURE)")
-            logging.info(f"  Mode: {selected_main_branch}")
-            logging.info(f"  Strategies: {list(strategies_to_run.keys())}")
-            logging.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
-            logging.info(f"  Method: Daily rebalancing walk-forward (no trigger dependency)")
+            logger.info("-" * 70)
+            logger.info(f"[PHASE 3/4] WALK-FORWARD PORTFOLIO CURATION (PURE)")
+            logger.info(f"  Mode: {selected_main_branch}")
+            logger.info(f"  Strategies: {list(strategies_to_run.keys())}")
+            logger.info(f"  Phase 3 Window: {len(phase3_data)} days (of {len(training_data_window_with_current)} total)")
+            logger.info(f"  Method: Daily rebalancing walk-forward (no trigger dependency)")
             
             st.session_state.performance = evaluate_historical_performance(strategies_to_run, phase3_data)
             
@@ -3285,10 +3283,10 @@ def main():
                 progress_bar.progress(0.90, text="Curating final portfolio...")
                 status_text.text("Optimizing position weights...")
                 
-                logging.info("-" * 70)
-                logging.info(f"[PHASE 4/4] PORTFOLIO CURATION")
-                logging.info(f"  Capital: ₹{capital:,}")
-                logging.info(f"  Max Positions: {num_positions}")
+                logger.info("-" * 70)
+                logger.info(f"[PHASE 4/4] PORTFOLIO CURATION")
+                logger.info(f"  Capital: ₹{capital:,}")
+                logger.info(f"  Max Positions: {num_positions}")
                 
                 st.session_state.portfolio, _, _ = curate_final_portfolio(
                     strategies_to_run,
@@ -3303,12 +3301,11 @@ def main():
                 progress_bar.progress(1.0, text="Complete!")
                 status_text.text(f"Portfolio: {len(st.session_state.portfolio)} positions")
                 
-                logging.info(f"  Result: {len(st.session_state.portfolio)} positions curated")
-                logging.info("=" * 70)
-                logging.info(f"ANALYSIS COMPLETE | Mode: {selection_mode} | Strategies: {len(strategies_to_run)} | Positions: {len(st.session_state.portfolio)}")
-                logging.info("=" * 70)
+                logger.info(f"  Result: {len(st.session_state.portfolio)} positions curated")
+                logger.info("=" * 70)
+                logger.info(f"ANALYSIS COMPLETE | Mode: {selection_mode} | Strategies: {len(strategies_to_run)} | Positions: {len(st.session_state.portfolio)}")
+                logger.info("=" * 70)
                 
-                time.sleep(0.5)
                 progress_bar.empty()
                 status_text.empty()
                 
@@ -3483,7 +3480,7 @@ def main():
                             coloraxis_colorbar=dict(title="Sharpe")
                         )
                         fig_tier.update_layout(margin=dict(l=120, r=20, t=50, b=40))
-                        st.plotly_chart(fig_tier, width="stretch")
+                        st.plotly_chart(fig_tier, use_container_width=True)
                         
                         # Tier insights — metric cards
                         tier_means = df_heatmap.mean(axis=0)
@@ -3590,7 +3587,7 @@ def main():
                                 range=[df_scatter['CAGR_pct'].min() - cagr_pad, df_scatter['CAGR_pct'].max() + cagr_pad]
                             )
                         
-                        st.plotly_chart(fig_scatter, width="stretch")
+                        st.plotly_chart(fig_scatter, use_container_width=True)
                 
                 with col_radar:
                     st.markdown("#### Factor Fingerprint")
@@ -3656,7 +3653,7 @@ def main():
                                 title=dict(text="Multi-Factor Strategy Comparison", font=dict(size=11, color='#888888'), x=0, xanchor='left')
                             )
                         
-                        st.plotly_chart(fig_radar, width="stretch")
+                        st.plotly_chart(fig_radar, use_container_width=True)
                 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 3: TIER ALLOCATION HISTORY
@@ -3680,7 +3677,7 @@ def main():
                 if strategies_for_heatmap and st.session_state.current_df is not None:
                     heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
                     if heatmap_fig:
-                        st.plotly_chart(heatmap_fig, width="stretch")
+                        st.plotly_chart(heatmap_fig, use_container_width=True)
                     
                     signal_counts = {}
                     for name, s in strategies_for_heatmap.items():
@@ -3756,7 +3753,7 @@ def main():
                     df_display['T1 Sharpe'] = df_display['T1 Sharpe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
                     df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}")
                     
-                    st.dataframe(df_display, width="stretch", hide_index=True)
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # TAB 4: STRATEGY METRICS - Comprehensive Backtest Results
@@ -3837,7 +3834,7 @@ def main():
                         except ImportError:
                             pass
                     
-                    st.dataframe(styled_df, width='stretch', hide_index=True)
+                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
                     
                     csv_data = df_metrics.to_csv(index=False)
                     st.download_button(
@@ -3914,7 +3911,7 @@ def main():
                         except ImportError:
                             pass
                         
-                        st.dataframe(styled_all, width='stretch', hide_index=True, height=600)
+                        st.dataframe(styled_all, use_container_width=True, hide_index=True, height=600)
                         st.caption(f"Showing {len(df_all)} strategies evaluated in Phase 2 (trigger-based backtest). ✅ = selected for portfolio curation.")
                         
                         all_csv = df_all.to_csv(index=False)

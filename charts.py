@@ -116,9 +116,9 @@ def get_chart_layout(
 
 def get_axis_config(
     title: str = "",
-    tickformat: str = None,
+    tickformat: Optional[str] = None,
     showgrid: bool = True,
-    zeroline: bool = False
+    zeroline: bool = False,
 ) -> dict:
     """Get standardized axis configuration."""
     config = {

@@ -32,10 +32,9 @@ from typing import Dict, List, Tuple, Optional, Any
 import logging
 import warnings
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Mean of empty slice')
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("StrategySelection")
 
 
@@ -665,12 +664,13 @@ def execute_swing_mode(
                 max_dd = 0
                 calmar = 0
             
+            n_closed = len(closed)
             results[strategy_name] = {
                 'mode': 'Swing',
                 'buy_trigger': f'REL_BREADTH < {SWING_BUY_TRIGGER}',
                 'sell_trigger': f'REL_BREADTH >= {SWING_SELL_TRIGGER}',
-                'completed_trades': len(closed) if 'closed' in dir() else 0,
-                'open_trades': len(df_cycles) - (len(closed) if 'closed' in dir() else 0),
+                'completed_trades': n_closed,
+                'open_trades': len(df_cycles) - n_closed,
                 'avg_return_per_trade': avg_return,
                 'total_return': total_return,
                 'win_rate': win_rate,

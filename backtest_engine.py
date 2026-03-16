@@ -18,18 +18,9 @@ Author: Hemrek Capital
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import List, Tuple, Dict, Optional, Any
+from typing import Callable, Dict, List, Optional, Tuple, Any
 import logging
-from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import hashlib
 
-# --- Setup Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 logger = logging.getLogger("BacktestEngine")
 
 
@@ -173,26 +164,25 @@ class PerformanceMetrics:
 
 class DataCacheManager:
     """
-    Manages shared data caching to avoid redundant API calls.
-    Thread-safe singleton pattern for cross-module data sharing.
+    In-memory data cache to avoid redundant API calls.
+
+    Implements a singleton pattern so every caller shares one cache.
     """
-    
-    _instance = None
-    _cache: Dict[str, Any] = {}
-    _cache_timestamps: Dict[str, datetime] = {}
-    _cache_ttl_minutes: int = 30  # Cache TTL in minutes
-    
-    def __new__(cls):
+
+    _instance: Optional["DataCacheManager"] = None
+    _CACHE_TTL_MINUTES: int = 30
+
+    def __new__(cls) -> "DataCacheManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._cache = {}
-            cls._instance._cache_timestamps = {}
+            cls._instance._cache: Dict[str, Any] = {}
+            cls._instance._cache_timestamps: Dict[str, datetime] = {}
         return cls._instance
-    
-    def _generate_key(self, symbols: List[str], start_date: datetime, end_date: datetime) -> str:
-        """Generate unique cache key from parameters."""
-        key_str = f"{'-'.join(sorted(symbols))}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
-        return hashlib.md5(key_str.encode()).hexdigest()
+
+    @staticmethod
+    def _generate_key(symbols: List[str], start_date: datetime, end_date: datetime) -> str:
+        """Deterministic cache key from query parameters."""
+        return f"{'-'.join(sorted(symbols))}_{start_date:%Y%m%d}_{end_date:%Y%m%d}"
     
     def get(self, symbols: List[str], start_date: datetime, end_date: datetime) -> Optional[List[Tuple[datetime, pd.DataFrame]]]:
         """Retrieve cached data if valid."""
@@ -200,7 +190,7 @@ class DataCacheManager:
         
         if key in self._cache:
             cached_time = self._cache_timestamps.get(key)
-            if cached_time and (datetime.now() - cached_time).total_seconds() < self._cache_ttl_minutes * 60:
+            if cached_time and (datetime.now() - cached_time).total_seconds() < self._CACHE_TTL_MINUTES * 60:
                 logger.info(f"Cache HIT for key: {key[:8]}...")
                 return self._cache[key]
             else:
@@ -261,7 +251,7 @@ class UnifiedBacktestEngine:
         start_date: datetime,
         end_date: datetime,
         use_cache: bool = True,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[Callable] = None
     ) -> List[Tuple[datetime, pd.DataFrame]]:
         """
         Load historical data using Pragyam's backdata module.
@@ -365,7 +355,7 @@ class UnifiedBacktestEngine:
         sell_col: Optional[str] = None,
         buy_threshold: float = 0.42,
         sell_threshold: float = 0.52,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[Callable] = None
     ) -> Dict[str, Dict]:
         """
         Run backtest on all loaded strategies.
@@ -657,7 +647,7 @@ class DynamicPortfolioStylesGenerator:
         external_trigger_df: Optional[pd.DataFrame] = None,
         buy_col: Optional[str] = None,
         sell_col: Optional[str] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[Callable] = None
     ) -> Tuple[Dict, Dict]:
         """
         Run backtests for both SIP and Swing modes.
@@ -820,7 +810,7 @@ def initialize_backtest_engine(
     start_date: datetime,
     end_date: datetime,
     capital: float = 10_000_000,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[Callable] = None
 ) -> Tuple[UnifiedBacktestEngine, DynamicPortfolioStylesGenerator]:
     """
     Initialize and configure the backtest engine with data.
@@ -860,7 +850,7 @@ def get_dynamic_portfolio_styles(
     buy_col: Optional[str] = None,
     sell_col: Optional[str] = None,
     n_strategies: int = 4,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[Callable] = None
 ) -> Dict[str, Dict]:
     """
     Main entry point: Generate dynamic PORTFOLIO_STYLES based on backtest.

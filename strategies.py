@@ -2,19 +2,14 @@ import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import List
-import io
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 import logging
 
-# --- Base Classes and Utilities ---
-# Note: Copied from pragati.py to make this module self-contained.
+logger = logging.getLogger("strategies")
 
-def fix_csv_export(df: pd.DataFrame) -> bytes:
-    """Utility (though not used by strategies directly) kept for potential future module use."""
-    output = io.BytesIO()
-    df.to_csv(output, index=False, encoding='utf-8-sig')
-    return output.getvalue()
+# --- Base Classes and Utilities ---
+
 
 class BaseStrategy(ABC):
     @abstractmethod
@@ -476,7 +471,7 @@ class CL1Strategy(BaseStrategy):
             portfolio_df = analyzer.allocate_portfolio(df_prepared, sip_amount)
             return self._allocate_portfolio(portfolio_df, sip_amount)
         except Exception as e:
-            logging.error(f"Error in CL1Strategy portfolio generation: {str(e)}")
+            logger.error(f"Error in CL1Strategy portfolio generation: {str(e)}")
             raise
 
 # =====================================
@@ -933,7 +928,7 @@ class CL2Strategy(BaseStrategy):
             return self._allocate_portfolio(portfolio_df, sip_amount)
 
         except Exception as e:
-            logging.error(f"Error in CL2Strategy portfolio generation: {str(e)}")
+            logger.error(f"Error in CL2Strategy portfolio generation: {str(e)}")
             raise
 
 # =====================================
@@ -1283,7 +1278,7 @@ class CL3Strategy(BaseStrategy):
             return self._allocate_portfolio(portfolio_df, sip_amount)
 
         except Exception as e:
-            logging.error(f"Error in CL3Strategy portfolio generation: {str(e)}")
+            logger.error(f"Error in CL3Strategy portfolio generation: {str(e)}")
             raise
 
 # =====================================

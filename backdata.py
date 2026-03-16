@@ -1,31 +1,26 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import warnings
 import os
-import zipfile
-import shutil
 from typing import List, Tuple, Dict, Any
 import logging
 
-# --- Setup Logging ---
-# Note: This basicConfig will also apply when imported by pragati.py
-# This is fine, as pragati.py sets its own handlers.
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("backdata")
 
-# --- Suppress yfinance warnings for cleaner output ---
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-# --- Standalone LiquidityOscillator Class (Unchanged) ---
 class LiquidityOscillator:
-    """
-    Calculates the 'Liquidity Oscillator' indicator.
-    """
+    """Calculates the Liquidity Oscillator indicator."""
+
     def __init__(self, length: int = 20, impact_window: int = 3):
         if length <= 0 or impact_window <= 0:
-            raise ValueError("Length and impact_window must be positive integers.")
+            raise ValueError("length and impact_window must be positive integers.")
         self.length = length
         self.impact_window = impact_window
 
@@ -50,35 +45,41 @@ class LiquidityOscillator:
         oscillator = 200 * (df['source_value'] - df['lowest_value']) / safe_range_value - 100
         return oscillator.rename('liquidity_oscillator')
 
-# --- Helper & Data Fetching Functions (Unchanged) ---
-def resample_data(df, rule='W-FRI'):
-    """Resamples daily OHLCV data to a different timeframe."""
+def resample_data(df: pd.DataFrame, rule: str = 'W-FRI') -> pd.DataFrame:
+    """Resample daily OHLCV data to a different timeframe."""
     if df.empty or not isinstance(df.index, pd.DatetimeIndex):
         return pd.DataFrame()
-    logic = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
-    return df.resample(rule).apply(logic).dropna()
+    agg_map = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
+    return df.resample(rule).agg(agg_map).dropna()
 
-def calculate_rsi(data, period=14):
-    """Calculates Relative Strength Index (RSI)."""
+
+def calculate_rsi(data: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Calculate Relative Strength Index (RSI) using Wilder's smoothing."""
     if data.empty or 'close' not in data.columns or len(data) < period:
         return pd.Series(index=data.index, dtype=float)
+
     delta = data['close'].diff(1)
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+
     avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
-    
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    rsi[avg_loss == 0] = 100.0
+
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    rsi = rsi.fillna(100.0)  # avg_loss == 0 means all gains → RSI = 100
     return rsi
 
-# --- Core Logic for Pre-Calculating All Indicators ---
-def calculate_all_indicators(symbol_data, oscillator_calculator):
+def calculate_all_indicators(
+    symbol_data: pd.DataFrame,
+    oscillator_calculator: LiquidityOscillator
+) -> pd.DataFrame | None:
     """
-    Calculates all indicators for a single symbol's *entire* history
-    and returns a single DataFrame.
+    Calculate all indicators for a single symbol's full history.
+
+    Returns a DataFrame indexed by date with columns for price, returns,
+    oscillators, RSI, moving averages, deviations, and z-scores across
+    daily and weekly timeframes.  Returns ``None`` on empty input.
     """
     daily_data = symbol_data.copy()
     if daily_data.empty:
@@ -126,32 +127,19 @@ def calculate_all_indicators(symbol_data, oscillator_calculator):
     return all_results_df
 
 
-# --- *** NEW: Refactored Core Generation Logic *** ---
-
-# --- Load symbols from file ---
 def load_symbols_from_file(filepath: str = "symbols.txt") -> List[str]:
-    """
-    Loads a list of symbols from a text file.
-    """
+    """Load a list of stock symbols from a text file (one per line)."""
     if not os.path.exists(filepath):
-        logging.error(f"Symbol file not found at: {filepath}")
-        try:
-            st.error(f"Symbol file not found: {filepath}")
-        except Exception:
-            pass
+        logger.error("Symbol file not found at: %s", filepath)
         return []
-    
+
     try:
         with open(filepath, 'r') as f:
             symbols = [line.strip().upper() for line in f if line.strip()]
-        logging.info(f"Loaded {len(symbols)} symbols from {filepath}")
+        logger.info("Loaded %d symbols from %s", len(symbols), filepath)
         return symbols
     except Exception as e:
-        logging.error(f"Error reading symbol file {filepath}: {e}")
-        try:
-            st.error(f"Error reading symbol file: {e}")
-        except Exception:
-            pass
+        logger.error("Error reading symbol file %s: %s", filepath, e)
         return []
 
 # Load the fixed universe
@@ -175,77 +163,57 @@ MAX_INDICATOR_PERIOD = max(INDICATOR_PERIODS)
 
 
 def generate_historical_data(
-    symbols_to_process: List[str], 
-    start_date: datetime, 
-    end_date: datetime
+    symbols_to_process: List[str],
+    start_date: datetime,
+    end_date: datetime,
 ) -> List[Tuple[datetime, pd.DataFrame]]:
     """
-    Generates historical indicator snapshots for a list of symbols
-    and returns them in the format required by Pragati.
-    
+    Generate historical indicator snapshots for a list of symbols.
+
     Args:
-        symbols_to_process: List of stock ticker symbols.
-        start_date: The beginning of the date range for data download.
-        end_date: The end of the date range for snapshot generation.
-        
+        symbols_to_process: Stock ticker symbols (e.g. ``["RELIANCE.NS"]``).
+        start_date: Beginning of the download window (must include warmup).
+        end_date: End of the snapshot window.
+
     Returns:
-        A list of tuples: [(date, DataFrame), (date, DataFrame), ...]
+        Chronologically ordered list of ``(date, indicator_df)`` tuples.
     """
-    
     if not symbols_to_process:
-        try:
-            st.error("Error: No symbols provided to generate_historical_data.")
-        except Exception:
-            logging.error("Error: No symbols provided to generate_historical_data.")
+        logger.error("No symbols provided to generate_historical_data.")
         return []
-        
-    # 1. --- Download Data ---
-    # The start_date and end_date are now calculated *before* calling this function.
-    
+
+    # --- Download ---
     try:
-        # Spinner is now handled in pragati.py
-        logging.info(f"--- yfinance: Attempting to download {len(symbols_to_process)} symbols...")
+        logger.info("yfinance: downloading %d symbols...", len(symbols_to_process))
         all_data = yf.download(
-            symbols_to_process, 
-            start=start_date, 
-            end=end_date + timedelta(days=1), # yf is end-exclusive
-            progress=False
-            # --- REMOVED 'raise_errors' and 'repair' ---
-            # --- These arguments are not supported in your yfinance version ---
+            symbols_to_process,
+            start=start_date,
+            end=end_date + timedelta(days=1),  # yfinance is end-exclusive
+            progress=False,
         )
     except Exception as e:
-         logging.error(f"yf.download failed: {e}")
-         all_data = pd.DataFrame() # Ensure all_data is a DataFrame
+        logger.error("yf.download failed: %s", e)
+        all_data = pd.DataFrame()
 
     if all_data.empty or all_data['Close'].dropna(how='all').empty:
-        logging.error("yf.download returned an empty dataframe or all-NaN Close data.")
-        try:
-            st.error("Could not download any data. Check symbols or date range.")
-        except Exception:
-            print("ERROR: Could not download any data. Check symbols or date range.")
+        logger.error("yf.download returned empty or all-NaN Close data.")
         return []
-    
-    # --- Clean up failed tickers ---
+
+    # --- Remove failed tickers ---
     if len(symbols_to_process) > 1:
         valid_tickers = all_data['Close'].dropna(how='all', axis=1).columns
         invalid_tickers = [s for s in symbols_to_process if s not in valid_tickers]
-        
+
         if invalid_tickers:
-            warning_msg = f"Failed to download data for: {', '.join(invalid_tickers)}. They will be skipped."
-            logging.warning(warning_msg)
-            try:
-                st.warning(warning_msg)
-            except Exception:
-                print(warning_msg)
-                
+            logger.warning("Skipping tickers with no data: %s", ", ".join(invalid_tickers))
             all_data = all_data.loc[:, (slice(None), valid_tickers)]
             symbols_to_process = list(valid_tickers)
-            
+
             if not symbols_to_process:
-                logging.error("No valid tickers remaining after download.")
+                logger.error("No valid tickers remaining after download.")
                 return []
-    
-    logging.info(f"yf.download successful. Data shape: {all_data.shape}. Valid tickers: {len(symbols_to_process)}")
+
+    logger.info("Download OK. Shape: %s, tickers: %d", all_data.shape, len(symbols_to_process))
 
     all_data.columns.names = ['Indicator', 'Symbol']
     oscillator_calculator = LiquidityOscillator(length=20, impact_window=3)
@@ -272,11 +240,8 @@ def generate_historical_data(
                 indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator)
                 ticker_indicator_cache[ticker] = indicators_df
                 
-        except (pd.errors.DataError, KeyError, IndexError):
-            try:
-                st.warning(f"⚠️ Skipping {ticker} due to a data quality error during indicator calculation.")
-            except Exception:
-                print(f"⚠️ Skipping {ticker} due to a data quality error during indicator calculation.")
+        except (pd.errors.DataError, KeyError, IndexError) as e:
+            logger.warning("Skipping %s: data quality error during indicator calculation (%s)", ticker, e)
             continue
 
     # 3. --- Generate Daily Snapshots in Memory ---
@@ -307,7 +272,7 @@ def generate_historical_data(
 
                 indicators = indicator_row.to_dict()
                 indicators['symbol'] = ticker.replace('.NS', '')
-                indicators['date'] = snapshot_date.strftime('%dth %b')
+                indicators['date'] = snapshot_date.strftime('%d %b')
                 indicators['% change'] = indicators['% change'] * 100
                 
                 daily_results.append(indicators)
@@ -326,10 +291,12 @@ def generate_historical_data(
     return pragati_data_list
 
 
-# --- Main Application UI and Logic ---
-# This remains so the app can be run standalone
 def main():
-    # --- PAGE CONFIG MOVED HERE ---
+    """Standalone Streamlit UI for generating indicator snapshots."""
+    import streamlit as st
+    import zipfile
+    import shutil
+
     st.set_page_config(
         page_title="Indicator Snapshot Generator (Optimized)",
         page_icon="⚡",
@@ -365,10 +332,9 @@ def main():
         else:
             symbols_to_process = SYMBOLS_UNIVERSE
             
-            # --- UPDATED: Calculate fetch_start_date for standalone run ---
             fetch_start_date = start_date - timedelta(days=int(MAX_INDICATOR_PERIOD * 1.5) + 30)
-            
-            with st.spinner(f"Generating historical data from {fetch_start_date.date()} to {end_date.date()}..."):
+
+            with st.spinner(f"Generating historical data from {fetch_start_date} to {end_date}..."):
                 all_generated_data = generate_historical_data(
                     symbols_to_process, 
                     fetch_start_date, # Pass the earlier date for indicator warmup
