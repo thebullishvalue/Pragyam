@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,7 +29,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid valu
 # --- Import Unified Chart Components ---
 try:
     from charts import (
-        COLORS, get_chart_layout, get_axis_config,
+        COLORS, get_chart_layout,
         create_equity_drawdown_chart, create_rolling_metrics_chart,
         create_correlation_heatmap, create_tier_sharpe_heatmap,
         create_risk_return_scatter, create_factor_radar,
@@ -47,31 +47,7 @@ except ImportError:
 
 # --- Import Strategies from strategies.py ---
 try:
-    from strategies import (
-        BaseStrategy, PRStrategy, CL1Strategy, CL2Strategy, CL3Strategy, MOM1Strategy, MOM2Strategy,
-        MomentumMasters, VolatilitySurfer, AdaptiveVolBreakout, VolReversalHarvester, AlphaSurge,
-        ReturnPyramid, MomentumCascade, AlphaVortex, SurgeSentinel, VelocityVortex, BreakoutAlphaHunter,
-        ExtremeMomentumBlitz, HyperAlphaIgniter, VelocityApocalypse, QuantumMomentumLeap,
-        NebulaMomentumStorm, ResonanceEcho, DivergenceMirage, FractalWhisper, InterferenceWave,
-        ShadowPuppet, EntangledMomentum, ButterflyChaos, SynapseFiring, HolographicMomentum,
-        WormholeTemporal, SymbioticAlpha, PhononVibe, HorizonEvent, EscherLoop, MicrowaveCosmic,
-        SingularityMomentum, MultiverseAlpha, EternalReturnCycle, DivineMomentumOracle,
-        CelestialAlphaForge, InfiniteMomentumLoop, GodParticleSurge, NirvanaMomentumWave,
-        PantheonAlphaRealm, ZenithMomentumPeak, OmniscienceReturn, ApotheosisMomentum,
-        TranscendentAlpha, TurnaroundSniper, MomentumAccelerator, VolatilityRegimeTrader,
-        CrossSectionalAlpha, DualMomentum, AdaptiveZScoreEngine, MomentumDecayModel,
-        InformationRatioOptimizer, BayesianMomentumUpdater, RelativeStrengthRotator,
-        VolatilityAdjustedValue, NonlinearMomentumBlender, EntropyWeightedSelector,
-        KalmanFilterMomentum, MeanVarianceOptimizer, RegimeSwitchingStrategy, FractalMomentumStrategy,
-        CopulaBlendStrategy, WaveletDenoiser, GradientBoostBlender, AttentionMechanism,
-        EnsembleVotingStrategy, OptimalTransportBlender, StochasticDominance, MaximumEntropyStrategy,
-        HiddenMarkovModel, QuantileRegressionStrategy, MutualInformationBlender, GameTheoreticStrategy,
-        ReinforcementLearningInspired, SpectralClusteringStrategy, CausalInferenceStrategy,
-        BootstrapConfidenceStrategy, KernelDensityStrategy, SurvivalAnalysisStrategy,
-        PrincipalComponentStrategy, FactorMomentumStrategy, ElasticNetBlender, RobustRegressionStrategy,
-        ConvexOptimizationStrategy, MonteCarloStrategy, VariationalInferenceStrategy,
-        NeuralNetworkInspired, GraphNeuralInspired, ContrastiveLearningStrategy,
-    )
+    from strategies import BaseStrategy, discover_strategies, STRATEGY_REGISTRY
 except ImportError:
     st.error("Fatal Error: `strategies.py` not found. Please ensure it's in the same directory.")
     st.stop()
@@ -114,7 +90,6 @@ except ImportError:
 
 
 # --- System Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 st.set_page_config(page_title="PRAGYAM | Portfolio Intelligence", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants ---
@@ -146,365 +121,9 @@ TRIGGER_CONFIG = {
 }
 
 # --- CSS Styling (Hemrek Capital Design System) ---
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    
-    :root {
-        --primary-color: #FFC300;
-        --primary-rgb: 255, 195, 0;
-        --background-color: #0F0F0F;
-        --secondary-background-color: #1A1A1A;
-        --bg-card: #1A1A1A;
-        --bg-elevated: #2A2A2A;
-        --text-primary: #EAEAEA;
-        --text-secondary: #EAEAEA;
-        --text-muted: #888888;
-        --border-color: #2A2A2A;
-        --border-light: #3A3A3A;
-        
-        --success-green: #10b981;
-        --danger-red: #ef4444;
-        --warning-amber: #f59e0b;
-        --info-cyan: #06b6d4;
-        --neutral: #888888;
-    }
-    
-    * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    
-    .main, [data-testid="stSidebar"] {
-        background-color: var(--background-color);
-        color: var(--text-primary);
-    }
-    
-    .stApp > header {
-        background-color: transparent;
-    }
-    
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
-    
-    .block-container {
-        padding-top: 3.5rem;
-        max-width: 90%;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-    
-    /* Sidebar toggle button - always visible */
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        background-color: var(--secondary-background-color) !important;
-        border: 2px solid var(--primary-color) !important;
-        border-radius: 8px !important;
-        padding: 10px !important;
-        margin: 12px !important;
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.4) !important;
-        z-index: 999999 !important;
-        position: fixed !important;
-        top: 14px !important;
-        left: 14px !important;
-        width: 40px !important;
-        height: 40px !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
-    
-    [data-testid="collapsedControl"]:hover {
-        background-color: rgba(var(--primary-rgb), 0.2) !important;
-        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.6) !important;
-        transform: scale(1.05);
-    }
-    
-    [data-testid="collapsedControl"] svg {
-        stroke: var(--primary-color) !important;
-        width: 20px !important;
-        height: 20px !important;
-    }
-    
-    [data-testid="stSidebar"] button[kind="header"] {
-        background-color: transparent !important;
-        border: none !important;
-    }
-    
-    [data-testid="stSidebar"] button[kind="header"] svg {
-        stroke: var(--primary-color) !important;
-    }
-    
-    button[kind="header"] {
-        z-index: 999999 !important;
-    }
-    
-    [data-testid="stSidebar"] { 
-        background: var(--secondary-background-color); 
-        border-right: 1px solid var(--border-color); 
-    }
-    
-    .premium-header {
-        background: var(--secondary-background-color);
-        padding: 1.25rem 2rem;
-        border-radius: 16px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
-        border: 1px solid var(--border-color);
-        position: relative;
-        overflow: hidden;
-        margin-top: 1rem;
-    }
-    
-    .premium-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb),0.08) 0%, transparent 50%);
-        pointer-events: none;
-    }
-    
-    .premium-header h1 {
-        margin: 0;
-        font-size: 2rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        letter-spacing: -0.50px;
-        position: relative;
-    }
-    
-    .premium-header .tagline {
-        color: var(--text-muted);
-        font-size: 0.9rem;
-        margin-top: 0.25rem;
-        font-weight: 400;
-        position: relative;
-    }
-    
-    .metric-card {
-        background-color: var(--bg-card);
-        padding: 1.25rem;
-        border-radius: 12px;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
-        margin-bottom: 0.5rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.3);
-        border-color: var(--border-light);
-    }
-    
-    .metric-card h4 {
-        color: var(--text-muted);
-        font-size: 0.75rem;
-        margin-bottom: 0.5rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .metric-card h2 {
-        color: var(--text-primary);
-        font-size: 1.75rem;
-        font-weight: 700;
-        margin: 0;
-        line-height: 1;
-    }
-    
-    .metric-card .sub-metric {
-        font-size: 0.75rem;
-        color: var(--text-muted);
-        margin-top: 0.5rem;
-        font-weight: 500;
-    }
-    
-    .metric-card.success h2 { color: var(--success-green); }
-    .metric-card.danger h2 { color: var(--danger-red); }
-    .metric-card.warning h2 { color: var(--warning-amber); }
-    .metric-card.info h2 { color: var(--info-cyan); }
-    .metric-card.neutral h2 { color: var(--neutral); }
-    .metric-card.primary h2 { color: var(--primary-color); }
-    .metric-card.white h2 { color: var(--text-primary); }
-    
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .info-box {
-        background: var(--secondary-background-color);
-        border: 1px solid var(--border-color);
-        border-left: 0px solid var(--primary-color);
-        padding: 1.25rem;
-        border-radius: 12px;
-        margin: 0.5rem 0;
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
-    }
-    
-    .info-box h4 {
-        color: var(--primary-color);
-        margin: 0 0 0.5rem 0;
-        font-size: 1rem;
-        font-weight: 700;
-    }
-
-    /* Buttons */
-    .stButton>button {
-        border: 2px solid var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        font-weight: 700;
-        border-radius: 12px;
-        padding: 0.75rem 2rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .stButton>button:hover {
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
-        background: var(--primary-color);
-        color: #1A1A1A;
-        transform: translateY(-2px);
-    }
-    
-    .stButton>button:active {
-        transform: translateY(0);
-    }
-
-    /* Download Links */
-    .download-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.75rem 1.5rem;
-        border: 2px solid var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        text-decoration: none;
-        border-radius: 12px;
-        font-weight: 700;
-        transition: all 0.3s ease;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .download-link:hover {
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
-        background: var(--primary-color);
-        color: #1A1A1A;
-        transform: translateY(-2px);
-    }
-    
-    .stMarkdown table {
-        width: 100%;
-        border-collapse: collapse;
-        background: var(--bg-card);
-        border-radius: 16px;
-        overflow: hidden;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    }
-    
-    .stMarkdown table th,
-    .stMarkdown table td {
-        text-align: left !important;
-        padding: 12px 10px;
-        border-bottom: 1px solid var(--border-color);
-    }
-    
-    .stMarkdown table th {
-        background-color: var(--bg-elevated);
-        font-size: 0.9rem;
-        letter-spacing: 0.5px;
-    }
-    
-    .stMarkdown table tr:last-child td {
-        border-bottom: none;
-    }
-    
-    .stMarkdown table tr:hover {
-        background-color: var(--bg-elevated);
-    }
-    
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; background: transparent; }
-    .stTabs [data-baseweb="tab"] {
-        color: var(--text-muted);
-        border-bottom: 2px solid transparent;
-        transition: color 0.3s, border-bottom 0.3s;
-        background: transparent;
-        font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] {
-        color: var(--primary-color);
-        border-bottom: 2px solid var(--primary-color);
-        background: transparent !important;
-    }
-    .stPlotlyChart, .stDataFrame {
-        border-radius: 12px;
-        background-color: var(--secondary-background-color);
-        padding: 10px;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1);
-    }
-    h2 {
-        border-bottom: 1px solid var(--border-color);
-        padding-bottom: 10px;
-    }
-    .section-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%);
-        margin: 1.5rem 0;
-    }
-    
-    .section-header {
-        margin-bottom: 1rem;
-        padding-bottom: 0.5rem;
-        border-bottom: 1px solid var(--border-color);
-    }
-    
-    .section-title {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        margin: 0;
-    }
-    
-    .section-subtitle {
-        font-size: 0.95rem;
-        color: var(--text-muted);
-        margin: 0.25rem 0 0 0;
-    }
-    
-    .sidebar-title { 
-        font-size: 0.75rem; 
-        font-weight: 700; 
-        color: var(--primary-color); 
-        text-transform: uppercase; 
-        letter-spacing: 1px; 
-        margin-bottom: 0.75rem; 
-    }
-    
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: var(--background-color); }
-    ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
-</style>
-""", unsafe_allow_html=True)
+_css_path = os.path.join(os.path.dirname(__file__), "style.css")
+with open(_css_path) as _f:
+    st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
 
 # --- Session State Management ---
 if 'performance' not in st.session_state: st.session_state.performance = None
@@ -517,11 +136,6 @@ if 'min_pos_pct' not in st.session_state: st.session_state.min_pos_pct = 1.0
 if 'max_pos_pct' not in st.session_state: st.session_state.max_pos_pct = 10.0
 
 # --- Base Classes and Utilities ---
-def fix_csv_export(df: pd.DataFrame) -> bytes:
-    output = io.BytesIO()
-    df.to_csv(output, index=False, encoding='utf-8-sig')
-    return output.getvalue()
-
 def create_export_link(data_bytes, filename):
     """Create downloadable CSV link"""
     b64 = base64.b64encode(data_bytes).decode()
@@ -748,8 +362,16 @@ def _calculate_performance_on_window(window_data: List[Tuple[datetime, pd.DataFr
                         sub_ret = compute_portfolio_return(sub_df, next_df)
                         subset_performance[name][tier_name].append({'return': sub_ret, 'date': next_date})
             except Exception as e: logger.error(f"Window Calc Error ({name}, {date}): {e}")
-    final_performance = {name: {'metrics': calculate_advanced_metrics(perf['returns'])[0], 'sharpe': calculate_advanced_metrics(perf['returns'])[0]['sharpe']} for name, perf in performance.items()}
-    final_sub_performance = {name: {sub: calculate_advanced_metrics(sub_perf)[0]['sharpe'] for sub, sub_perf in data.items() if sub_perf} for name, data in subset_performance.items()}
+    final_performance = {}
+    for name, perf in performance.items():
+        metrics = calculate_advanced_metrics(perf['returns'])[0]
+        final_performance[name] = {'metrics': metrics, 'sharpe': metrics['sharpe']}
+    final_sub_performance = {}
+    for name, data in subset_performance.items():
+        final_sub_performance[name] = {
+            sub: calculate_advanced_metrics(sub_perf)[0]['sharpe']
+            for sub, sub_perf in data.items() if sub_perf
+        }
     return {'strategy': final_performance, 'subset': final_sub_performance}
 
 
@@ -1833,7 +1455,7 @@ def plot_weight_evolution(weight_history: List[Dict], title: str, y_axis_title: 
     )
     fig.update_xaxes(gridcolor='rgba(255,255,255,0.05)')
     fig.update_yaxes(gridcolor='rgba(255,255,255,0.05)')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def _section_header(title: str, subtitle: str = "") -> str:
     """Generate Swing-style section header HTML."""
@@ -1982,7 +1604,7 @@ def display_performance_metrics(performance: Dict):
             fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title_text="Portfolio Value", row=1, col=1, range=[y_min, y_max])
             fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title_text="Drawdown", tickformat='.0%', row=2, col=1)
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 3: EXTENDED RISK METRICS
@@ -2064,7 +1686,7 @@ def display_performance_metrics(performance: Dict):
             fig_rolling.update_xaxes(gridcolor='rgba(255,255,255,0.05)')
             fig_rolling.update_yaxes(gridcolor='rgba(255,255,255,0.05)', zeroline=True, zerolinecolor='#888888', title='Ratio')
         
-        st.plotly_chart(fig_rolling, use_container_width=True)
+        st.plotly_chart(fig_rolling, width='stretch')
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 5: STRATEGY ATTRIBUTION
@@ -2097,7 +1719,7 @@ def display_performance_metrics(performance: Dict):
         df_display['Max DD'] = df_display['Max DD'].apply(lambda x: f"{x:.1%}")
         df_display['Win Rate'] = df_display['Win Rate'].apply(lambda x: f"{x:.0%}")
         
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, width='stretch', hide_index=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 6: STRATEGY CORRELATION
@@ -2155,7 +1777,7 @@ def display_performance_metrics(performance: Dict):
             )
             fig_corr.update_layout(margin=dict(l=100, r=40, t=50, b=40))
         
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width='stretch')
         
         off_diag_mask = ~np.eye(len(corr_matrix), dtype=bool)
         avg_corr = corr_matrix.values[off_diag_mask].mean()
@@ -2178,7 +1800,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
     if UNIFIED_CHARTS_AVAILABLE:
         fig = create_tier_sharpe_heatmap(subset_perf, strategy_options)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             # Add insights
             all_values = []
@@ -2247,7 +1869,7 @@ def create_subset_heatmap(subset_perf: Dict, strategy_options: list):
         margin=dict(l=10, r=10, t=50, b=40),
         title=dict(text="Sharpe Ratio by 10-Stock Tier", font=dict(size=11, color='#888888'), x=0, xanchor='left')
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def display_subset_weight_evolution(subset_weights_history: List[Dict], strategies: List[str]):
     if not subset_weights_history:
@@ -2313,7 +1935,7 @@ if 'dynamic_strategies_cache' not in st.session_state:
     st.session_state.dynamic_strategies_cache = None
 
 # Configure module logger
-_dss_logger = logging.getLogger("Pragyam.DynamicSelection")
+_dss_logger = logger.getChild("DynamicSelection")
 
 
 def _compute_backtest_metrics(daily_values: List[float], periods_per_year: float = 252.0) -> Dict[str, float]:
@@ -2780,103 +2402,7 @@ def _run_dynamic_strategy_selection(
 
 # --- Main Application ---
 def main():
-    strategies = {
-        'PRStrategy': PRStrategy(),
-        'CL1Strategy': CL1Strategy(),
-        'CL2Strategy': CL2Strategy(),
-        'CL3Strategy': CL3Strategy(),
-        'MOM1Strategy': MOM1Strategy(),
-        'MOM2Strategy': MOM2Strategy(),
-        'MomentumMasters': MomentumMasters(),
-        'VolatilitySurfer': VolatilitySurfer(),
-        'AdaptiveVolBreakout': AdaptiveVolBreakout(),
-        'VolReversalHarvester': VolReversalHarvester(),
-        'AlphaSurge': AlphaSurge(),
-        'ReturnPyramid': ReturnPyramid(),
-        'MomentumCascade': MomentumCascade(),
-        'AlphaVortex': AlphaVortex(),
-        'SurgeSentinel': SurgeSentinel(),
-        'VelocityVortex': VelocityVortex(),
-        'BreakoutAlphaHunter': BreakoutAlphaHunter(),
-        'ExtremeMomentumBlitz': ExtremeMomentumBlitz(),
-        'HyperAlphaIgniter': HyperAlphaIgniter(),
-        'VelocityApocalypse': VelocityApocalypse(),
-        'QuantumMomentumLeap': QuantumMomentumLeap(),
-        'NebulaMomentumStorm': NebulaMomentumStorm(),
-        'ResonanceEcho': ResonanceEcho(),
-        'DivergenceMirage': DivergenceMirage(),
-        'FractalWhisper': FractalWhisper(),
-        'InterferenceWave': InterferenceWave(),
-        'ShadowPuppet': ShadowPuppet(),
-        'EntangledMomentum': EntangledMomentum(),
-        'ButterflyChaos': ButterflyChaos(),
-        'SynapseFiring': SynapseFiring(),
-        'HolographicMomentum': HolographicMomentum(),
-        'WormholeTemporal': WormholeTemporal(),
-        'SymbioticAlpha': SymbioticAlpha(),
-        'PhononVibe': PhononVibe(),
-        'HorizonEvent': HorizonEvent(),
-        'EscherLoop': EscherLoop(),
-        'MicrowaveCosmic': MicrowaveCosmic(),
-        'SingularityMomentum': SingularityMomentum(),
-        'MultiverseAlpha': MultiverseAlpha(),
-        'EternalReturnCycle': EternalReturnCycle(),
-        'DivineMomentumOracle': DivineMomentumOracle(),
-        'CelestialAlphaForge': CelestialAlphaForge(),
-        'InfiniteMomentumLoop': InfiniteMomentumLoop(),
-        'GodParticleSurge': GodParticleSurge(),
-        'NirvanaMomentumWave': NirvanaMomentumWave(),
-        'PantheonAlphaRealm': PantheonAlphaRealm(),
-        'ZenithMomentumPeak': ZenithMomentumPeak(),
-        'OmniscienceReturn': OmniscienceReturn(),
-        'ApotheosisMomentum': ApotheosisMomentum(),
-        'TranscendentAlpha': TranscendentAlpha(),
-        'TurnaroundSniper': TurnaroundSniper(),
-        'MomentumAccelerator': MomentumAccelerator(),
-        'VolatilityRegimeTrader': VolatilityRegimeTrader(),
-        'CrossSectionalAlpha': CrossSectionalAlpha(),
-        'DualMomentum': DualMomentum(),
-        'AdaptiveZScoreEngine': AdaptiveZScoreEngine(),
-        'MomentumDecayModel': MomentumDecayModel(),
-        'InformationRatioOptimizer': InformationRatioOptimizer(),
-        'BayesianMomentumUpdater': BayesianMomentumUpdater(),
-        'RelativeStrengthRotator': RelativeStrengthRotator(),
-        'VolatilityAdjustedValue': VolatilityAdjustedValue(),
-        'NonlinearMomentumBlender': NonlinearMomentumBlender(),
-        'EntropyWeightedSelector': EntropyWeightedSelector(),
-        'KalmanFilterMomentum': KalmanFilterMomentum(),
-        'MeanVarianceOptimizer': MeanVarianceOptimizer(),
-        'RegimeSwitchingStrategy': RegimeSwitchingStrategy(),
-        'FractalMomentumStrategy': FractalMomentumStrategy(),
-        'CopulaBlendStrategy': CopulaBlendStrategy(),
-        'WaveletDenoiser': WaveletDenoiser(),
-        'GradientBoostBlender': GradientBoostBlender(),
-        'AttentionMechanism': AttentionMechanism(),
-        'EnsembleVotingStrategy': EnsembleVotingStrategy(),
-        'OptimalTransportBlender': OptimalTransportBlender(),
-        'StochasticDominance': StochasticDominance(),
-        'MaximumEntropyStrategy': MaximumEntropyStrategy(),
-        'HiddenMarkovModel': HiddenMarkovModel(),
-        'QuantileRegressionStrategy': QuantileRegressionStrategy(),
-        'MutualInformationBlender': MutualInformationBlender(),
-        'GameTheoreticStrategy': GameTheoreticStrategy(),
-        'ReinforcementLearningInspired': ReinforcementLearningInspired(),
-        'SpectralClusteringStrategy': SpectralClusteringStrategy(),
-        'CausalInferenceStrategy': CausalInferenceStrategy(),
-        'BootstrapConfidenceStrategy': BootstrapConfidenceStrategy(),
-        'KernelDensityStrategy': KernelDensityStrategy(),
-        'SurvivalAnalysisStrategy': SurvivalAnalysisStrategy(),
-        'PrincipalComponentStrategy': PrincipalComponentStrategy(),
-        'FactorMomentumStrategy': FactorMomentumStrategy(),
-        'ElasticNetBlender': ElasticNetBlender(),
-        'RobustRegressionStrategy': RobustRegressionStrategy(),
-        'ConvexOptimizationStrategy': ConvexOptimizationStrategy(),
-        'MonteCarloStrategy': MonteCarloStrategy(),
-        'VariationalInferenceStrategy': VariationalInferenceStrategy(),
-        'NeuralNetworkInspired': NeuralNetworkInspired(),
-        'GraphNeuralInspired': GraphNeuralInspired(),
-        'ContrastiveLearningStrategy': ContrastiveLearningStrategy(),
-    }
+    strategies = discover_strategies()
 
     # Fallback static PORTFOLIO_STYLES (used if dynamic selection fails)
     PORTFOLIO_STYLES = {
@@ -3042,7 +2568,7 @@ def main():
                             # Show recent data preview
                             recent = breadth_df.tail(5).copy()
                             recent['DATE'] = recent['DATE'].dt.strftime('%Y-%m-%d')
-                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, use_container_width=True)
+                            st.dataframe(recent[['DATE', 'REL_BREADTH']], hide_index=True, width='stretch')
                         else:
                             st.warning("⚠️ No data from Google Sheets. Using first-day entry fallback.")
                     except Exception as e:
@@ -3117,7 +2643,7 @@ def main():
         st.session_state.trigger_df = trigger_df
         st.session_state.trigger_config = trigger_config
 
-        if st.button("Run Analysis", use_container_width=True, type="primary"):
+        if st.button("Run Analysis", width='stretch', type="primary"):
             
             lookback_files = 100
             
@@ -3421,7 +2947,9 @@ def main():
             new_order = first_cols + other_cols
             download_df = portfolio_df[new_order]
 
-            csv_bytes = fix_csv_export(download_df)
+            csv_buf = io.BytesIO()
+            download_df.to_csv(csv_buf, index=False, encoding='utf-8-sig')
+            csv_bytes = csv_buf.getvalue()
             st.markdown(
                 create_export_link(csv_bytes, f"curated_portfolio_{datetime.now().strftime('%Y%m%d')}.csv"), 
                 unsafe_allow_html=True
@@ -3480,7 +3008,7 @@ def main():
                             coloraxis_colorbar=dict(title="Sharpe")
                         )
                         fig_tier.update_layout(margin=dict(l=120, r=20, t=50, b=40))
-                        st.plotly_chart(fig_tier, use_container_width=True)
+                        st.plotly_chart(fig_tier, width='stretch')
                         
                         # Tier insights — metric cards
                         tier_means = df_heatmap.mean(axis=0)
@@ -3587,7 +3115,7 @@ def main():
                                 range=[df_scatter['CAGR_pct'].min() - cagr_pad, df_scatter['CAGR_pct'].max() + cagr_pad]
                             )
                         
-                        st.plotly_chart(fig_scatter, use_container_width=True)
+                        st.plotly_chart(fig_scatter, width='stretch')
                 
                 with col_radar:
                     st.markdown("#### Factor Fingerprint")
@@ -3653,7 +3181,7 @@ def main():
                                 title=dict(text="Multi-Factor Strategy Comparison", font=dict(size=11, color='#888888'), x=0, xanchor='left')
                             )
                         
-                        st.plotly_chart(fig_radar, use_container_width=True)
+                        st.plotly_chart(fig_radar, width='stretch')
                 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECTION 3: TIER ALLOCATION HISTORY
@@ -3677,7 +3205,7 @@ def main():
                 if strategies_for_heatmap and st.session_state.current_df is not None:
                     heatmap_fig = create_conviction_heatmap(strategies_for_heatmap, st.session_state.current_df)
                     if heatmap_fig:
-                        st.plotly_chart(heatmap_fig, use_container_width=True)
+                        st.plotly_chart(heatmap_fig, width='stretch')
                     
                     signal_counts = {}
                     for name, s in strategies_for_heatmap.items():
@@ -3686,7 +3214,7 @@ def main():
                             if not port.empty:
                                 for symbol in port.head(10)['symbol']:
                                     signal_counts[symbol] = signal_counts.get(symbol, 0) + 1
-                        except:
+                        except Exception:
                             pass
                     
                     if signal_counts:
@@ -3753,7 +3281,7 @@ def main():
                     df_display['T1 Sharpe'] = df_display['T1 Sharpe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
                     df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}")
                     
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    st.dataframe(df_display, width='stretch', hide_index=True)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # TAB 4: STRATEGY METRICS - Comprehensive Backtest Results
@@ -3834,7 +3362,7 @@ def main():
                         except ImportError:
                             pass
                     
-                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                    st.dataframe(styled_df, width='stretch', hide_index=True)
                     
                     csv_data = df_metrics.to_csv(index=False)
                     st.download_button(
@@ -3911,7 +3439,7 @@ def main():
                         except ImportError:
                             pass
                         
-                        st.dataframe(styled_all, use_container_width=True, hide_index=True, height=600)
+                        st.dataframe(styled_all, width='stretch', hide_index=True, height=600)
                         st.caption(f"Showing {len(df_all)} strategies evaluated in Phase 2 (trigger-based backtest). ✅ = selected for portfolio curation.")
                         
                         all_csv = df_all.to_csv(index=False)
@@ -3927,7 +3455,6 @@ def main():
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
     # Dynamic footer with IST time (timezone-aware)
-    from datetime import timezone
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
