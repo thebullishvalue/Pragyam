@@ -131,13 +131,15 @@ The application will be available at `http://localhost:8501`
 ```
 pragyam/
 ├── app.py                      # Main Streamlit application & portfolio curation
+├── strategies.py               # 80+ strategy implementations + auto-discovery registry
 ├── charts.py                   # Unified Plotly visualization components
-├── strategies.py               # 80+ strategy implementations
 ├── strategy_selection.py       # Trigger-based strategy evaluation (REL_BREADTH)
 ├── backtest_engine.py          # Walk-forward backtesting framework
 ├── backdata.py                 # Data fetching & indicator computation
+├── style.css                   # Hemrek Capital Design System (dark theme)
 ├── symbols.txt                 # Universe of tradeable symbols (NSE tickers)
 ├── requirements.txt            # Python dependencies
+├── pyproject.toml              # Ruff, mypy, and package configuration
 ├── CHANGELOG.md                # Version history
 └── docs/
     ├── STRATEGY_GUIDE.md       # Strategy documentation

@@ -352,9 +352,9 @@ class MasterPortfolio:
         if len(returns) > 1 and returns.std() > 0:
             sharpe = returns.mean() / returns.std()
             downside = returns[returns < 0]
-            sortino = returns.mean() / downside.std() if len(downside) > 0 and downside.std() > 0 else sharpe * 1.5
+            sortino = returns.mean() / downside.std() if len(downside) > 0 and downside.std() > 0 else sharpe
         else:
-            sharpe = total_return * 10 if total_return > 0 else 0
+            sharpe = total_return if total_return > 0 else 0
             sortino = sharpe
         
         # Drawdown
@@ -370,7 +370,7 @@ class MasterPortfolio:
         win_rate = (returns > 0).mean() if len(returns) > 0 else 0
         
         # Calmar
-        calmar = total_return / abs(max_dd) if max_dd < 0 else total_return * 10
+        calmar = total_return / abs(max_dd) if max_dd < -0.001 else 0
         
         return {
             'total_invested': self.total_invested,
@@ -653,7 +653,7 @@ def execute_swing_mode(
                 drawdown = (cumulative - peak) / peak
                 max_dd = drawdown.min()
                 
-                calmar = total_return / abs(max_dd) if max_dd < 0 else total_return * 10
+                calmar = total_return / abs(max_dd) if max_dd < -0.001 else 0
                 
             else:
                 # Only open trades

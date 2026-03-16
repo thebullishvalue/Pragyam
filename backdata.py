@@ -317,12 +317,12 @@ def main():
         if SYMBOLS_UNIVERSE:
             st.info(f"Using fixed universe from `symbols.txt` ({len(SYMBOLS_UNIVERSE)} tickers).")
             with st.expander("View Tickers"):
-                st.dataframe(SYMBOLS_UNIVERSE, use_container_width=True)
+                st.dataframe(SYMBOLS_UNIVERSE, width='stretch')
         else:
             st.error("`symbols.txt` not found or is empty. Cannot proceed.")
         
         st.header("3. Generate")
-        process_button = st.button("Generate Snapshots", type="primary", use_container_width=True)
+        process_button = st.button("Generate Snapshots", type="primary", width='stretch')
 
     if process_button:
         if start_date > end_date:
@@ -400,6 +400,17 @@ def main():
                     )
             else:
                 st.warning("No data was generated for the selected date range.")
+
+__all__ = [
+    'LiquidityOscillator',
+    'resample_data',
+    'calculate_rsi',
+    'calculate_all_indicators',
+    'load_symbols_from_file',
+    'generate_historical_data',
+    'SYMBOLS_UNIVERSE',
+    'MAX_INDICATOR_PERIOD',
+]
 
 if __name__ == "__main__":
     main()

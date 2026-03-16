@@ -70,8 +70,8 @@ class PerformanceMetrics:
         # Filter out invalid returns
         daily_returns = daily_returns.replace([np.inf, -np.inf], np.nan).dropna()
         
-        # Cap extreme returns at +/- 50% per day (anything beyond indicates data error)
-        daily_returns = daily_returns.clip(-0.5, 0.5)
+        # Cap extreme returns at +/- 100% per day (guard against data errors)
+        daily_returns = daily_returns.clip(-1.0, 1.0)
         
         if daily_returns.empty or len(daily_returns) < 2:
             return PerformanceMetrics._empty_metrics()
@@ -100,13 +100,10 @@ class PerformanceMetrics:
         excess_return = ann_return - risk_free_rate
         sharpe = excess_return / volatility if volatility > 0.001 else 0
         
-        # Sortino Ratio (downside deviation)
-        downside_returns = daily_returns[daily_returns < 0]
-        if len(downside_returns) > 0:
-            downside_std = downside_returns.std() * ann_factor
-            sortino = excess_return / downside_std if downside_std > 0.001 else 0
-        else:
-            sortino = 0
+        # Sortino Ratio (downside deviation using RMS of min(r, 0))
+        downside_diff = daily_returns.clip(upper=0)
+        downside_std = np.sqrt((downside_diff ** 2).mean()) * ann_factor
+        sortino = excess_return / downside_std if downside_std > 0.001 else 0
         
         # Maximum Drawdown - calculate from values directly
         cumulative_max = values_series.expanding(min_periods=1).max()
@@ -524,13 +521,14 @@ class UnifiedBacktestEngine:
         total_invested = 0
         portfolio_units = {}
         daily_values = []
-        last_sip_week = -1
+        last_sip_week = None
         
         for date, df in self._historical_data:
-            week_num = date.isocalendar()[1]
-            
+            iso = date.isocalendar()
+            week_key = (iso[0], iso[1])  # (year, week) to avoid cross-year collision
+
             # Weekly SIP
-            if week_num != last_sip_week:
+            if week_key != last_sip_week:
                 try:
                     buy_portfolio = strategy.generate_portfolio(df, sip_amount)
                     if not buy_portfolio.empty and 'units' in buy_portfolio.columns:
@@ -542,7 +540,7 @@ class UnifiedBacktestEngine:
                             else:
                                 portfolio_units[symbol] = units
                         total_invested += buy_portfolio['value'].sum()
-                        last_sip_week = week_num
+                        last_sip_week = week_key
                 except Exception as e:
                     logger.debug(f"SIP generation failed for {name} on {date}: {e}")
             
@@ -940,7 +938,7 @@ def run_streamlit_ui():
             value=4
         )
         
-        run_button = st.button("🚀 Run Backtest", type="primary", use_container_width=True)
+        run_button = st.button("🚀 Run Backtest", type="primary", width='stretch')
     
     if run_button:
         try:
@@ -988,6 +986,16 @@ def run_streamlit_ui():
                     st.markdown(f"**Strategies:** `{'`, `'.join(mix_data['strategies'])}`")
                     st.caption(mix_data['rationale'])
 
+
+__all__ = [
+    'PerformanceMetrics',
+    'DataCacheManager',
+    'UnifiedBacktestEngine',
+    'DynamicPortfolioStylesGenerator',
+    'initialize_backtest_engine',
+    'get_dynamic_portfolio_styles',
+    'run_streamlit_ui',
+]
 
 if __name__ == "__main__":
     run_streamlit_ui()

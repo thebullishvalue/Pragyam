@@ -569,126 +569,100 @@ class CL2Strategy(BaseStrategy):
                 return regime, confidence
 
             def calculate_enhanced_technical_multipliers(self, df):
-                df['rsi_mult'] = df.apply(self._calculate_rsi_mult_enhanced, axis=1)
-                df['osc_mult'] = df.apply(self._calculate_osc_mult_enhanced, axis=1)
-                df['ema9_osc_mult'] = df.apply(self._calculate_9ema_osc_mult_enhanced, axis=1)
-                df['ema21_osc_mult'] = df.apply(self._calculate_21ema_osc_mult_enhanced, axis=1)
-                df['zscore_mult'] = df.apply(self._calculate_zscore_mult_enhanced, axis=1)
-                df['trend_strength'] = df.apply(self._calculate_trend_strength_enhanced, axis=1)
-                df['spread_mult'] = df.apply(self._calculate_spread_mult_enhanced, axis=1)
-                df['bollinger_mult'] = df.apply(self._calculate_bollinger_mult_enhanced, axis=1)
+                wrsi = df['rsi weekly'] * 0.55 + df['rsi latest'] * 0.45
+                base_mult = np.select(
+                    [wrsi < 30, wrsi < 50, wrsi < 70],
+                    [3.5 - (wrsi / 30) * 1.5, 2 - (wrsi - 30) / 20, 1 - (wrsi - 50) / 20],
+                    default=0.3 + (100 - wrsi) / 30,
+                )
+                consistency = np.where(np.abs(df['rsi latest'] - df['rsi weekly']) < 10, 1.1, 1.0)
+                df['rsi_mult'] = base_mult * consistency
+
+                ow, ol = df['osc weekly'], df['osc latest']
+                df['osc_mult'] = np.select(
+                    [
+                        (ow < -80) & (ol < -95), ow < -80,
+                        (ow < -70) & (ol < -90), ow < -70,
+                        (ow < -60) & (ol < -85), (ow < -50) & (ol < -80),
+                        (ow < -40) & (ol < -70), (ow < -30) & (ol < -60),
+                        (ow < -20) & (ol < -50), (ow < -10) & (ol < -40),
+                        (ow < 0) & (ol < -30), ol < -95,
+                        (ol > 80) & (ow > 70),
+                    ],
+                    [3.5, 3.2, 2.8, 2.5, 2.3, 2.0, 1.8, 1.6, 1.5, 1.4, 1.3, 2.0, 0.2],
+                    default=0.1,
+                )
+
+                for col_w, col_d, target in [
+                    ('9ema osc weekly', '9ema osc latest', 'ema9_osc_mult'),
+                    ('21ema osc weekly', '21ema osc latest', 'ema21_osc_mult'),
+                ]:
+                    w, d = df[col_w], df[col_d]
+                    df[target] = np.select(
+                        [
+                            (w < -80) & (d < -90), w < -80,
+                            (w < -70) & (d < -80), w < -70,
+                            (w < -60) & (d < -70), (w < -50) & (d < -60),
+                            (w < -40) & (d < -50), (w < -30) & (d < -40),
+                            d < -90,
+                        ],
+                        [3.5, 3.2, 2.8, 2.5, 2.3, 2.0, 1.8, 1.6, 2.0],
+                        default=0.1,
+                    )
+
+                zw, zd = df['zscore weekly'], df['zscore latest']
+                df['zscore_mult'] = np.select(
+                    [
+                        (zw < -2.5) & (zd < -3), zw < -2.5,
+                        (zw < -2) & (zd < -2.5), (zw < -1.5) & (zd < -2),
+                        (zw < -1.2) & (zd < -1.8), (zw < -1) & (zd < -1.5),
+                        zd < -3,
+                    ],
+                    [3.5, 3.2, 2.8, 2.5, 2.2, 2.0, 2.0],
+                    default=0.1,
+                )
+
+                e9l, e21l, ol_ = df['9ema osc latest'], df['21ema osc latest'], df['osc latest']
+                e9w, e21w, ow_ = df['9ema osc weekly'], df['21ema osc weekly'], df['osc weekly']
+                df['trend_strength'] = np.select(
+                    [
+                        (e9l > e21l) & (ol_ < -50),
+                        (e9w > e21w) & (ow_ < -50),
+                        (e9l > 0) & (e21l > 0) & (ol_ > 0),
+                    ],
+                    [1.3, 1.5, 0.7],
+                    default=1.0,
+                )
+
+                eps = 1e-6
+                s90l = (df['ma90 latest'] - df['price']) * 100 / df['ma90 latest'].replace(0, eps)
+                s200l = (df['ma200 latest'] - df['price']) * 100 / df['ma200 latest'].replace(0, eps)
+                s90w = (df['ma90 weekly'] - df['price']) * 100 / df['ma90 weekly'].replace(0, eps)
+                s200w = (df['ma200 weekly'] - df['price']) * 100 / df['ma200 weekly'].replace(0, eps)
+                ws90 = s90l * 0.60 + s90w * 0.40
+                ws200 = s200l * 0.60 + s200w * 0.40
+                df['spread_mult'] = np.select(
+                    [
+                        (ws90 > 1.5) & (ws200 > 1.5) & (df['rsi latest'] < 40),
+                        (ws90 < -1.5) & (ws200 < -1.5) & (df['rsi latest'] > 70),
+                    ],
+                    [3.5, 0.5],
+                    default=1.0,
+                )
+
+                dev_l = 2.0 * df['dev20 latest']
+                dev_w = 2.0 * df['dev20 weekly']
+                wlower = (df['ma90 latest'] - dev_l) * 0.60 + (df['ma90 weekly'] - dev_w) * 0.40
+                wupper = (df['ma90 latest'] + dev_l) * 0.60 + (df['ma90 weekly'] + dev_w) * 0.40
+                df['bollinger_mult'] = np.select(
+                    [
+                        (df['price'] < wlower) & (df['rsi latest'] < 40),
+                        (df['price'] > wupper) & (df['rsi latest'] > 70),
+                    ],
+                    [3.0, 0.5],
+                    default=1.0,
+                )
                 return df
-
-            def _calculate_rsi_mult_enhanced(self, row):
-                weighted_rsi = (row['rsi weekly'] * 0.55 + row['rsi latest'] * 0.45)
-                if weighted_rsi < 30:
-                    base_mult = 3.5 - (weighted_rsi / 30) * 1.5
-                elif weighted_rsi < 50:
-                    base_mult = 2 - (weighted_rsi - 30) / 20
-                elif weighted_rsi < 70:
-                    base_mult = 1 - (weighted_rsi - 50) / 20
-                else:
-                    base_mult = 0.3 + (100 - weighted_rsi) / 30
-                timeframe_consistency = 1.1 if abs(row['rsi latest'] - row['rsi weekly']) < 10 else 1.0
-                return base_mult * timeframe_consistency
-
-            def _calculate_osc_mult_enhanced(self, row):
-                osc_weekly, osc_latest = row['osc weekly'], row['osc latest']
-                if osc_weekly < -80 and osc_latest < -95: return 3.5
-                elif osc_weekly < -80: return 3.2
-                elif osc_weekly < -70 and osc_latest < -90: return 2.8
-                elif osc_weekly < -70: return 2.5
-                elif osc_weekly < -60 and osc_latest < -85: return 2.3
-                elif osc_weekly < -50 and osc_latest < -80: return 2.0
-                elif osc_weekly < -40 and osc_latest < -70: return 1.8
-                elif osc_weekly < -30 and osc_latest < -60: return 1.6
-                elif osc_weekly < -20 and osc_latest < -50: return 1.5
-                elif osc_weekly < -10 and osc_latest < -40: return 1.4
-                elif osc_weekly < 0 and osc_latest < -30: return 1.3
-                elif osc_latest < -95: return 2.0
-                elif osc_latest > 80 and osc_weekly > 70: return 0.2
-                else: return 0.1
-
-            def _calculate_9ema_osc_mult_enhanced(self, row):
-                ema_weekly, ema_latest = row['9ema osc weekly'], row['9ema osc latest']
-                if ema_weekly < -80 and ema_latest < -90: return 3.5
-                elif ema_weekly < -80: return 3.2
-                elif ema_weekly < -70 and ema_latest < -80: return 2.8
-                elif ema_weekly < -70: return 2.5
-                elif ema_weekly < -60 and ema_latest < -70: return 2.3
-                elif ema_weekly < -50 and ema_latest < -60: return 2.0
-                elif ema_weekly < -40 and ema_latest < -50: return 1.8
-                elif ema_weekly < -30 and ema_latest < -40: return 1.6
-                elif ema_latest < -90: return 2.0
-                else: return 0.1
-
-            def _calculate_21ema_osc_mult_enhanced(self, row):
-                ema_21_weekly, ema_21_latest = row['21ema osc weekly'], row['21ema osc latest']
-                if ema_21_weekly < -80 and ema_21_latest < -90: return 3.5
-                elif ema_21_weekly < -80: return 3.2
-                elif ema_21_weekly < -70 and ema_21_latest < -80: return 2.8
-                elif ema_21_weekly < -70: return 2.5
-                elif ema_21_weekly < -60 and ema_21_latest < -70: return 2.3
-                elif ema_21_weekly < -50 and ema_21_latest < -60: return 2.0
-                elif ema_21_weekly < -40 and ema_21_latest < -50: return 1.8
-                elif ema_21_weekly < -30 and ema_21_latest < -40: return 1.6
-                elif ema_21_latest < -90: return 2.0
-                else: return 0.1
-
-            def _calculate_zscore_mult_enhanced(self, row):
-                zscore_weekly, zscore_latest = row['zscore weekly'], row['zscore latest']
-                if zscore_weekly < -2.5 and zscore_latest < -3: return 3.5
-                elif zscore_weekly < -2.5: return 3.2
-                elif zscore_weekly < -2 and zscore_latest < -2.5: return 2.8
-                elif zscore_weekly < -1.5 and zscore_latest < -2: return 2.5
-                elif zscore_weekly < -1.2 and zscore_latest < -1.8: return 2.2
-                elif zscore_weekly < -1 and zscore_latest < -1.5: return 2.0
-                elif zscore_latest < -3: return 2.0
-                else: return 0.1
-
-            def _calculate_trend_strength_enhanced(self, row):
-                if row['9ema osc latest'] > row['21ema osc latest'] and row['osc latest'] < -50:
-                    return 1.3
-                elif row['9ema osc weekly'] > row['21ema osc weekly'] and row['osc weekly'] < -50:
-                    return 1.5
-                elif row['9ema osc latest'] > 0 and row['21ema osc latest'] > 0 and row['osc latest'] > 0:
-                    return 0.7
-                else:
-                    return 1.0
-
-            def _calculate_spread_mult_enhanced(self, row, spreadup=1.5, spreadown=-1.5, lower_thres=40, higher_thres=70):
-                epsilon = 1e-6
-                def safe_div(n, d): return n * 100 / (d if d != 0 else epsilon)
-                spread90_latest = safe_div(row['ma90 latest'] - row['price'], row['ma90 latest'])
-                spread200_latest = safe_div(row['ma200 latest'] - row['price'], row['ma200 latest'])
-                spread90_weekly = safe_div(row['ma90 weekly'] - row['price'], row['ma90 weekly'])
-                spread200_weekly = safe_div(row['ma200 weekly'] - row['price'], row['ma200 weekly'])
-                weighted_spread90 = spread90_latest * 0.60 + spread90_weekly * 0.40
-                weighted_spread200 = spread200_latest * 0.60 + spread200_weekly * 0.40
-                if weighted_spread90 > spreadup and weighted_spread200 > spreadup and row['rsi latest'] < lower_thres:
-                    return 3.5
-                elif weighted_spread90 < spreadown and weighted_spread200 < spreadown and row['rsi latest'] > higher_thres:
-                    return 0.5
-                else:
-                    return 1.0
-
-            def _calculate_bollinger_mult_enhanced(self, row, mult=2.0, lower_thres=40, higher_thres=70):
-                basis_latest = row['ma90 latest']
-                dev_latest = mult * row['dev20 latest']
-                upper_s_latest = basis_latest + dev_latest
-                lower1_latest = basis_latest - dev_latest
-                basis_weekly = row['ma90 weekly']
-                dev_weekly = mult * row['dev20 weekly']
-                upper_s_weekly = basis_weekly + dev_weekly
-                lower1_weekly = basis_weekly - dev_weekly
-                weighted_upper_s = upper_s_latest * 0.60 + upper_s_weekly * 0.40
-                weighted_lower1 = lower1_latest * 0.60 + lower1_weekly * 0.40
-                if row['price'] < weighted_lower1 and row['rsi latest'] < lower_thres:
-                    return 3.0
-                elif row['price'] > weighted_upper_s and row['rsi latest'] > higher_thres:
-                    return 0.5
-                else:
-                    return 1.0
 
             def calculate_momentum_convergence(self, df):
                 ema_9_21_latest = df['9ema osc latest'] - df['21ema osc latest']
@@ -1037,131 +1011,133 @@ class CL3Strategy(BaseStrategy):
                 return self.market_regime, self.regime_confidence, metrics
 
             def calculate_technical_suite(self, df):
-                df['rsi_mult'] = df.apply(self._calc_rsi_mult, axis=1)
-                df['osc_mult'] = df.apply(self._calc_osc_mult, axis=1)
-                df['ema9_mult'] = df.apply(self._calc_ema9_mult, axis=1)
-                df['ema21_mult'] = df.apply(self._calc_ema21_mult, axis=1)
-                df['zscore_mult'] = df.apply(self._calc_zscore_mult, axis=1)
-                df['trend_strength'] = df.apply(self._calc_trend_strength, axis=1)
-                df['spread_mult'] = df.apply(self._calc_spread_mult, axis=1)
-                df['bollinger_mult'] = df.apply(self._calc_bollinger_mult, axis=1)
-                df['weekly_boost'] = df['osc weekly'].apply(lambda x: 1.2 if x < -20 else 0.8)
+                wrsi = df['rsi weekly'] * 0.55 + df['rsi latest'] * 0.45
+                df['rsi_mult'] = np.select(
+                    [wrsi < 30, wrsi < 50, wrsi < 70],
+                    [3.5 - (wrsi / 30) * 1.5, 2 - (wrsi - 30) / 20, 1 - (wrsi - 50) / 20],
+                    default=0.3 + (100 - wrsi) / 30,
+                )
+
+                ow, ol = df['osc weekly'], df['osc latest']
+                df['osc_mult'] = np.select(
+                    [
+                        (ow < -80) & (ol < -95), ow < -80,
+                        (ow < -70) & (ol < -90), ow < -70,
+                        (ow < -60) & (ol < -85), (ow < -50) & (ol < -80),
+                        (ow < -40) & (ol < -70), (ow < -30) & (ol < -60),
+                        (ow < -20) & (ol < -50), (ow < -10) & (ol < -40),
+                        (ow < 0) & (ol < -30), ol < -95,
+                        (ol > 80) & (ow > 70),
+                    ],
+                    [3.5, 3.2, 2.8, 2.5, 2.3, 2.0, 1.8, 1.6, 1.5, 1.4, 1.3, 2.0, 0.2],
+                    default=0.1,
+                )
+
+                for col_w, col_d, target in [
+                    ('9ema osc weekly', '9ema osc latest', 'ema9_mult'),
+                    ('21ema osc weekly', '21ema osc latest', 'ema21_mult'),
+                ]:
+                    w, d = df[col_w], df[col_d]
+                    df[target] = np.select(
+                        [
+                            (w < -80) & (d < -90), w < -80,
+                            (w < -70) & (d < -80), w < -70,
+                            (w < -60) & (d < -70), (w < -50) & (d < -60),
+                            (w < -40) & (d < -50), (w < -30) & (d < -40),
+                            d < -90,
+                        ],
+                        [3.5, 3.2, 2.8, 2.5, 2.3, 2.0, 1.8, 1.6, 2.0],
+                        default=0.1,
+                    )
+
+                zw, zd = df['zscore weekly'], df['zscore latest']
+                df['zscore_mult'] = np.select(
+                    [
+                        (zw < -2.5) & (zd < -3), zw < -2.5,
+                        (zw < -2) & (zd < -2.5), (zw < -1.5) & (zd < -2),
+                        (zw < -1.2) & (zd < -1.8), (zw < -1) & (zd < -1.5),
+                        zd < -3,
+                    ],
+                    [3.5, 3.2, 2.8, 2.5, 2.2, 2.0, 2.0],
+                    default=0.1,
+                )
+
+                e9l, e21l, ol_ = df['9ema osc latest'], df['21ema osc latest'], df['osc latest']
+                e9w, e21w, ow_ = df['9ema osc weekly'], df['21ema osc weekly'], df['osc weekly']
+                df['trend_strength'] = np.select(
+                    [
+                        (e9l > e21l) & (ol_ < -50),
+                        (e9w > e21w) & (ow_ < -50),
+                        (e9l > 0) & (e21l > 0) & (ol_ > 0),
+                    ],
+                    [1.3, 1.5, 0.7],
+                    default=1.0,
+                )
+
+                eps = 1e-6
+                s90l = (df['ma90 latest'] - df['price']) * 100 / df['ma90 latest'].replace(0, eps)
+                s200l = (df['ma200 latest'] - df['price']) * 100 / df['ma200 latest'].replace(0, eps)
+                s90w = (df['ma90 weekly'] - df['price']) * 100 / df['ma90 weekly'].replace(0, eps)
+                s200w = (df['ma200 weekly'] - df['price']) * 100 / df['ma200 weekly'].replace(0, eps)
+                ws90 = s90l * 0.6 + s90w * 0.4
+                ws200 = s200l * 0.6 + s200w * 0.4
+                df['spread_mult'] = np.select(
+                    [
+                        (ws90 > 1.5) & (ws200 > 1.5) & (df['rsi latest'] < 40),
+                        (ws90 < -1.5) & (ws200 < -1.5) & (df['rsi latest'] > 70),
+                    ],
+                    [3.5, 0.5],
+                    default=1.0,
+                )
+
+                dev_l = 2.0 * df['dev20 latest']
+                dev_w = 2.0 * df['dev20 weekly']
+                wlower = (df['ma90 latest'] - dev_l) * 0.6 + (df['ma90 weekly'] - dev_w) * 0.4
+                wupper = (df['ma90 latest'] + dev_l) * 0.6 + (df['ma90 weekly'] + dev_w) * 0.4
+                df['bollinger_mult'] = np.select(
+                    [
+                        (df['price'] < wlower) & (df['rsi latest'] < 40),
+                        (df['price'] > wupper) & (df['rsi latest'] > 70),
+                    ],
+                    [3.0, 0.5],
+                    default=1.0,
+                )
+
+                df['weekly_boost'] = np.where(df['osc weekly'] < -20, 1.2, 0.8)
                 return df
 
-            def _calc_rsi_mult(self, row):
-                weighted_rsi = row['rsi weekly'] * 0.55 + row['rsi latest'] * 0.45
-                if weighted_rsi < 30:
-                    return 3.5 - (weighted_rsi / 30) * 1.5
-                elif weighted_rsi < 50:
-                    return 2 - (weighted_rsi - 30) / 20
-                elif weighted_rsi < 70:
-                    return 1 - (weighted_rsi - 50) / 20
-                else:
-                    return 0.3 + (100 - weighted_rsi) / 30
-
-            def _calc_osc_mult(self, row):
-                w, d = row['osc weekly'], row['osc latest']
-                if w < -80 and d < -95: return 3.5
-                elif w < -80: return 3.2
-                elif w < -70 and d < -90: return 2.8
-                elif w < -70: return 2.5
-                elif w < -60 and d < -85: return 2.3
-                elif w < -50 and d < -80: return 2.0
-                elif w < -40 and d < -70: return 1.8
-                elif w < -30 and d < -60: return 1.6
-                elif w < -20 and d < -50: return 1.5
-                elif w < -10 and d < -40: return 1.4
-                elif w < 0 and d < -30: return 1.3
-                elif d < -95: return 2.0
-                elif d > 80 and w > 70: return 0.2
-                else: return 0.1
-
-            def _calc_ema9_mult(self, row):
-                w, d = row['9ema osc weekly'], row['9ema osc latest']
-                if w < -80 and d < -90: return 3.5
-                elif w < -80: return 3.2
-                elif w < -70 and d < -80: return 2.8
-                elif w < -70: return 2.5
-                elif w < -60 and d < -70: return 2.3
-                elif w < -50 and d < -60: return 2.0
-                elif w < -40 and d < -50: return 1.8
-                elif w < -30 and d < -40: return 1.6
-                elif d < -90: return 2.0
-                else: return 0.1
-
-            def _calc_ema21_mult(self, row):
-                w, d = row['21ema osc weekly'], row['21ema osc latest']
-                if w < -80 and d < -90: return 3.5
-                elif w < -80: return 3.2
-                elif w < -70 and d < -80: return 2.8
-                elif w < -70: return 2.5
-                elif w < -60 and d < -70: return 2.3
-                elif w < -50 and d < -60: return 2.0
-                elif w < -40 and d < -50: return 1.8
-                elif w < -30 and d < -40: return 1.6
-                elif d < -90: return 2.0
-                else: return 0.1
-
-            def _calc_zscore_mult(self, row):
-                w, d = row['zscore weekly'], row['zscore latest']
-                if w < -2.5 and d < -3: return 3.5
-                elif w < -2.5: return 3.2
-                elif w < -2 and d < -2.5: return 2.8
-                elif w < -1.5 and d < -2: return 2.5
-                elif w < -1.2 and d < -1.8: return 2.2
-                elif w < -1 and d < -1.5: return 2.0
-                elif d < -3: return 2.0
-                else: return 0.1
-
-            def _calc_trend_strength(self, row):
-                if row['9ema osc latest'] > row['21ema osc latest'] and row['osc latest'] < -50:
-                    return 1.3
-                elif row['9ema osc weekly'] > row['21ema osc weekly'] and row['osc weekly'] < -50:
-                    return 1.5
-                elif row['9ema osc latest'] > 0 and row['21ema osc latest'] > 0 and row['osc latest'] > 0:
-                    return 0.7
-                else:
-                    return 1.0
-
-            def _calc_spread_mult(self, row):
-                def safe_pct(val, base):
-                    return val * 100 / (base if base != 0 else 1e-6)
-                s90d = safe_pct(row['ma90 latest'] - row['price'], row['ma90 latest'])
-                s200d = safe_pct(row['ma200 latest'] - row['price'], row['ma200 latest'])
-                s90w = safe_pct(row['ma90 weekly'] - row['price'], row['ma90 weekly'])
-                s200w = safe_pct(row['ma200 weekly'] - row['price'], row['ma200 weekly'])
-                ws90 = s90d * 0.6 + s90w * 0.4
-                ws200 = s200d * 0.6 + s200w * 0.4
-                if ws90 > 1.5 and ws200 > 1.5 and row['rsi latest'] < 40:
-                    return 3.5
-                elif ws90 < -1.5 and ws200 < -1.5 and row['rsi latest'] > 70:
-                    return 0.5
-                else:
-                    return 1.0
-
-            def _calc_bollinger_mult(self, row):
-                bd = row['ma90 latest']
-                dd = 2 * row['dev20 latest']
-                bw = row['ma90 weekly']
-                dw = 2 * row['dev20 weekly']
-                lower_d = bd - dd
-                lower_w = bw - dw
-                upper_d = bd + dd
-                upper_w = bw + dw
-                wl = lower_d * 0.6 + lower_w * 0.4
-                wu = upper_d * 0.6 + upper_w * 0.4
-                if row['price'] < wl and row['rsi latest'] < 40:
-                    return 3.0
-                elif row['price'] > wu and row['rsi latest'] > 70:
-                    return 0.5
-                else:
-                    return 1.0
-
             def calculate_conviction_scores(self, df):
-                df['signal_alignment'] = df.apply(self._calc_signal_alignment, axis=1)
-                df['divergence_score'] = df.apply(self._detect_divergence, axis=1)
-                df['mean_reversion'] = df.apply(self._calc_mean_reversion, axis=1)
-                df['vol_quality'] = df.apply(self._calc_vol_quality, axis=1)
+                rl, rw = df['rsi latest'], df['rsi weekly']
+                ol, ow = df['osc latest'], df['osc weekly']
+                zl, zw = df['zscore latest'], df['zscore weekly']
+
+                rsi_sig = np.select([(rl < 30) & (rw < 35), (rl < 35) | (rw < 40)], [2, 1], default=0)
+                osc_sig = np.select([(ol < -80) & (ow < -60), (ol < -60) | (ow < -40)], [2, 1], default=0)
+                z_sig = np.select([(zl < -2) & (zw < -1.5), (zl < -1.5) | (zw < -1)], [2, 1], default=0)
+                df['signal_alignment'] = np.minimum(2.0, (rsi_sig + osc_sig + z_sig) / 3)
+
+                price_low = df['price'] < df['ma90 latest'] * 0.95
+                osc_improving = df['9ema osc latest'] > df['21ema osc latest']
+                df['divergence_score'] = np.select(
+                    [price_low & osc_improving & (ol < -50), price_low & osc_improving, osc_improving & (ol < -30)],
+                    [2.0, 1.5, 1.2],
+                    default=1.0,
+                )
+
+                dist = np.where(df['ma200 latest'] > 0, (df['ma200 latest'] - df['price']) / df['ma200 latest'], 0)
+                df['mean_reversion'] = np.select(
+                    [(dist > 0.2) & (zl < -2), (dist > 0.15) & (zl < -1.5), dist > 0.1],
+                    [2.5, 2.0, 1.5],
+                    default=1.0,
+                )
+
+                avg_vol = np.where(df['price'] > 0, (df['dev20 latest'] + df['dev20 weekly']) / (2 * df['price']), 0.05)
+                df['vol_quality'] = np.select(
+                    [(avg_vol > 0.01) & (avg_vol < 0.03), avg_vol < 0.01, avg_vol < 0.05],
+                    [1.5, 0.8, 1.0],
+                    default=0.7,
+                )
+
                 df['conviction'] = (
                     df['signal_alignment'] * 0.35 +
                     df['divergence_score'] * 0.25 +
@@ -1169,62 +1145,6 @@ class CL3Strategy(BaseStrategy):
                     df['vol_quality'] * 0.15
                 )
                 return df
-
-            def _calc_signal_alignment(self, row):
-                signals = 0
-                if row['rsi latest'] < 30 and row['rsi weekly'] < 35:
-                    signals += 2
-                elif row['rsi latest'] < 35 or row['rsi weekly'] < 40:
-                    signals += 1
-                if row['osc latest'] < -80 and row['osc weekly'] < -60:
-                    signals += 2
-                elif row['osc latest'] < -60 or row['osc weekly'] < -40:
-                    signals += 1
-                if row['zscore latest'] < -2 and row['zscore weekly'] < -1.5:
-                    signals += 2
-                elif row['zscore latest'] < -1.5 or row['zscore weekly'] < -1:
-                    signals += 1
-                return min(2.0, signals / 3)
-
-            def _detect_divergence(self, row):
-                price_low = row['price'] < row['ma90 latest'] * 0.95
-                osc_improving = row['9ema osc latest'] > row['21ema osc latest']
-                if price_low and osc_improving and row['osc latest'] < -50:
-                    return 2.0
-                elif price_low and osc_improving:
-                    return 1.5
-                elif osc_improving and row['osc latest'] < -30:
-                    return 1.2
-                else:
-                    return 1.0
-
-            def _calc_mean_reversion(self, row):
-                if row['ma200 latest'] > 0:
-                    dist = (row['ma200 latest'] - row['price']) / row['ma200 latest']
-                else:
-                    dist = 0
-                if dist > 0.2 and row['zscore latest'] < -2:
-                    return 2.5
-                elif dist > 0.15 and row['zscore latest'] < -1.5:
-                    return 2.0
-                elif dist > 0.1:
-                    return 1.5
-                else:
-                    return 1.0
-
-            def _calc_vol_quality(self, row):
-                if row['price'] > 0:
-                    avg_vol = (row['dev20 latest'] + row['dev20 weekly']) / (2 * row['price'])
-                else:
-                    avg_vol = 0.05
-                if 0.01 < avg_vol < 0.03:
-                    return 1.5
-                elif avg_vol < 0.01:
-                    return 0.8
-                elif avg_vol < 0.05:
-                    return 1.0
-                else:
-                    return 0.7
 
             def calculate_composite_scores(self, df):
                 weights = {'rsi': 0.15, 'osc': 0.20, 'ema9': 0.15, 'ema21': 0.10, 'zscore': 0.15, 'spread': 0.15, 'bollinger': 0.10}
@@ -7690,14 +7610,41 @@ class ContrastiveLearningStrategy(BaseStrategy):
         )
         
         combined = contrastive_score * (0.6 + weekly_score * 0.5)
-        
+
         # TREND
         ma_ratio = df['ma90 latest'] / (df['ma200 latest'] + 1e-6)
         trend_mult = np.tanh((ma_ratio - 0.95) * 7) * 0.3 + 1.0
-        
+
         df['composite_score'] = combined * trend_mult
         df['composite_score'] = df['composite_score'] + 1e-6
-        
+
         total_score = df['composite_score'].sum()
         df['weightage'] = df['composite_score'] / total_score if total_score > 0 else 1 / len(df)
         return self._allocate_portfolio(df, sip_amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRATEGY REGISTRY — Auto-discovery of all BaseStrategy subclasses
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import inspect as _inspect
+from typing import Dict
+
+STRATEGY_REGISTRY: Dict[str, type] = {
+    name: cls
+    for name, cls in globals().items()
+    if _inspect.isclass(cls) and issubclass(cls, BaseStrategy) and cls is not BaseStrategy
+}
+
+
+def discover_strategies() -> Dict[str, BaseStrategy]:
+    """Instantiate every registered strategy. Returns {name: instance}."""
+    return {name: cls() for name, cls in STRATEGY_REGISTRY.items()}
+
+
+__all__ = [
+    'BaseStrategy',
+    'STRATEGY_REGISTRY',
+    'discover_strategies',
+    *STRATEGY_REGISTRY.keys(),
+]

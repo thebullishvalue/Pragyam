@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEMREK CAPITAL DESIGN SYSTEM - COLOR PALETTE
@@ -110,32 +110,6 @@ def get_chart_layout(
         )
     else:
         config['title'] = dict(text='', font=dict(size=1))
-    
-    return config
-
-
-def get_axis_config(
-    title: str = "",
-    tickformat: Optional[str] = None,
-    showgrid: bool = True,
-    zeroline: bool = False,
-) -> dict:
-    """Get standardized axis configuration."""
-    config = {
-        'showgrid': showgrid,
-        'gridcolor': COLORS['border'],
-        'gridwidth': 1,
-        'zeroline': zeroline,
-        'zerolinecolor': COLORS['muted'],
-        'zerolinewidth': 1,
-        'linecolor': COLORS['border'],
-        'tickfont': dict(color=COLORS['muted'], size=11)
-    }
-    
-    if title:
-        config['title'] = title
-    if tickformat:
-        config['tickformat'] = tickformat
     
     return config
 
@@ -296,8 +270,8 @@ def create_rolling_metrics_chart(
     rolling_std = df[return_col].rolling(window=window).std()
     rolling_sharpe = (rolling_mean / rolling_std.replace(0, np.nan)) * np.sqrt(periods_per_year)
     
-    # Downside deviation for Sortino
-    downside_returns = df[return_col].apply(lambda x: x if x < 0 else 0)
+    # Downside deviation for Sortino (clip without modifying original)
+    downside_returns = df[return_col].clip(upper=0)
     rolling_downside = downside_returns.rolling(window=window).std()
     rolling_sortino = (rolling_mean / rolling_downside.replace(0, np.nan)) * np.sqrt(periods_per_year)
     
@@ -951,7 +925,6 @@ def create_bar_chart(
 __all__ = [
     'COLORS',
     'get_chart_layout',
-    'get_axis_config',
     'create_equity_drawdown_chart',
     'create_rolling_metrics_chart',
     'create_correlation_heatmap',
@@ -960,5 +933,5 @@ __all__ = [
     'create_factor_radar',
     'create_weight_evolution_chart',
     'create_signal_heatmap',
-    'create_bar_chart'
+    'create_bar_chart',
 ]
