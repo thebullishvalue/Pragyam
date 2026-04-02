@@ -4,9 +4,12 @@ from abc import ABC, abstractmethod
 from typing import List
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
-import logging
 
-logger = logging.getLogger("strategies")
+# Import console for logging
+try:
+    from logger_config import console
+except ImportError:
+    console = None
 
 # --- Base Classes and Utilities ---
 
@@ -16,6 +19,17 @@ class BaseStrategy(ABC):
     def generate_portfolio(self, df: pd.DataFrame, sip_amount: float = 100000.0) -> pd.DataFrame:
         pass
 
+    def _validate_capital(self, sip_amount: float):
+        """Validate investment capital - Fix W3."""
+        if sip_amount <= 0:
+            raise ValueError(f"Invalid capital: {sip_amount}. Must be positive.")
+        
+        if not np.isfinite(sip_amount):
+            raise ValueError(f"Invalid capital: {sip_amount}. Must be finite.")
+        
+        if sip_amount > 1e9:  # 1000 crore sanity check
+            raise ValueError(f"Capital {sip_amount} exceeds reasonable limits (max: 1e9)")
+
     def _clean_data(self, df: pd.DataFrame, required_columns: List[str]) -> pd.DataFrame:
         """A standardized data cleaning utility for strategies."""
         missing_cols = [col for col in required_columns if col not in df.columns]
@@ -23,7 +37,7 @@ class BaseStrategy(ABC):
             raise ValueError(f"Missing required columns for this strategy: {missing_cols}")
 
         df_copy = df.copy()
-        
+
         rsi_columns = ['rsi latest', 'rsi weekly']
         for col in rsi_columns:
             if col in df_copy.columns:
@@ -38,9 +52,95 @@ class BaseStrategy(ABC):
 
         df_copy = df_copy.replace([np.inf, -np.inf], 0).fillna(0)
         return df_copy
+    
+    def _validate_multipliers(self, df: pd.DataFrame, multiplier_columns: List[str] = None):
+        """
+        Validate multiplier calculations - Fix C2 (NaN Propagation).
+        
+        Checks for NaN, inf, and zero values in multiplier columns.
+        Fills NaN with 1.0 (neutral multiplier) and logs warnings.
+        """
+        if multiplier_columns is None:
+            # Auto-detect multiplier columns
+            multiplier_columns = [col for col in df.columns if 'mult' in col.lower()]
+        
+        for col in multiplier_columns:
+            if col not in df.columns:
+                continue
+            
+            # Check for NaN
+            nan_count = df[col].isna().sum()
+            if nan_count > 0:
+                if console:
+                    console.warning(f"{nan_count} NaN values in {col} - filling with 1.0")
+                df[col] = df[col].fillna(1.0)
+            
+            # Check for inf
+            inf_count = np.isinf(df[col]).sum()
+            if inf_count > 0:
+                if console:
+                    console.warning(f"{inf_count} inf values in {col} - filling with 1.0")
+                df[col] = df[col].replace([np.inf, -np.inf], 1.0)
+        
+        return df
+    
+    def _validate_weights(self, df: pd.DataFrame, stage: str = "pre-allocation"):
+        """
+        Validate portfolio weights - Fix C2 (NaN Propagation).
+        
+        Ensures weights are finite, positive, and sum to valid value.
+        Raises ValueError if weights contain NaN after normalization.
+        """
+        if 'weightage' not in df.columns:
+            return
+        
+        # Check for NaN in weights
+        if df['weightage'].isna().any() or df['weightage'].isnull().any():
+            nan_count = df['weightage'].isna().sum()
+            raise ValueError(
+                f"Portfolio weights contain {nan_count} NaN values after {stage} - "
+                f"cannot allocate portfolio with invalid weights"
+            )
+        
+        # Check for inf in weights
+        if np.isinf(df['weightage']).any():
+            inf_count = np.isinf(df['weightage']).sum()
+            raise ValueError(
+                f"Portfolio weights contain {inf_count} inf values - cannot allocate"
+            )
+        
+        # Check for negative weights
+        if (df['weightage'] < 0).any():
+            neg_count = (df['weightage'] < 0).sum()
+            raise ValueError(
+                f"Portfolio weights contain {neg_count} negative values - cannot allocate"
+            )
+        
+        # Check total weight
+        total_weight = df['weightage'].sum()
+        if not np.isfinite(total_weight):
+            raise ValueError(
+                f"Total weight {total_weight} is not finite - cannot allocate"
+            )
+        
+        if total_weight <= 0:
+            raise ValueError(
+                f"Total weight {total_weight} is non-positive - cannot allocate"
+            )
+        
+        if total_weight > 10:  # Sanity check: should be close to 1.0
+            if console:
+                console.warning(f"Unusually high total weight: {total_weight:.2f} (expected ~1.0)")
 
     def _allocate_portfolio(self, df: pd.DataFrame, sip_amount: float) -> pd.DataFrame:
         """Standardized portfolio allocation and cash distribution logic."""
+        
+        # Validate capital first
+        self._validate_capital(sip_amount)
+        
+        # Validate weights before allocation
+        self._validate_weights(df, stage="pre-allocation")
+        
         if 'weightage' not in df.columns or df['weightage'].sum() <= 0:
             return pd.DataFrame(columns=['symbol', 'price', 'weightage_pct', 'units', 'value'])
 
@@ -52,7 +152,10 @@ class BaseStrategy(ABC):
                 df['weightage'] = df['weightage'] / total_w
             if abs(df['weightage'].sum() - 1.0) < 1e-6:
                 break
-        
+
+        # Validate weights after normalization
+        self._validate_weights(df, stage="post-normalization")
+
         df['weightage_pct'] = df['weightage'] * 100
         df = df.sort_values('weightage', ascending=False).reset_index(drop=True)
 
@@ -70,6 +173,11 @@ class BaseStrategy(ABC):
                 break # Stop if cash can't even buy the next top stock
 
         df['value'] = df['units'] * df['price']
+        
+        # Final validation of output
+        if df['units'].isna().any() or df['value'].isna().any():
+            raise ValueError("Portfolio allocation produced NaN values in units or value")
+        
         return df[['symbol', 'price', 'weightage_pct', 'units', 'value']].reset_index(drop=True)
 
 # =====================================
@@ -229,10 +337,19 @@ class PRStrategy(BaseStrategy):
             df['bollinger_mult'] * weights['bollinger']
         )
         df['final_mult'] = df['base_mult'] * df['trend_strength'] * df['weekly_oversold_boost']
+        
+        # === FIX C2: Validate multipliers before normalization ===
+        self._validate_multipliers(df, multiplier_columns=[
+            'rsi_mult', 'osc_mult', 'ema_osc_mult', '21ema_osc_mult',
+            'zscore_mult', 'spread_mult', 'bollinger_mult',
+            'trend_strength', 'weekly_oversold_boost', 'base_mult', 'final_mult'
+        ])
 
         # Normalize to weights
         total_mult = df['final_mult'].sum()
         if total_mult <= 0 or not np.isfinite(total_mult):
+            if console:
+                console.warning(f"Invalid total multiplier ({total_mult}) - using equal weight")
             df['weightage'] = 1.0 / len(df)
         else:
             df['weightage'] = df['final_mult'] / total_mult
@@ -449,12 +566,19 @@ class CL1Strategy(BaseStrategy):
             def allocate_portfolio(self, df, sip_amount):
                 """Allocate portfolio based on composite scores"""
                 df = df.sort_values('composite_score', ascending=False)
+                
+                # === FIX: Ensure all scores are positive ===
+                # StandardScaler produces negative values, shift to positive
+                min_score = df['composite_score'].min()
+                if min_score < 0:
+                    df['composite_score'] = df['composite_score'] - min_score + 0.01
+                
                 total_score = df['composite_score'].sum()
                 if total_score > 0:
                     df['weightage'] = df['composite_score'] / total_score
                 else:
                     df['weightage'] = 1 / len(df) if len(df) > 0 else 0
-                
+
                 # The parent class's _allocate_portfolio handles capping and unit calculation
                 return df
 
@@ -470,8 +594,7 @@ class CL1Strategy(BaseStrategy):
             df_prepared = analyzer.calculate_composite_score(df_prepared)
             portfolio_df = analyzer.allocate_portfolio(df_prepared, sip_amount)
             return self._allocate_portfolio(portfolio_df, sip_amount)
-        except Exception as e:
-            logger.error(f"Error in CL1Strategy portfolio generation: {str(e)}")
+        except Exception:
             raise
 
 # =====================================
@@ -901,8 +1024,7 @@ class CL2Strategy(BaseStrategy):
 
             return self._allocate_portfolio(portfolio_df, sip_amount)
 
-        except Exception as e:
-            logger.error(f"Error in CL2Strategy portfolio generation: {str(e)}")
+        except Exception:
             raise
 
 # =====================================
@@ -1197,8 +1319,7 @@ class CL3Strategy(BaseStrategy):
 
             return self._allocate_portfolio(portfolio_df, sip_amount)
 
-        except Exception as e:
-            logger.error(f"Error in CL3Strategy portfolio generation: {str(e)}")
+        except Exception:
             raise
 
 # =====================================
@@ -1453,7 +1574,7 @@ class MOM2Strategy(BaseStrategy):
             'ma20 latest', 'ma20 weekly'
         ]
         df = self._clean_data(df, required_columns)
-        
+
         df = self._calculate_statistical_factors(df)
         df = self._calculate_momentum_persistence(df)
         df = self._calculate_relative_momentum(df)
@@ -1461,12 +1582,18 @@ class MOM2Strategy(BaseStrategy):
         df = self._calculate_edge_score(df)
         df = self._construct_optimal_portfolio(df)
         
+        # === FIX: Ensure all weights are positive ===
+        # Shift composite scores to be all positive
+        min_score = df['final_composite_score'].min()
+        if min_score < 0:
+            df['final_composite_score'] = df['final_composite_score'] - min_score + 0.01  # Add small epsilon
+        
         total_score = df['final_composite_score'].sum()
         if total_score > 0:
             df['weightage'] = df['final_composite_score'] / total_score
         else:
             df['weightage'] = 1 / len(df) if len(df) > 0 else 0
-            
+
         return self._allocate_portfolio(df, sip_amount)
     
     def _calculate_statistical_factors(self, df):

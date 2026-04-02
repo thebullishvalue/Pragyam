@@ -360,3 +360,268 @@ h2 {
 ::-webkit-scrollbar-track { background: var(--background-color); }
 ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* ═══════════════════════════════════════════════════════════
+   REGIME INTELLIGENCE — Badge, Progress Bars, Signals
+   ═══════════════════════════════════════════════════════════ */
+
+/* Outer regime badge card */
+.regime-badge {
+    border: 2px solid var(--border-light);
+    border-radius: 16px;
+    padding: 1.75rem 1.5rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: box-shadow 0.3s ease;
+}
+
+.regime-badge:hover {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Subtle radial glow behind the badge using the inline border-color */
+.regime-badge::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.04) 0%, transparent 70%);
+    pointer-events: none;
+}
+
+/* Large regime icon (emoji) */
+.regime-icon {
+    font-size: 3.5rem;
+    line-height: 1;
+    margin-bottom: 0.6rem;
+    display: block;
+    animation: regime-pulse 3s ease-in-out infinite;
+}
+
+@keyframes regime-pulse {
+    0%, 100% { transform: scale(1);   opacity: 1;    }
+    50%       { transform: scale(1.06); opacity: 0.85; }
+}
+
+/* Regime label (e.g. "STRONG BULL") */
+.regime-name {
+    font-size: 1.35rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 0.3rem;
+    line-height: 1.2;
+}
+
+/* Mix sub-label (e.g. "Trend + Momentum") */
+.regime-sub {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.75rem;
+}
+
+/* Composite score (e.g. "Score: +1.42") */
+.regime-score {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.9rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Confidence row: bar + label */
+.regime-conf {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* Grey track behind the confidence fill */
+.conf-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-elevated);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* Animated fill — width & background set inline */
+.conf-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 6px currentColor;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CONVICTION SIGNALS — Heatmap & Signal Indicators
+   ═══════════════════════════════════════════════════════════ */
+
+/* Wrapper for inline signal pills */
+.signal-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 0.4rem 0;
+}
+
+/* Individual signal pill */
+.signal-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border: 1px solid transparent;
+}
+
+.signal-pill.bull  { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.4); color: #10b981; }
+.signal-pill.bear  { background: rgba(239, 68, 68,0.15); border-color: rgba(239, 68, 68,0.4); color: #ef4444; }
+.signal-pill.neut  { background: rgba(245,158,11, 0.12); border-color: rgba(245,158,11, 0.35); color: #f59e0b; }
+
+/* Dot that pulses for live / real-time indicators */
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success-green);
+    display: inline-block;
+    animation: live-pulse 1.8s ease-in-out infinite;
+    box-shadow: 0 0 0 0 rgba(16,185,129, 0.5);
+}
+
+@keyframes live-pulse {
+    0%   { box-shadow: 0 0 0 0   rgba(16,185,129, 0.5); }
+    70%  { box-shadow: 0 0 0 8px rgba(16,185,129, 0);   }
+    100% { box-shadow: 0 0 0 0   rgba(16,185,129, 0);   }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FEATURE CARDS — Landing page capability tiles
+   ═══════════════════════════════════════════════════════════ */
+
+.feature-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+    height: 100%;
+}
+
+.feature-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.35);
+    border-color: rgba(var(--primary-rgb), 0.45);
+}
+
+.feature-card .feature-icon {
+    font-size: 2.4rem;
+    margin-bottom: 0.65rem;
+    display: block;
+}
+
+.feature-card .feature-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.4rem;
+}
+
+.feature-card .feature-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TOP-LINE METRIC STRIP — Compact summary bar
+   ═══════════════════════════════════════════════════════════ */
+
+.topline-strip {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.topline-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 90px;
+}
+
+.topline-item .t-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.topline-item .t-value {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STRATEGY IMPLICATION CARD — Regime → action panel
+   ═══════════════════════════════════════════════════════════ */
+
+.implication-card {
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin: 0.5rem 0;
+    border-left-width: 4px;
+    border-left-style: solid;
+    border-top: 1px solid;
+    border-right: 1px solid;
+    border-bottom: 1px solid;
+    /* border-color, background set inline per regime */
+}
+
+.implication-card .impl-heading {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+}
+
+.implication-card .impl-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-bottom: 0.2rem;
+}
+
+.implication-card .impl-text {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    line-height: 1.55;
+}
+
+.implication-card .impl-avoid {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
