@@ -1,5 +1,5 @@
-# PRAGYAM v7.0.4 - Dependencies
-# Hemrek Capital - Conviction-Based Portfolio Intelligence
+# PRAGYAM v7.0.5 - Dependencies
+# @thebullishvalue - Conviction-Based Portfolio Intelligence
 # Python 3.10+ required
 
 # Core Framework

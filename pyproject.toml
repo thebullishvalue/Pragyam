@@ -1,7 +1,7 @@
 [project]
 name = "pragyam"
-version = "7.0.4"
-description = "Conviction-based portfolio curation for Indian equity markets using 80+ quantitative strategies — Hemrek Capital"
+version = "7.0.5"
+description = "Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.28.0",

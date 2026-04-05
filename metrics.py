@@ -11,7 +11,7 @@ Features:
 - Performance benchmarks
 - Execution summary generation
 
-Author: Hemrek Capital
+Author: @thebullishvalue
 Version: 5.0.2
 """
 
@@ -202,18 +202,17 @@ class ExecutionMetrics:
         """Print execution summary to console."""
         if console is None:
             from logger_config import console
-        
+
         console.line()
-        console.header("EXECUTION METRICS", f"Run ID: {self.run_id}")
-        
+
         # Timing summary
         console.section("Timing")
         console.item("Total Duration", f"{self.get_total_duration():.2f}s")
-        
+
         for phase_name, phase in self.phases.items():
             status_icon = "✓" if phase.status == "success" else "✗"
             console.detail(f"{phase_name}: {phase.duration:.2f}s [{status_icon}]")
-        
+
         # Counters
         console.section("Counters")
         console.item("Symbols", self.symbols_count)

@@ -5,7 +5,7 @@ PRAGYAM - Direct Console Output System
 Bypasses Python logging entirely - writes directly to stdout.
 This is the ONLY way to get clean output in Streamlit.
 
-Author: Hemrek Capital
+Author: @thebullishvalue
 Version: 4.2.0
 """
 
@@ -45,16 +45,22 @@ except Exception:
     pass
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUN IDENTIFIER - Unique for each session
+# RUN IDENTIFIER - Session-level fallback
 # ══════════════════════════════════════════════════════════════════════════════
 
-_RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
-_RUN_UUID = str(uuid.uuid4())[:8]
-RUN_IDENTIFIER = f"{_RUN_ID}_{_RUN_UUID}"
+_SESSION_RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
+_SESSION_UUID = str(uuid.uuid4())[:8]
+SESSION_RUN_IDENTIFIER = f"{_SESSION_RUN_ID}_{_SESSION_UUID}"
+
+def generate_run_id() -> str:
+    """Generate a unique Run ID for each analysis run."""
+    run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_uuid = str(uuid.uuid4())[:8]
+    return f"{run_id}_{run_uuid}"
 
 def get_run_id() -> str:
-    """Get unique run identifier for this session."""
-    return RUN_IDENTIFIER
+    """Get the session-level run identifier (fallback only)."""
+    return SESSION_RUN_IDENTIFIER
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -112,19 +118,30 @@ class ConsoleOutput:
     
     def _run_id_short(self) -> str:
         """Get short run ID."""
-        return RUN_IDENTIFIER[-12:]
-    
+        return SESSION_RUN_IDENTIFIER[-12:]
+
     def line(self, char: str = '─', length: int = 60):
         """Print a separator line."""
         self._write(f"{Colors.GRAY}{char * length}{Colors.RESET}")
-    
+
     def header(self, title: str, version: str = ""):
         """Print run header."""
         self._write()
         self.line('═', 70)
         self._write(f"  {Colors.BOLD}{Colors.CYAN}{title} {version}{Colors.RESET}")
-        self._write(f"  {Colors.GRAY}Run ID: {RUN_IDENTIFIER}{Colors.RESET}")
+        self._write(f"  {Colors.GRAY}Run ID: {SESSION_RUN_IDENTIFIER}{Colors.RESET}")
         self._write(f"  {Colors.GRAY}Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Colors.RESET}")
+        self.line('═', 70)
+        self._write()
+
+    def main_header(self, title: str, details: Dict[str, Any]):
+        """Print main run header with title and key details."""
+        self._write()
+        self.line('═', 70)
+        self._write(f"  {Colors.BOLD}{Colors.CYAN}{title}{Colors.RESET}")
+        self.line('─', 70)
+        for key, value in details.items():
+            self._write(f"  {Colors.GRAY}{key}:{Colors.RESET} {value}")
         self.line('═', 70)
         self._write()
     

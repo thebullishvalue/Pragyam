@@ -1,12 +1,12 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 7.0.4  
-**Author:** Hemrek Capital  
+**Version:** 7.0.5
+**Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
 Conviction-based portfolio curation for Indian equity markets using 80+ quantitative strategies.
 
-**Latest:** v7.0.4 adds style-aware dispersion (SIP: +125%/-50%, Swing: +225%/-75%).
+**Latest:** v7.0.5 — Production hardening, dead code removal, and refined terminal logging.
 
 ---
 
@@ -124,7 +124,7 @@ raw = (RSI_signal × 0.30 +
 conviction_score = (raw + 2) / 4 × 100
 ```
 
-### Conviction Dispersion Weighting (v7.0.4)
+### Conviction Dispersion Weighting (v7.0.5)
 
 Style-aware dispersion weighting automatically adjusts based on investment style:
 
@@ -167,7 +167,7 @@ weight_i = (adjusted_conviction_i / Σ all_adjusted_conviction) × 100
 ## Architecture
 
 ```
-PRAGYAM v7.0.4 — 2 Phases
+PRAGYAM v7.0.5 — 2 Phases
 
 ┌─────────────────────────────────────────────────────────────┐
 │ PHASE 1: DATA FETCHING                                      │
@@ -191,15 +191,15 @@ PRAGYAM v7.0.4 — 2 Phases
 
 ```
 Pragyam-02.01/
-├── app.py                    # Main UI (Streamlit) — 858 lines
-├── portfolio.py              # Conviction-based weighting — 101 lines
-├── regime.py                 # Market regime + conviction scoring — 636 lines
-├── strategies.py             # 80+ BaseStrategy implementations
+├── app.py                    # Main UI (Streamlit) — ~950 lines
+├── portfolio.py              # Conviction-based weighting — ~150 lines
+├── regime.py                 # Market regime + conviction scoring — ~640 lines
+├── strategies.py             # 95 BaseStrategy implementations
 ├── backdata.py               # Data fetching (yfinance)
-├── charts.py                 # Plotly visualizations
-├── circuit_breaker.py        # yfinance rate limiting
-├── logger_config.py          # Logging configuration
-├── metrics.py                # Execution metrics
+├── charts.py                 # Plotly visualizations — ~250 lines
+├── circuit_breaker.py        # yfinance rate limiting — ~315 lines
+├── logger_config.py          # Console output system — ~280 lines
+├── metrics.py                # Execution metrics — ~270 lines
 ├── style.css                 # UI styling
 ├── symbols.txt               # Stock universe
 ├── requirements.txt          # Dependencies
@@ -295,7 +295,7 @@ Cash Remaining: ₹12,650
 
 Proprietary Software License — See LICENSE file for details.
 
-Copyright (c) 2024-2026 Hemrek Capital. All Rights Reserved.
+Copyright (c) 2024-2026 @thebullishvalue. All Rights Reserved.
 
 ---
 
@@ -309,6 +309,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and notable changes.
 
 | Version | Date | Architecture | Execution Time | Key Feature |
 |---------|------|--------------|----------------|-------------|
+| 7.0.5 | 2026-04-05 | 2 phases | 20-40 sec | Production hardening, dead code removal |
 | 7.0.4 | 2026-04-02 | 2 phases | 20-40 sec | Style-aware dispersion (SIP/Swing) |
 | 7.0.3 | 2026-04-02 | 2 phases | 20-40 sec | Aggressive conviction dispersion (+75%/-50%) |
 | 7.0.2 | 2026-04-02 | 2 phases | 20-40 sec | Strong conviction dispersion (+40%/-30%) |
@@ -326,4 +327,4 @@ This software is for educational and research purposes only. Not financial advic
 
 ## Contact
 
-**Hemrek Capital** — Portfolio Intelligence Systems
+**@thebullishvalue** — Portfolio Intelligence Systems

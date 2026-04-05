@@ -1,5 +1,5 @@
 """
-PRAGYAM (प्रज्ञम) — Portfolio Intelligence  |  A Hemrek Capital Product
+PRAGYAM (प्रज्ञम) — Portfolio Intelligence  |  A @thebullishvalue Product
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Conviction-based portfolio curation with 80+ quantitative strategies.
 
@@ -14,8 +14,8 @@ Pipeline (2 phases):
   Phase 1: Data fetching + regime detection
   Phase 2: Conviction-based portfolio curation (ALL strategies)
 
-Version: 7.0.4
-Author: Hemrek Capital
+Version: 7.0.5
+Author: @thebullishvalue
 """
 
 import streamlit as st
@@ -27,13 +27,11 @@ import warnings
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple
 
-import plotly.graph_objects as go
-
 # Suppress warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # ── Imports ────────────────────────────────────────────────────────────────────
-from logger_config import console, RUN_IDENTIFIER, get_console
+from logger_config import console, get_console
 log = get_console()
 
 from metrics import get_metrics
@@ -80,9 +78,9 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v7.0.4"
+VERSION = "v7.0.5"
 PRODUCT_NAME = "Pragyam"
-COMPANY = "Hemrek Capital"
+COMPANY = "@thebullishvalue"
 
 st.set_page_config(
     page_title="PRAGYAM | Portfolio Intelligence",
@@ -252,47 +250,16 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
 
     if CHARTS_AVAILABLE and not portfolio_with_signals.empty:
         fig_conv = create_conviction_heatmap(portfolio_with_signals)
-        st.plotly_chart(fig_conv, use_container_width=True, key="tab1_conviction_heatmap")
+        st.plotly_chart(fig_conv, width='stretch', key="tab1_conviction_heatmap")
         st.caption(
             "Green = bullish · Red = bearish · RSI (30%) · Oscillator (30%) · Z-Score (20%) · MA (20%)"
         )
     elif not portfolio_with_signals.empty:
         conv_cols = [c for c in ["symbol", "rsi_value", "osc_value", "zscore_value", "ma_count", "conviction_score"]
                      if c in portfolio_with_signals.columns]
-        st.dataframe(portfolio_with_signals[conv_cols], use_container_width=True)
+        st.dataframe(portfolio_with_signals[conv_cols], width='stretch')
     else:
         st.info("Conviction signals unavailable.")
-
-    _section_divider()
-
-    # Position Guide
-    if "rsi_signal" in portfolio_with_signals.columns:
-        st.markdown(_section_header("Position Guide", "Entry conditions and conviction summary"), unsafe_allow_html=True)
-        guide_rows = []
-        for _, row in portfolio_with_signals.iterrows():
-            score = row.get("conviction_score", 50)
-            if score >= 65:
-                signal_text, signal_cls = "Strong Buy", "🟢"
-            elif score >= 50:
-                signal_text, signal_cls = "Buy", "🟩"
-            elif score >= 35:
-                signal_text, signal_cls = "Hold", "🟡"
-            else:
-                signal_text, signal_cls = "Caution", "🔴"
-            guide_rows.append({
-                "Symbol": row["symbol"],
-                "Weight": f"{row['weightage_pct']:.2f}%",
-                "RSI": row.get("rsi_value", "—"),
-                "Osc": row.get("osc_value", "—"),
-                "Z": row.get("zscore_value", "—"),
-                "MA": f"{int(row['ma_count'])}/5" if pd.notna(row.get("ma_count")) else "—",
-                "Conviction": f"{int(score)}/100",
-                "Signal": f"{signal_cls} {signal_text}",
-            })
-        if guide_rows:
-            gdf = pd.DataFrame(guide_rows)
-            st.markdown(_styled_table(gdf), unsafe_allow_html=True)
-            st.caption("MA = aligned moving averages out of 5 conditions.")
 
     _section_divider()
 
@@ -307,9 +274,80 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         data=buf.getvalue(),
         file_name=f"pragyam_portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width='stretch',
         key="tab1_csv_download",
     )
+
+
+def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame):
+    """Tab — Position Guide with entry conditions and conviction signals."""
+    st.markdown(_section_header(
+        "Position Guide",
+        "Entry conditions and conviction summary for all holdings"
+    ), unsafe_allow_html=True)
+
+    portfolio_with_signals = compute_conviction_signals(portfolio, current_df)
+
+    if "rsi_signal" not in portfolio_with_signals.columns:
+        st.info("Position guide signals unavailable.")
+        return
+
+    guide_rows = []
+    for _, row in portfolio_with_signals.iterrows():
+        score = row.get("conviction_score", 50)
+        if score >= 65:
+            signal_text, signal_cls = "Strong Buy", "🟢"
+        elif score >= 50:
+            signal_text, signal_cls = "Buy", "🟩"
+        elif score >= 35:
+            signal_text, signal_cls = "Hold", "🟡"
+        else:
+            signal_text, signal_cls = "Caution", "🔴"
+
+        # Format values to 2 decimal places
+        rsi_val = row.get("rsi_value")
+        osc_val = row.get("osc_value")
+        z_val = row.get("zscore_value")
+
+        guide_rows.append({
+            "Symbol": row["symbol"],
+            "Weight": f"{row['weightage_pct']:.2f}%",
+            "RSI": f"{rsi_val:.2f}" if rsi_val is not None and not pd.isna(rsi_val) else "—",
+            "Osc": f"{osc_val:.2f}" if osc_val is not None and not pd.isna(osc_val) else "—",
+            "Z": f"{z_val:.2f}" if z_val is not None and not pd.isna(z_val) else "—",
+            "MA": f"{int(row['ma_count'])}/5" if pd.notna(row.get("ma_count")) else "—",
+            "Conviction": f"{int(score)}/100",
+            "Signal": f"{signal_cls} {signal_text}",
+            "conviction_score_raw": float(score),  # Store raw score for counting
+        })
+
+    if guide_rows:
+        gdf = pd.DataFrame(guide_rows).drop(columns=["conviction_score_raw"])
+        st.markdown(_styled_table(gdf), unsafe_allow_html=True)
+        st.caption("MA = aligned moving averages out of 5 conditions.")
+
+    _section_divider()
+
+    # Summary Statistics
+    st.markdown(_section_header("Signal Distribution", "Portfolio conviction breakdown"), unsafe_allow_html=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    # Count based on raw conviction score thresholds (matches the signal assignment logic)
+    scores = [row["conviction_score_raw"] for row in guide_rows]
+    strong_buy = sum(1 for s in scores if s >= 65)
+    buy = sum(1 for s in scores if 50 <= s < 65)
+    hold = sum(1 for s in scores if 35 <= s < 50)
+    caution = sum(1 for s in scores if s < 35)
+
+    with c1:
+        st.markdown(_metric_card("Strong Buy", str(strong_buy), "High conviction (≥65)", "success"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_metric_card("Buy", str(buy), "Moderate conviction (50-64)", "primary"), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_metric_card("Hold", str(hold), "Neutral (35-49)", "warning"), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_metric_card("Caution", str(caution), "Low conviction (<35)", "danger"), unsafe_allow_html=True)
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
@@ -382,16 +420,6 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
             </div>
             """, unsafe_allow_html=True)
 
-    # Full Analysis
-    _section_divider()
-    st.markdown(_section_header("Regime Analysis", "Interpretation and implications"), unsafe_allow_html=True)
-
-    if description:
-        st.markdown(f"""<div class='info-box'><p style='margin:0;'>{description}</p></div>""", unsafe_allow_html=True)
-
-    if explanation:
-        st.markdown(explanation)
-
     # Regime History
     regime_series_to_use = regime_series
     if regime_series_to_use is None and training_data and len(training_data) >= 10:
@@ -410,7 +438,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
 
         if CHARTS_AVAILABLE:
             fig_rh = create_regime_history_chart(regime_series_to_use)
-            st.plotly_chart(fig_rh, use_container_width=True, key="tab2_regime_history")
+            st.plotly_chart(fig_rh, width='stretch', key="tab2_regime_history")
 
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -492,16 +520,16 @@ def _render_landing_page():
     st.markdown(f"""
     <div class="premium-header">
         <h1>PRAGYAM | Portfolio Intelligence</h1>
-        <div class="tagline">Conviction-Based Curation · All 80+ Strategies · Live NSE Data</div>
+        <div class="tagline">Conviction-Based Curation · All 95 Strategies · Live NSE Data</div>
     </div>
     """, unsafe_allow_html=True)
 
     st.markdown("""
     <div class='info-box welcome'>
-        <h4>Welcome to Pragyam v7.0</h4>
+        <h4>Welcome to Pragyam</h4>
         <p>
             Institutional-grade portfolio curation for Indian markets.
-            Pure conviction-based approach: all 80+ strategies run → every candidate scored → top 30 selected.
+            Pure conviction-based approach: all 95 strategies run → every candidate scored → top 30 selected.
         </p>
         <strong>To begin:</strong>
         <ol style="margin-left:20px; margin-top:10px;">
@@ -523,7 +551,7 @@ def _render_landing_page():
         st.markdown("""<div class='metric-card info'><h4>CONVICTION-BASED</h4><h2>4 Signals</h2>
         <div class='sub-metric'>RSI · Oscillator · Z-Score · MA</div></div>""", unsafe_allow_html=True)
     with c2:
-        st.markdown("""<div class='metric-card success'><h4>ALL 80+ STRATEGIES</h4><h2>No Filtering</h2>
+        st.markdown("""<div class='metric-card success'><h4>ALL 95 STRATEGIES</h4><h2>No Filtering</h2>
         <div class='sub-metric'>Maximum diversification</div></div>""", unsafe_allow_html=True)
     with c3:
         st.markdown("""<div class='metric-card primary'><h4>SIMPLE FORMULA</h4><h2>Transparent</h2>
@@ -531,6 +559,22 @@ def _render_landing_page():
     with c4:
         st.markdown("""<div class='metric-card warning'><h4>LIVE SIGNALS</h4><h2>Real-time</h2>
         <div class='sub-metric'>Per-position conviction scoring</div></div>""", unsafe_allow_html=True)
+
+    _section_divider()
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
+    st.markdown(f"""
+    <div style="text-align:center; padding:1rem 0; color:var(--text-muted); font-size:0.75rem;">
+        <span>© 2026 Pragyam</span>
+        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
+        <span>@thebullishvalue</span>
+        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
+        <span>{VERSION}</span>
+        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
+        <span>{now_ist}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _render_results(capital: float):
@@ -562,15 +606,18 @@ def _render_results(capital: float):
     _section_divider()
 
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["Portfolio", "Regime", "System"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Portfolio", "Position Guide", "Regime", "System"])
 
     with tab1:
         _render_portfolio_tab(portfolio, current_df, capital)
 
     with tab2:
-        _render_regime_tab(regime_d, st.session_state.get("regime_history_series", []), training_window)
+        _render_position_guide_tab(portfolio, current_df)
 
     with tab3:
+        _render_regime_tab(regime_d, st.session_state.get("regime_history_series", []), training_window)
+
+    with tab4:
         _render_system_tab(training_window)
 
     # Footer
@@ -579,11 +626,11 @@ def _render_results(capital: float):
     now_ist = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
     st.markdown(f"""
     <div style="text-align:center; padding:1rem 0; color:var(--text-muted); font-size:0.75rem;">
-        <span style="color:var(--primary-color); font-weight:600;">© 2026 Pragyam</span>
+        <span>© 2026 Pragyam</span>
         <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>Hemrek Capital</span>
+        <span>@thebullishvalue</span>
         <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span style="color:var(--primary-color); font-weight:600;">{VERSION}</span>
+        <span>{VERSION}</span>
         <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
         <span>{now_ist}</span>
     </div>
@@ -604,6 +651,19 @@ def _run_analysis(
     st.session_state.regime_history_series = None
 
     try:
+        # Print main header with run details
+        from logger_config import generate_run_id
+        current_run_id = generate_run_id()  # Fresh ID for each analysis
+        run_details = {
+            "Analysis Date": str(selected_date_display),
+            "Investment Style": investment_style,
+            "Capital": f"₹{capital:,.0f}",
+            "Positions": str(num_positions),
+            "Run ID": current_run_id[-12:],
+            "Started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        log.main_header(f"PRAGYAM | Portfolio Intelligence | {VERSION}", run_details)
+
         # PHASE 1: DATA FETCHING
         progress_bar = st.progress(0, text="Initializing…")
         status_text = st.empty()
@@ -614,7 +674,7 @@ def _run_analysis(
 
         progress_bar.progress(0.05, text="Fetching market data…")
         status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols from yfinance…")
-        log.section("PHASE 1: DATA FETCHING", "P1")
+        log.section("Data Fetching", "Phase 1")
         metrics.start_phase("data_fetching")
 
         if not SYMBOLS_UNIVERSE:
@@ -634,41 +694,56 @@ def _run_analysis(
         log.checkpoint(f"Loaded {len(all_hist)} days for {len(SYMBOLS_UNIVERSE)} symbols")
 
         # Regime detection
+        log.detail("Detecting market regime…")
         regime_result = _detect_regime_cached(selected_date)
+        regime_name = regime_result.get("regime", "UNKNOWN")
+        confidence = regime_result.get("confidence", 0.0)
+        log.checkpoint(f"Regime detected: {regime_name.replace('_', ' ')} ({confidence:.0%} confidence)")
+
         st.session_state.regime_result_dict = regime_result
         st.session_state.suggested_mix = regime_result.get("mix_name", "Chop/Consolidate Mix")
         st.session_state.training_data_window = all_hist
 
         if len(all_hist) < 10:
             st.error(f"Insufficient training data: {len(all_hist)} days (need ≥10).")
+            log.failure("Phase 1", f"Insufficient training data: {len(all_hist)} days")
+            metrics.end_phase("data_fetching", success=False, error_msg=f"Insufficient data: {len(all_hist)} days")
             st.stop()
 
         if not st.session_state.suggested_mix:
             st.error("Market regime could not be determined. Select a valid date.")
+            log.failure("Phase 1", "Market regime undetermined")
+            metrics.end_phase("data_fetching", success=False, error_msg="Regime undetermined")
             st.stop()
 
+        log.checkpoint(f"Validated {len(all_hist)} days of training data")
+
         st.session_state.current_df = all_hist[-1][1] if all_hist else pd.DataFrame()
-        log.checkpoint("Phase 1 complete")
+        log.checkpoint("Data ready for portfolio curation")
 
         # PHASE 2: CONVICTION-BASED CURATION
         progress_bar.progress(0.25, text="Curating portfolio…")
         status_text.text(f"Running {len(discover_strategies())} strategies…")
         sub_progress.progress(0, text="Initializing conviction scoring…")
-        log.section("PHASE 2: CONVICTION-BASED CURATION", "P2")
+        log.section("Conviction-Based Curation", "Phase 2")
         metrics.start_phase("conviction_curation")
 
         try:
+            log.detail("Loading strategies from registry…")
             strategies = discover_strategies()
             strategies_to_run = {name: strategies[name] for name in strategies if name != "System_Curated"}
 
             if not strategies_to_run:
                 st.error("No strategies available.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty strategies")
+                log.failure("Phase 2", "No strategies available")
                 st.stop()
 
+            log.checkpoint(f"Loaded {len(strategies_to_run)} strategies (excluded System_Curated)")
             log.success(f"Running ALL {len(strategies_to_run)} strategies")
 
             # Aggregate holdings
+            log.detail("Aggregating holdings across all strategies…")
             aggregated_holdings = {}
             sub_progress.progress(30, text=f"Aggregating from {len(strategies_to_run)} strategies…")
 
@@ -688,9 +763,13 @@ def _run_analysis(
             if not aggregated_holdings:
                 st.error("No holdings generated.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty holdings")
+                log.failure("Phase 2", "No holdings generated from strategies")
                 st.stop()
 
+            log.checkpoint(f"Aggregated {len(aggregated_holdings)} unique candidate symbols")
+
             sub_progress.progress(60, text=f"Computing conviction for {len(aggregated_holdings)} symbols…")
+            log.detail("Computing conviction scores and applying style dispersion…")
 
             # Conviction-based weighting with style-aware dispersion
             # SIP: +125% boost / -50% penalty | Swing: +225% boost / -75% penalty
@@ -708,13 +787,22 @@ def _run_analysis(
             if st.session_state.portfolio.empty:
                 st.error("No portfolio generated. Check data quality.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty portfolio")
+                log.failure("Phase 2", "No portfolio generated after conviction weighting")
                 st.stop()
 
-            metrics.end_phase("conviction_curation", success=True)
-            log.success(f"Curated {len(st.session_state.portfolio)} positions")
-            log.detail(f"Total value: ₹{st.session_state.portfolio['value'].sum():,.0f}")
+            log.checkpoint(f"Curated {len(st.session_state.portfolio)} positions (avg conviction: {st.session_state.portfolio.get('conviction_score', pd.Series([50])).mean():.1f}/100)")
+            log.success(f"Final portfolio: {len(st.session_state.portfolio)} positions ready")
+            log.detail(f"Total deployed value: ₹{st.session_state.portfolio['value'].sum():,.0f}")
             sub_progress.progress(100, text="✓ Complete")
             sub_progress.empty()
+
+            # End conviction_curation phase tracking
+            metrics.end_phase("conviction_curation", success=True)
+
+            # Update metrics counters
+            metrics.symbols_count = len(aggregated_holdings)
+            metrics.strategies_count = len(strategies_to_run)
+            metrics.portfolios_generated = len(st.session_state.portfolio)
 
             # Pre-compute regime history
             try:
@@ -731,7 +819,7 @@ def _run_analysis(
             top_conviction = st.session_state.portfolio.get("conviction_score", pd.Series([50])).max()
 
             log.summary("Execution Summary", {
-                "Run ID": RUN_IDENTIFIER[-12:],
+                "Run ID": current_run_id[-12:],
                 "Strategies Run": len(strategies_to_run),
                 "Candidate Symbols": len(aggregated_holdings),
                 "Positions Selected": len(st.session_state.portfolio),
@@ -777,11 +865,24 @@ def main():
             max_value=datetime.now().date(),
             help="Select the date for portfolio curation",
         )
+        
+        # Update regime display when date changes
+        previous_date = st.session_state.get("regime_date", st.session_state.get("selected_date"))
+        date_changed = previous_date != selected_date
         st.session_state.selected_date = selected_date
         selected_date_obj = datetime.combine(selected_date, datetime.min.time())
-
-        # Show regime if available
+        
+        # Auto-detect regime when date changes or if not yet detected for this date
         rd = st.session_state.get("regime_result_dict", {})
+        regime_needs_update = not rd or date_changed
+        
+        if regime_needs_update:
+            with st.spinner("Detecting regime..."):
+                rd = _detect_regime_cached(selected_date_obj)
+                st.session_state.regime_result_dict = rd
+                st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
+                # Store the date for which regime was detected to detect future changes
+                st.session_state.regime_date = selected_date
         if rd and isinstance(rd, dict):
             regime_name_sb = rd.get("regime", "UNKNOWN")
             color_sb = rd.get("color", "#888888")
@@ -805,7 +906,7 @@ def main():
         investment_style = st.selectbox(
             "Investment Style",
             options=["Swing Trading", "SIP Investment"],
-            index=1 if "SIP Investment" else 0,
+            index=0,
             help="Primary investment objective",
         )
 
@@ -832,7 +933,7 @@ def main():
 
         _section_divider()
 
-        run_clicked = st.button("Run Analysis", type="primary", use_container_width=True)
+        run_clicked = st.button("Run Analysis", type="primary", width='stretch')
 
         if run_clicked:
             _run_analysis(
@@ -845,7 +946,7 @@ def main():
         <div class='info-box'>
             <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
                 <strong>Version:</strong> {VERSION}<br>
-                <strong>Engine:</strong> Conviction-Based Curation (All 80+ Strategies)<br>
+                <strong>Engine:</strong> Conviction-Based Curation<br>
                 <strong>Data:</strong> Live yfinance (NSE)
             </p>
         </div>

@@ -17,7 +17,7 @@ Regime Hierarchy (composite score, descending):
   STRONG_BULL (≥1.50) → BULL (≥1.00) → WEAK_BULL (≥0.50)
   → CHOP (≥0.10) → WEAK_BEAR (≥−0.10) → BEAR (≥−0.50) → CRISIS (<−0.50)
 
-Author: Hemrek Capital
+Author: @thebullishvalue
 Version: 2.0.0
 """
 

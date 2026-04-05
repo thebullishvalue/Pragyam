@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.5] - 2026-04-05
+
+### 🧹 Removed
+
+**Dead Code & Stale Files**
+- Removed `docs/PROCESS_ARCHITECTURE.md` — described obsolete v6.0.0 4-phase architecture
+- Removed `docs/STRATEGY_GUIDE.md` — described TOPSIS optimization removed in v7.0.0
+- Removed 11 unused chart functions from `charts.py` (~1,000 lines):
+  `create_equity_drawdown_chart`, `create_rolling_metrics_chart`, `create_correlation_heatmap`,
+  `create_tier_sharpe_heatmap`, `create_risk_return_scatter`, `create_factor_radar`,
+  `create_weight_evolution_chart`, `create_signal_heatmap`, `create_bar_chart`,
+  `create_regime_factor_bars`, `create_portfolio_breakdown_chart`
+- Removed dead functions from `circuit_breaker.py`:
+  `google_sheets_circuit`, `get_yfinance_circuit()`, `protect_with_circuit()`
+- Removed unused `import plotly.graph_objects as go` from `app.py`
+
+### ✨ Added
+
+**Enhanced Terminal Logging**
+- Added main run header with analysis date, investment style, capital, positions, Run ID, and timestamp
+- Added detailed checkpoints for every critical step in Phase 1 and Phase 2
+- Per-run unique Run ID generated on each "Run Analysis" click (previously session-scoped)
+- Signal Distribution card counts now based on raw conviction scores instead of fragile string parsing
+
+**Position Guide Tab**
+- Moved Position Guide section from Portfolio tab into dedicated tab
+- Added signal distribution summary with conviction breakdown metrics
+
+**Market Regime Auto-Detection**
+- Sidebar regime display now updates automatically when analysis date changes (no "Run Analysis" required)
+
+### 🔧 Changed
+
+- Simplified section headers from `P1: PHASE 1: DATA FETCHING` → `Phase 1: Data Fetching` (eliminated redundancy)
+- Removed redundant "Regime Analysis" text section from Regime tab
+- Updated `metrics.py` counters to populate correctly (symbols, strategies, portfolios)
+- Fixed `conviction_curation` phase timing (previously showed 0.00s)
+- Removed redundant `EXECUTION METRICS` header from `metrics.print_summary()`
+- Replaced deprecated `use_container_width=True` with `width='stretch'` (Streamlit compatibility)
+
+### 🐛 Fixed
+
+- Investment style selector default index always evaluated to 1 (SIP) — now correctly defaults to 0 (Swing Trading)
+- Signal Distribution card counts misclassified positions due to emoji-prefixed signal strings
+
+---
+
 ## [7.0.4] - 2026-04-02
 
 ### ✨ Added
@@ -259,4 +306,4 @@ If you need walk-forward evaluation:
 
 ---
 
-**PRAGYAM** — Portfolio Intelligence | Hemrek Capital
+**PRAGYAM** — Portfolio Intelligence | @thebullishvalue

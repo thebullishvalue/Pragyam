@@ -1,5 +1,5 @@
 /*
- * PRAGYAM - Hemrek Capital Design System
+ * PRAGYAM - @thebullishvalue Design System
  * ═══════════════════════════════════════
  * Dark theme with gold primary accent (#FFC300).
  * Consistent with Nirnay and other Pragyam Product Family members.
@@ -31,16 +31,23 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-.main, [data-testid="stSidebar"] {
+.main,
+[data-testid="stSidebar"] {
     background-color: var(--background-color);
     color: var(--text-primary);
 }
 
-.stApp > header {
+.stApp>header {
     background-color: transparent;
 }
 
-#MainMenu {visibility: hidden;} footer {visibility: hidden;}
+#MainMenu {
+    visibility: hidden;
+}
+
+footer {
+    visibility: hidden;
+}
 
 .block-container {
     padding-top: 3.5rem;
@@ -119,7 +126,7 @@ button[kind="header"] {
     left: 0;
     right: 0;
     bottom: 0;
-    background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb),0.08) 0%, transparent 50%);
+    background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb), 0.08) 0%, transparent 50%);
     pointer-events: none;
 }
 
@@ -154,7 +161,7 @@ button[kind="header"] {
 
 .metric-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
     border-color: var(--border-light);
 }
 
@@ -182,13 +189,33 @@ button[kind="header"] {
     font-weight: 500;
 }
 
-.metric-card.success h2 { color: var(--success-green); }
-.metric-card.danger h2 { color: var(--danger-red); }
-.metric-card.warning h2 { color: var(--warning-amber); }
-.metric-card.info h2 { color: var(--info-cyan); }
-.metric-card.neutral h2 { color: var(--neutral); }
-.metric-card.primary h2 { color: var(--primary-color); }
-.metric-card.white h2 { color: var(--text-primary); }
+.metric-card.success h2 {
+    color: var(--success-green);
+}
+
+.metric-card.danger h2 {
+    color: var(--danger-red);
+}
+
+.metric-card.warning h2 {
+    color: var(--warning-amber);
+}
+
+.metric-card.info h2 {
+    color: var(--info-cyan);
+}
+
+.metric-card.neutral h2 {
+    color: var(--neutral);
+}
+
+.metric-card.primary h2 {
+    color: var(--primary-color);
+}
+
+.metric-card.white h2 {
+    color: var(--text-primary);
+}
 
 .status-badge {
     display: inline-flex;
@@ -274,7 +301,7 @@ button[kind="header"] {
     border-radius: 16px;
     overflow: hidden;
     border: 1px solid var(--border-color);
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .stMarkdown table th,
@@ -298,7 +325,11 @@ button[kind="header"] {
     background-color: var(--bg-elevated);
 }
 
-.stTabs [data-baseweb="tab-list"] { gap: 24px; background: transparent; }
+.stTabs [data-baseweb="tab-list"] {
+    gap: 24px;
+    background: transparent;
+}
+
 .stTabs [data-baseweb="tab"] {
     color: var(--text-muted);
     border-bottom: 2px solid transparent;
@@ -306,22 +337,27 @@ button[kind="header"] {
     background: transparent;
     font-weight: 600;
 }
+
 .stTabs [aria-selected="true"] {
     color: var(--primary-color);
     border-bottom: 2px solid var(--primary-color);
     background: transparent !important;
 }
-.stPlotlyChart, .stDataFrame {
+
+.stPlotlyChart,
+.stDataFrame {
     border-radius: 12px;
     background-color: var(--secondary-background-color);
     padding: 10px;
     border: 1px solid var(--border-color);
     box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1);
 }
+
 h2 {
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 10px;
 }
+
 .section-divider {
     height: 1px;
     background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%);
@@ -356,10 +392,23 @@ h2 {
     margin-bottom: 0.75rem;
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--background-color); }
-::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background-color);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--border-light);
+}
 
 /* ═══════════════════════════════════════════════════════════
    REGIME INTELLIGENCE — Badge, Progress Bars, Signals
@@ -385,7 +434,7 @@ h2 {
     content: '';
     position: absolute;
     inset: 0;
-    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.04) 0%, transparent 70%);
+    background: radial-gradient(ellipse at 50% 30%, rgba(255, 255, 255, 0.04) 0%, transparent 70%);
     pointer-events: none;
 }
 
@@ -399,8 +448,17 @@ h2 {
 }
 
 @keyframes regime-pulse {
-    0%, 100% { transform: scale(1);   opacity: 1;    }
-    50%       { transform: scale(1.06); opacity: 0.85; }
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.06);
+        opacity: 0.85;
+    }
 }
 
 /* Regime label (e.g. "STRONG BULL") */
@@ -482,9 +540,23 @@ h2 {
     border: 1px solid transparent;
 }
 
-.signal-pill.bull  { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.4); color: #10b981; }
-.signal-pill.bear  { background: rgba(239, 68, 68,0.15); border-color: rgba(239, 68, 68,0.4); color: #ef4444; }
-.signal-pill.neut  { background: rgba(245,158,11, 0.12); border-color: rgba(245,158,11, 0.35); color: #f59e0b; }
+.signal-pill.bull {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #10b981;
+}
+
+.signal-pill.bear {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.signal-pill.neut {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #f59e0b;
+}
 
 /* Dot that pulses for live / real-time indicators */
 .live-dot {
@@ -494,13 +566,21 @@ h2 {
     background: var(--success-green);
     display: inline-block;
     animation: live-pulse 1.8s ease-in-out infinite;
-    box-shadow: 0 0 0 0 rgba(16,185,129, 0.5);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
 }
 
 @keyframes live-pulse {
-    0%   { box-shadow: 0 0 0 0   rgba(16,185,129, 0.5); }
-    70%  { box-shadow: 0 0 0 8px rgba(16,185,129, 0);   }
-    100% { box-shadow: 0 0 0 0   rgba(16,185,129, 0);   }
+    0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+    }
+
+    70% {
+        box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -519,7 +599,7 @@ h2 {
 
 .feature-card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 12px 36px rgba(0,0,0,0.35);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
     border-color: rgba(var(--primary-rgb), 0.45);
 }
 

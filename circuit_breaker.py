@@ -11,7 +11,7 @@ Features:
 - Configurable thresholds
 - Retry with exponential backoff
 
-Author: Hemrek Capital
+Author: @thebullishvalue
 Version: 5.0.2
 """
 
@@ -301,36 +301,13 @@ class RetryWithBackoff:
         return wrapper
 
 
-# Global circuit breakers for different services
+# ══════════════════════════════════════════════════════════════════════════════
+# GLOBAL CIRCUIT BREAKERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-# yfinance API circuit breaker
+# yfinance API circuit breaker — used by backdata.py for fault-tolerant fetches
 yfinance_circuit = CircuitBreaker(
     name="yfinance",
     failure_threshold=5,
-    recovery_timeout=60.0
+    recovery_timeout=60.0,
 )
-
-# Google Sheets circuit breaker (if used)
-google_sheets_circuit = CircuitBreaker(
-    name="google_sheets",
-    failure_threshold=3,
-    recovery_timeout=30.0
-)
-
-
-def get_yfinance_circuit() -> CircuitBreaker:
-    """Get the yfinance circuit breaker."""
-    return yfinance_circuit
-
-
-def protect_with_circuit(func: Callable, name: str = "default") -> Callable:
-    """
-    Protect function with a named circuit breaker.
-    
-    Usage:
-        @protect_with_circuit("my_service")
-        def my_function():
-            ...
-    """
-    breaker = CircuitBreaker(name=name)
-    return breaker.protect(func)
