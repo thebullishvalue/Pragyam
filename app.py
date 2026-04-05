@@ -281,11 +281,6 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
 
 def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame):
     """Tab — Position Guide with entry conditions and conviction signals."""
-    st.markdown(_section_header(
-        "Position Guide",
-        "Entry conditions and conviction summary for all holdings"
-    ), unsafe_allow_html=True)
-
     portfolio_with_signals = compute_conviction_signals(portfolio, current_df)
 
     if "rsi_signal" not in portfolio_with_signals.columns:
@@ -318,22 +313,14 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             "MA": f"{int(row['ma_count'])}/5" if pd.notna(row.get("ma_count")) else "—",
             "Conviction": f"{int(score)}/100",
             "Signal": f"{signal_cls} {signal_text}",
-            "conviction_score_raw": float(score),  # Store raw score for counting
+            "conviction_score_raw": float(score),
         })
 
-    if guide_rows:
-        gdf = pd.DataFrame(guide_rows).drop(columns=["conviction_score_raw"])
-        st.markdown(_styled_table(gdf), unsafe_allow_html=True)
-        st.caption("MA = aligned moving averages out of 5 conditions.")
-
-    _section_divider()
-
-    # Summary Statistics
+    # ── Signal Distribution ──────────────────────────────────────────────
     st.markdown(_section_header("Signal Distribution", "Portfolio conviction breakdown"), unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4)
 
-    # Count based on raw conviction score thresholds (matches the signal assignment logic)
     scores = [row["conviction_score_raw"] for row in guide_rows]
     strong_buy = sum(1 for s in scores if s >= 65)
     buy = sum(1 for s in scores if 50 <= s < 65)
@@ -348,6 +335,19 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         st.markdown(_metric_card("Hold", str(hold), "Neutral (35-49)", "warning"), unsafe_allow_html=True)
     with c4:
         st.markdown(_metric_card("Caution", str(caution), "Low conviction (<35)", "danger"), unsafe_allow_html=True)
+
+    _section_divider()
+
+    # ── Position Guide Table ───────────────────────────────────────────────
+    st.markdown(_section_header(
+        "Position Guide",
+        "Entry conditions and conviction summary for all holdings"
+    ), unsafe_allow_html=True)
+
+    if guide_rows:
+        gdf = pd.DataFrame(guide_rows).drop(columns=["conviction_score_raw"])
+        st.markdown(_styled_table(gdf), unsafe_allow_html=True)
+        st.caption("MA = aligned moving averages out of 5 conditions.")
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
