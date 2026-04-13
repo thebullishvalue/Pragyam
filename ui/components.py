@@ -336,7 +336,7 @@ def render_theme_toggle() -> None:
     Persists preference in localStorage.
     """
     import streamlit as st
-    st.iframe(
+    st.components.v1.html(
         """
         <div class="theme-toggle" id="theme-toggle" title="Toggle theme" onclick="toggleTheme()">
             <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
