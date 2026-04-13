@@ -1,1 +1,1 @@
-"""Pragyam v7.0.5 — UI layer: Obsidian Quant Terminal design language."""
+"""Pragyam v7.2.1 — UI layer: Obsidian Quant Terminal design language."""
