@@ -19,6 +19,7 @@ Author: @thebullishvalue
 """
 
 import streamlit as st
+from streamlit.components.v1 import html as st_html
 import pandas as pd
 import numpy as np
 import os
@@ -35,6 +36,23 @@ from logger_config import console, get_console
 log = get_console()
 
 from metrics import get_metrics
+from ui.theme import inject_css, VERSION, PRODUCT_NAME, COMPANY, progress_bar
+from ui.components import (
+    render_header,
+    render_section_header,
+    render_metric_card,
+    render_info_box,
+    render_system_card,
+    section_gap,
+    render_conviction_signal,
+    render_warning_box,
+    render_chart_skeleton,
+    render_collapsible_section,
+    render_collapsible_section_close,
+    render_theme_toggle,
+    render_export_button_row,
+    render_interpretation_card,
+)
 from regime import (
     MarketRegimeDetector,
     REGIME_COLORS,
@@ -89,13 +107,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Load CSS
-_css_path = os.path.join(os.path.dirname(__file__), "style.css")
-try:
-    with open(_css_path, encoding="utf-8") as _f:
-        st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
-except FileNotFoundError:
-    pass
+# Load Obsidian Quant Terminal CSS
+inject_css()
+
+# Render theme toggle (dark/light mode)
+render_theme_toggle()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -190,67 +206,135 @@ def _section_divider():
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
-def _metric_card(label: str, value: str, sub: str = "", cls: str = "neutral") -> str:
-    """Generate metric card HTML."""
-    sub_html = f"<div class='sub-metric'>{sub}</div>" if sub else ""
-    return f"<div class='metric-card {cls}'><h4>{label}</h4><h2>{value}</h2>{sub_html}</div>"
-
-
-def _styled_table(df: pd.DataFrame, format_dict: Dict[str, str] = None) -> str:
-    """Render styled HTML table from DataFrame."""
-    df_s = df.copy()
-    rename = {}
-    for col in df_s.columns:
-        f = col.replace("_", " ").replace("pct", "%").replace("dd", "DD").replace("hhi", "HHI").title()
-        f = f.replace("Cagr", "CAGR").replace("Dd", "DD").replace("Hhi", "HHI")
-        rename[col] = f
-    df_s = df_s.rename(columns=rename)
-    styled = df_s.style
-    if format_dict:
-        new_fmt = {rename.get(k, k): v for k, v in format_dict.items()}
-        styled = styled.format(new_fmt, na_rep="—")
-    return styled.set_table_attributes('class="stMarkdown table"').hide(axis="index").to_html()
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB RENDERERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, capital: float):
     """Tab 1 — Curated portfolio with conviction signal overlay."""
-    st.markdown(_section_header(
+    render_section_header(
         "Curated Portfolio Holdings",
-        f"{len(portfolio)} positions · conviction-based curation"
-    ), unsafe_allow_html=True)
+        f"{len(portfolio)} positions · conviction-based curation",
+        icon="briefcase",
+        accent="amber",
+    )
 
     portfolio_with_signals = compute_conviction_signals(portfolio, current_df)
 
-    # Portfolio table
-    display_df = portfolio[["symbol", "price", "units", "weightage_pct", "value"]].rename(columns={
-        "symbol": "Symbol",
-        "price": "Price (₹)",
-        "units": "Units",
-        "weightage_pct": "Weight %",
-        "value": "Value (₹)",
-    })
-    styled = display_df.style.format({
-        "Price (₹)": "{:,.2f}",
-        "Value (₹)": "{:,.2f}",
-        "Units": "{:,.0f}",
-        "Weight %": "{:.2f}%",
-    }).set_table_attributes('class="stMarkdown table"').hide(axis="index")
-    st.markdown(styled.to_html(), unsafe_allow_html=True)
+    # Portfolio table — Custom HTML with inline CSS via st_html
+    import html as html_module
+    
+    table_rows = []
+    for _, row in portfolio.iterrows():
+        symbol_escaped = html_module.escape(str(row["symbol"]))
+        table_rows.append(
+            f'<tr>'
+            f'<td class="symbol">{symbol_escaped}</td>'
+            f'<td class="numeric currency">&#8377;{row["price"]:,.2f}</td>'
+            f'<td class="numeric">{row["units"]:,.0f}</td>'
+            f'<td class="numeric percentage">{row["weightage_pct"]:.2f}%</td>'
+            f'<td class="numeric currency">&#8377;{row["value"]:,.2f}</td>'
+            f'</tr>'
+        )
+
+    # Full HTML with inline CSS for iframe rendering
+    table_html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: 'IBM Plex Mono', monospace; 
+            background: transparent;
+            color: #F1F5F9;
+            padding: 0.5rem;
+        }}
+        .portfolio-table {{
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: linear-gradient(145deg, rgba(17, 24, 39, 0.45) 0%, rgba(17, 24, 39, 0.4) 100%);
+        }}
+        .portfolio-table table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .portfolio-table thead th {{
+            background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0.85) 100%);
+            color: #4B5563;
+            font-size: 0.62rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 0.75rem 1rem;
+            border-bottom: 2px solid rgba(212, 168, 83, 0.3);
+            text-align: left;
+        }}
+        .portfolio-table thead th.numeric {{ text-align: right; }}
+        .portfolio-table tbody tr {{
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            transition: background 0.2s ease;
+        }}
+        .portfolio-table tbody tr:nth-child(odd) {{ background: rgba(255, 255, 255, 0.01); }}
+        .portfolio-table tbody tr:nth-child(even) {{ background: rgba(255, 255, 255, 0.005); }}
+        .portfolio-table tbody tr:hover {{ background: rgba(212, 168, 83, 0.05); }}
+        .portfolio-table tbody td {{
+            padding: 0.75rem 1rem;
+            color: #F1F5F9;
+        }}
+        .portfolio-table tbody td.symbol {{
+            font-weight: 700;
+            font-size: 0.78rem;
+            letter-spacing: 0.02em;
+            font-family: 'Space Grotesk', sans-serif;
+        }}
+        .portfolio-table tbody td.numeric {{
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }}
+    </style>
+    </head>
+    <body>
+    <div class="portfolio-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th class="numeric">Price (&#8377;)</th>
+                    <th class="numeric">Units</th>
+                    <th class="numeric">Weight %</th>
+                    <th class="numeric">Value (&#8377;)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"".join(table_rows)}
+            </tbody>
+        </table>
+    </div>
+    </body>
+    </html>
+    '''
+
+    table_height = max(280, 220 + len(portfolio) * 42)
+    st_html(table_html, height=table_height, scrolling=False)
 
     # Conviction Signal Heatmap
     _section_divider()
-    st.markdown(_section_header(
+    render_section_header(
         "Conviction Signals",
-        "Real-time indicator alignment — RSI · Oscillator · Z-Score · MA Alignment"
-    ), unsafe_allow_html=True)
+        "Real-time indicator alignment — RSI · Oscillator · Z-Score · MA Alignment",
+        icon="activity",
+        accent="cyan",
+    )
 
     if CHARTS_AVAILABLE and not portfolio_with_signals.empty:
+        st.markdown('<div class="chart-container portfolio">', unsafe_allow_html=True)
         fig_conv = create_conviction_heatmap(portfolio_with_signals)
         st.plotly_chart(fig_conv, width='stretch', key="tab1_conviction_heatmap")
+        st.markdown('</div>', unsafe_allow_html=True)
         st.caption(
             "Green = bullish · Red = bearish · RSI (30%) · Oscillator (30%) · Z-Score (20%) · MA (20%)"
         )
@@ -287,76 +371,198 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         st.info("Position guide signals unavailable.")
         return
 
-    guide_rows = []
-    for _, row in portfolio_with_signals.iterrows():
-        score = row.get("conviction_score", 50)
-        if score >= 65:
-            signal_text, signal_cls = "Strong Buy", "🟢"
-        elif score >= 50:
-            signal_text, signal_cls = "Buy", "🟩"
-        elif score >= 35:
-            signal_text, signal_cls = "Hold", "🟡"
-        else:
-            signal_text, signal_cls = "Caution", "🔴"
-
-        # Format values to 2 decimal places
-        rsi_val = row.get("rsi_value")
-        osc_val = row.get("osc_value")
-        z_val = row.get("zscore_value")
-
-        guide_rows.append({
-            "Symbol": row["symbol"],
-            "Weight": f"{row['weightage_pct']:.2f}%",
-            "RSI": f"{rsi_val:.2f}" if rsi_val is not None and not pd.isna(rsi_val) else "—",
-            "Osc": f"{osc_val:.2f}" if osc_val is not None and not pd.isna(osc_val) else "—",
-            "Z": f"{z_val:.2f}" if z_val is not None and not pd.isna(z_val) else "—",
-            "MA": f"{int(row['ma_count'])}/5" if pd.notna(row.get("ma_count")) else "—",
-            "Conviction": f"{int(score)}/100",
-            "Signal": f"{signal_cls} {signal_text}",
-            "conviction_score_raw": float(score),
-        })
-
     # ── Signal Distribution ──────────────────────────────────────────────
-    st.markdown(_section_header("Signal Distribution", "Portfolio conviction breakdown"), unsafe_allow_html=True)
+    render_section_header("Signal Distribution", "Portfolio conviction breakdown", icon="target")
 
     c1, c2, c3, c4 = st.columns(4)
 
-    scores = [row["conviction_score_raw"] for row in guide_rows]
+    scores = []
+    for _, row in portfolio_with_signals.iterrows():
+        score = row.get("conviction_score", 50)
+        scores.append(float(score))
+
     strong_buy = sum(1 for s in scores if s >= 65)
     buy = sum(1 for s in scores if 50 <= s < 65)
     hold = sum(1 for s in scores if 35 <= s < 50)
     caution = sum(1 for s in scores if s < 35)
 
     with c1:
-        st.markdown(_metric_card("Strong Buy", str(strong_buy), "High conviction (≥65)", "success"), unsafe_allow_html=True)
+        render_metric_card("Strong Buy", str(strong_buy), "High conviction (≥65)", "success")
     with c2:
-        st.markdown(_metric_card("Buy", str(buy), "Moderate conviction (50-64)", "primary"), unsafe_allow_html=True)
+        render_metric_card("Buy", str(buy), "Moderate conviction (50-64)", "info")
     with c3:
-        st.markdown(_metric_card("Hold", str(hold), "Neutral (35-49)", "warning"), unsafe_allow_html=True)
+        render_metric_card("Hold", str(hold), "Neutral (35-49)", "warning")
     with c4:
-        st.markdown(_metric_card("Caution", str(caution), "Low conviction (<35)", "danger"), unsafe_allow_html=True)
+        render_metric_card("Caution", str(caution), "Low conviction (<35)", "danger")
 
     _section_divider()
 
-    # ── Position Guide Table ───────────────────────────────────────────────
-    st.markdown(_section_header(
+    # ── Position Guide Table ─────────────────────────────────────────────
+    render_section_header(
         "Position Guide",
-        "Entry conditions and conviction summary for all holdings"
-    ), unsafe_allow_html=True)
+        "Entry conditions and conviction summary for all holdings",
+        icon="crosshair",
+    )
 
-    if guide_rows:
-        gdf = pd.DataFrame(guide_rows).drop(columns=["conviction_score_raw"])
-        st.markdown(_styled_table(gdf), unsafe_allow_html=True)
-        st.caption("MA = aligned moving averages out of 5 conditions.")
+    if portfolio_with_signals.empty:
+        st.info("No position guide data available.")
+        return
+
+    # Build single unified table sorted by conviction score
+    import html as html_module
+
+    # Tier colors mapping
+    tier_colors = {
+        'Strong Buy': ('#34D399', '#6EE7B7', 'rgba(52, 211, 153, 0.15)', 'rgba(52, 211, 153, 0.3)'),
+        'Buy': ('#6EE7B7', '#A7F3D0', 'rgba(52, 211, 153, 0.1)', 'rgba(52, 211, 153, 0.2)'),
+        'Hold': ('#D4A853', '#E8C478', 'rgba(212, 168, 83, 0.15)', 'rgba(212, 168, 83, 0.3)'),
+        'Caution': ('#FB7185', '#FDA4AF', 'rgba(251, 113, 133, 0.15)', 'rgba(251, 113, 133, 0.3)'),
+    }
+
+    # Sort by conviction score descending
+    sorted_df = portfolio_with_signals.sort_values('conviction_score', ascending=False).reset_index(drop=True)
+
+    table_rows = []
+    for _, row in sorted_df.iterrows():
+        score = row.get("conviction_score", 50)
+        rsi_val = row.get("rsi_value")
+        osc_val = row.get("osc_value")
+        z_val = row.get("zscore_value")
+        ma_count = row.get("ma_count", 0)
+        price = row.get("price", 0)
+        weight = row.get("weightage_pct", 0)
+
+        # Determine tier
+        if score >= 65:
+            tier_name = "Strong Buy"
+            emoji = "🟢"
+        elif score >= 50:
+            tier_name = "Buy"
+            emoji = "🟩"
+        elif score >= 35:
+            tier_name = "Hold"
+            emoji = "🟡"
+        else:
+            tier_name = "Caution"
+            emoji = "🔴"
+
+        primary_color, bright_color, bg_color, border_color = tier_colors[tier_name]
+
+        # Format signal values
+        rsi_str = f"{rsi_val:.2f}" if rsi_val is not None and not pd.isna(rsi_val) else "—"
+        osc_str = f"{osc_val:.2f}" if osc_val is not None and not pd.isna(osc_val) else "—"
+        z_str = f"{z_val:.2f}" if z_val is not None and not pd.isna(z_val) else "—"
+        ma_str = f"{int(ma_count)}/5" if pd.notna(ma_count) else "—"
+
+        symbol_escaped = html_module.escape(str(row["symbol"]))
+
+        table_rows.append(
+            f'<tr>'
+            f'<td class="symbol">{symbol_escaped}</td>'
+            f'<td class="numeric currency">&#8377;{price:,.2f}</td>'
+            f'<td class="numeric"><span style="color: {bright_color};">{emoji} {tier_name}</span></td>'
+            f'<td class="numeric" style="color: {bright_color}; font-weight: 600;">{int(score)}</td>'
+            f'<td class="numeric">{rsi_str}</td>'
+            f'<td class="numeric">{osc_str}</td>'
+            f'<td class="numeric">{z_str}</td>'
+            f'<td class="numeric">{ma_str}</td>'
+            f'<td class="numeric percentage">{weight:.2f}%</td>'
+            f'</tr>'
+        )
+
+    table_html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'IBM Plex Mono', monospace;
+            background: transparent;
+            color: #F1F5F9;
+            padding: 0.5rem 0.5rem 1.5rem 0.5rem;
+        }}
+        .portfolio-table {{
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: linear-gradient(145deg, rgba(17, 24, 39, 0.45) 0%, rgba(17, 24, 39, 0.4) 100%);
+        }}
+        .portfolio-table table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .portfolio-table thead th {{
+            background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0.85) 100%);
+            color: #4B5563;
+            font-size: 0.62rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 0.75rem 0.75rem;
+            border-bottom: 2px solid rgba(212, 168, 83, 0.3);
+            text-align: left;
+            white-space: nowrap;
+        }}
+        .portfolio-table thead th.numeric {{ text-align: right; }}
+        .portfolio-table tbody tr {{
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            transition: background 0.2s ease;
+        }}
+        .portfolio-table tbody tr:nth-child(odd) {{ background: rgba(255, 255, 255, 0.01); }}
+        .portfolio-table tbody tr:nth-child(even) {{ background: rgba(255, 255, 255, 0.005); }}
+        .portfolio-table tbody tr:hover {{ background: rgba(212, 168, 83, 0.05); }}
+        .portfolio-table tbody td {{
+            padding: 0.75rem 0.75rem;
+            color: #F1F5F9;
+            vertical-align: middle;
+            font-size: 0.75rem;
+        }}
+        .portfolio-table tbody td.symbol {{
+            font-weight: 700;
+            font-size: 0.78rem;
+            letter-spacing: 0.02em;
+            font-family: 'Space Grotesk', sans-serif;
+        }}
+        .portfolio-table tbody td.numeric {{
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }}
+    </style>
+    </head>
+    <body>
+    <div class="portfolio-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th class="numeric">Price (&#8377;)</th>
+                    <th class="numeric">Signal</th>
+                    <th class="numeric">Conviction</th>
+                    <th class="numeric">RSI</th>
+                    <th class="numeric">Osc</th>
+                    <th class="numeric">Z</th>
+                    <th class="numeric">MA</th>
+                    <th class="numeric">Weight %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"".join(table_rows)}
+            </tbody>
+        </table>
+    </div>
+    </body>
+    </html>
+    '''
+
+    table_height = max(280, 220 + len(sorted_df) * 42)
+    st_html(table_html, height=table_height, scrolling=False)
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
     """Tab 2 — Market regime analysis."""
-    st.markdown(_section_header(
-        "Regime Intelligence",
-        "7-factor composite scoring · 30-day history"
-    ), unsafe_allow_html=True)
-
     if not regime_result:
         st.info("Run analysis to populate regime data.")
         return
@@ -372,7 +578,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     factors_raw = regime_result.get("factors", {})
 
     # Current Regime Banner
-    st.markdown(_section_header("Current Market Regime", "10-day indicator window"), unsafe_allow_html=True)
+    render_section_header("Current Market Regime", "10-day indicator window", icon="eye")
 
     col_badge, col_factors = st.columns([1, 2])
 
@@ -429,7 +635,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
 
     if regime_series_to_use and len(regime_series_to_use) > 0:
         _section_divider()
-        st.markdown(_section_header("Regime Score History", "Rolling 10-day composite"), unsafe_allow_html=True)
+        render_section_header("Regime Score History", "Rolling 10-day composite", icon="activity", accent="emerald")
 
         regimes_seq = [r.regime for r in regime_series_to_use]
         transitions = sum(1 for i in range(1, len(regimes_seq)) if regimes_seq[i] != regimes_seq[i-1])
@@ -437,33 +643,51 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
         prev_regime = regimes_seq[-2] if len(regimes_seq) > 1 else "—"
 
         if CHARTS_AVAILABLE:
+            st.markdown('<div class="chart-container regime">', unsafe_allow_html=True)
             fig_rh = create_regime_history_chart(regime_series_to_use)
             st.plotly_chart(fig_rh, width='stretch', key="tab2_regime_history")
+            st.markdown('</div>', unsafe_allow_html=True)
 
         c1, c2, c3 = st.columns(3)
+
+        # Map regime names to semantic metric card colors
+        # Matches actual regimes from regime.py: STRONG_BULL, BULL, WEAK_BULL,
+        # CHOP, WEAK_BEAR, BEAR, CRISIS, UNKNOWN
+        def regime_color(regime: str) -> str:
+            r = regime.upper().replace("-", "_")
+            if r in ("STRONG_BULL", "BULL", "WEAK_BULL"):
+                return "success"   # emerald — bullish
+            elif r in ("BEAR", "CRISIS"):
+                return "danger"    # rose — bearish/crisis
+            elif r == "WEAK_BEAR":
+                return "warning"   # amber — cautionary
+            elif r in ("CHOP", "UNKNOWN"):
+                return "info"      # cyan — neutral/choppy
+            return "neutral"       # slate — fallback
+
         with c1:
-            st.markdown(_metric_card("Transitions", str(transitions), "Over analysis window", "info"), unsafe_allow_html=True)
+            render_metric_card("Transitions", str(transitions), "Over analysis window", "info")
         with c2:
-            st.markdown(_metric_card("Current", last_regime.replace("_", " "), "Latest", "primary"), unsafe_allow_html=True)
+            render_metric_card("Current", last_regime.replace("_", " "), "Latest", regime_color(last_regime))
         with c3:
-            st.markdown(_metric_card("Prior", prev_regime.replace("_", " "), "Previous", "neutral"), unsafe_allow_html=True)
+            render_metric_card("Prior", prev_regime.replace("_", " "), "Previous", regime_color(prev_regime))
 
 
 def _render_system_tab(training_window: List):
     """Tab 3 — System information."""
-    st.markdown(_section_header("System & Execution Details", "Configuration and metadata"), unsafe_allow_html=True)
+    render_section_header("System & Execution Details", "Configuration and metadata", icon="cpu")
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(_metric_card("Analysis Date", str(st.session_state.get("selected_date", "N/A")), "Portfolio date", "primary"), unsafe_allow_html=True)
+        render_metric_card("Analysis Date", str(st.session_state.get("selected_date", "N/A")), "Portfolio date", "info")
     with c2:
         portfolio_val = st.session_state.get("portfolio")
         num_positions = len(portfolio_val) if portfolio_val is not None and not portfolio_val.empty else 0
-        st.markdown(_metric_card("Positions", str(num_positions), "Current holdings", "info"), unsafe_allow_html=True)
+        render_metric_card("Positions", str(num_positions), "Current holdings", "info")
 
     _section_divider()
 
-    st.markdown(_section_header("Configuration", "System settings"), unsafe_allow_html=True)
+    render_section_header("Configuration", "System settings", icon="settings")
 
     details = {
         "Version": VERSION,
@@ -476,103 +700,117 @@ def _render_system_tab(training_window: List):
     }
 
     details_df = pd.DataFrame([{"Setting": k, "Value": v} for k, v in details.items()])
-    st.markdown(_styled_table(details_df), unsafe_allow_html=True)
+    st.dataframe(details_df, width='stretch', hide_index=True)
 
     _section_divider()
 
-    st.markdown(_section_header("Technical Information", "Conviction scoring and weighting"), unsafe_allow_html=True)
+    render_section_header("Technical Information", "Conviction scoring and weighting", icon="target")
 
     c1, c2 = st.columns(2)
 
     with c1:
-        st.markdown("""
-        <div class='metric-card primary'>
-            <h4>📊 Conviction Scoring</h4>
-            <h2 style='font-size:1.1rem; font-weight:600;'>0-100 Range</h2>
-            <div class='sub-metric'>
-                <strong>Signals:</strong> RSI (30%) · Oscillator (30%)<br>
-                Z-Score (20%) · MA Alignment (20%)<br><br>
-                <strong>Formula:</strong> (raw + 2) / 4 × 100
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_metric_card(
+            "📊 Conviction Scoring",
+            "0-100 Range",
+            "Signals: RSI (30%) · Oscillator (30%)<br>Z-Score (20%) · MA Alignment (20%)<br><br>Formula: (raw + 2) / 4 × 100",
+            "info"
+        )
 
     with c2:
-        st.markdown("""
-        <div class='metric-card success'>
-            <h4>⚖️ Portfolio Weighting</h4>
-            <h2 style='font-size:1.1rem; font-weight:600;'>(conviction / total) × 100</h2>
-            <div class='sub-metric'>
-                <strong>Bounds:</strong> Min 1% · Max 10%<br>
-                <strong>Selection:</strong> Top 30 by conviction<br><br>
-                <strong>No threshold:</strong> All symbols eligible
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_metric_card(
+            "⚖️ Portfolio Weighting",
+            "(conviction / total) × 100",
+            "Bounds: Min 1% · Max 10%<br>Selection: Top 30 by conviction<br><br>No threshold: All symbols eligible",
+            "success"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_header() -> None:
+    """Render the main masthead header (matches Nishkarsh design)."""
+    render_header(
+        title=f"{PRODUCT_NAME}",
+        tagline="Conviction-Based Portfolio Curation · All 95 Strategies · Live NSE Data"
+    )
+
+
 def _render_landing_page():
-    """Render landing page when no portfolio is available."""
-    st.markdown(f"""
-    <div class="premium-header">
-        <h1>PRAGYAM | Portfolio Intelligence</h1>
-        <div class="tagline">Conviction-Based Curation · All 95 Strategies · Live NSE Data</div>
-    </div>
-    """, unsafe_allow_html=True)
+    """Render landing page when no portfolio is available.
+    
+    Exact Nishkarsh design thesis: 3 system cards in a row, followed by landing prompt.
+    Adapted for Pragyam's portfolio intelligence features.
+    """
+    # Three system cards — Portfolio, Regime, Strategies
+    section_gap()
 
+    col1, col2, col3 = st.columns(3, gap="small")
+
+    with col1:
+        st.markdown("""
+        <div class='system-card portfolio'>
+            <h3>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                PORTFOLIO
+            </h3>
+            <p>Conviction-based portfolio curation with composite scoring across four technical indicators for precision selection.</p>
+            <div class='spec'>
+                <span>Signals:</span> RSI (30%) + Osc (30%) + Z (20%) + MA (20%)<br>
+                <span>Selection:</span> Top 30 by conviction score<br>
+                <span>Weighting:</span> (conviction / total) × 100<br>
+                <span>Dispersion:</span> SIP + Swing modes
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class='system-card regime'>
+            <h3>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                REGIME
+            </h3>
+            <p>Seven-factor market regime detection with composite scoring for adaptive portfolio positioning and risk management.</p>
+            <div class='spec'>
+                <span>Regimes:</span> Strong Bull · Bull · Neutral · Bear<br>
+                <span>Factors:</span> Momentum · Trend · Breadth · Velocity<br>
+                <span>Output:</span> Confidence score + mix classification<br>
+                <span>History:</span> 30-day rolling window
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown("""
+        <div class='system-card strategies'>
+            <h3>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                STRATEGIES
+            </h3>
+            <p>Ninety-five quantitative strategies running in parallel across momentum, reversal, breakout, and pattern recognition.</p>
+            <div class='spec'>
+                <span>Categories:</span> Momentum + Reversal + Breakout<br>
+                <span>Universe:</span> Nifty 500 + F&O symbols<br>
+                <span>Style:</span> SIP + Swing trading dispersion<br>
+                <span>Strategies:</span> 95 parallel engines
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    section_gap()
+    
+    # Landing prompt
     st.markdown("""
-    <div class='info-box welcome'>
-        <h4>Welcome to Pragyam</h4>
-        <p>
-            Institutional-grade portfolio curation for Indian markets.
-            Pure conviction-based approach: all 95 strategies run → every candidate scored → top 30 selected.
-        </p>
-        <strong>To begin:</strong>
-        <ol style="margin-left:20px; margin-top:10px;">
-            <li>Select <strong>Analysis Date</strong> in the sidebar.</li>
-            <li>Choose <strong>Investment Style</strong>.</li>
-            <li>Set <strong>Capital</strong> and <strong>Number of Positions</strong>.</li>
-            <li>Click <strong>Run Analysis</strong>.</li>
-        </ol>
-        <p style="margin-top:1rem; font-weight:600; color:var(--primary-color);">
-            Pure conviction scoring — no strategy bias, no historical performance chasing.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    _section_divider()
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown("""<div class='metric-card info'><h4>CONVICTION-BASED</h4><h2>4 Signals</h2>
-        <div class='sub-metric'>RSI · Oscillator · Z-Score · MA</div></div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown("""<div class='metric-card success'><h4>ALL 95 STRATEGIES</h4><h2>No Filtering</h2>
-        <div class='sub-metric'>Maximum diversification</div></div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown("""<div class='metric-card primary'><h4>SIMPLE FORMULA</h4><h2>Transparent</h2>
-        <div class='sub-metric'>weight = (conviction / total) × 100</div></div>""", unsafe_allow_html=True)
-    with c4:
-        st.markdown("""<div class='metric-card warning'><h4>LIVE SIGNALS</h4><h2>Real-time</h2>
-        <div class='sub-metric'>Per-position conviction scoring</div></div>""", unsafe_allow_html=True)
-
-    _section_divider()
-
-    ist = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
-    st.markdown(f"""
-    <div style="text-align:center; padding:1rem 0; color:var(--text-muted); font-size:0.75rem;">
-        <span>© 2026 Pragyam</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>@thebullishvalue</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>{VERSION}</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>{now_ist}</span>
+    <div class='landing-prompt'>
+        <h4>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            AWAITING PARAMETERS
+        </h4>
+        <p>Configure via the <strong>Sidebar</strong>: select <strong>Analysis Date</strong>, <strong>Investment Style</strong>, <strong>Capital</strong>, and <strong>Number of Positions</strong>.<br>
+           Execute <strong>Run Analysis</strong> to run all 95 strategies and curate a conviction-based portfolio.<br>
+           <span style="color:var(--ink-secondary); font-size:0.85em; margin-top:0.5rem; display:inline-block;">System will detect market regime · Score conviction signals · Optimize weights</span></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -591,19 +829,30 @@ def _render_results(capital: float):
     total_value = portfolio["value"].sum()
     cash_remaining = capital - total_value
 
-    # Top metrics
+    # Top metrics — logical color coding
     mc1, mc2, mc3, mc4 = st.columns(4)
+
+    # Cash health: <5% = danger, <15% = warning, else = success
+    cash_pct = (cash_remaining / capital * 100) if capital > 0 else 0
+    cash_color = "danger" if cash_pct < 5 else ("warning" if cash_pct < 15 else "success")
+
+    # Avg conviction health: <35 = danger, 35-49 = warning, 50-64 = info, >=65 = success
+    avg_conv = portfolio.get("conviction_score", pd.Series([50])).mean()
+    conv_color = "danger" if avg_conv < 35 else ("warning" if avg_conv < 50 else ("info" if avg_conv < 65 else "success"))
+
     with mc1:
-        st.markdown(f"<div class='metric-card primary'><h4>Deployed</h4><h2>₹{total_value:,.0f}</h2></div>", unsafe_allow_html=True)
+        render_metric_card("Deployed", f"₹{total_value:,.0f}", f"{total_value/capital*100:.0f}% of capital", "info")
     with mc2:
-        st.markdown(f"<div class='metric-card neutral'><h4>Cash</h4><h2>₹{cash_remaining:,.0f}</h2></div>", unsafe_allow_html=True)
+        render_metric_card("Cash", f"₹{cash_remaining:,.0f}", f"{cash_pct:.1f}% remaining", cash_color)
     with mc3:
-        st.markdown(f"<div class='metric-card info'><h4>Positions</h4><h2>{len(portfolio)}</h2></div>", unsafe_allow_html=True)
+        render_metric_card("Positions", str(len(portfolio)), "Curated holdings", "warning")
     with mc4:
-        avg_conv = portfolio.get("conviction_score", pd.Series([50])).mean()
-        st.markdown(f"<div class='metric-card success'><h4>Avg Conviction</h4><h2>{avg_conv:.0f}/100</h2></div>", unsafe_allow_html=True)
+        render_metric_card("Avg Conviction", f"{avg_conv:.0f}/100", "Portfolio-wide average", conv_color)
 
     _section_divider()
+
+    # Tab background pattern
+    st.markdown('<div class="tab-bg portfolio"></div>', unsafe_allow_html=True)
 
     # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["Portfolio", "Position Guide", "Regime", "System"])
@@ -623,16 +872,12 @@ def _render_results(capital: float):
     # Footer
     _section_divider()
     ist = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
+    now_ist = datetime.now(ist)
     st.markdown(f"""
-    <div style="text-align:center; padding:1rem 0; color:var(--text-muted); font-size:0.75rem;">
-        <span>© 2026 Pragyam</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>@thebullishvalue</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>{VERSION}</span>
-        <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
-        <span>{now_ist}</span>
+    <div class="app-footer">
+        <div class="content">
+            © {now_ist.year} <strong>Pragyam</strong> &nbsp;·&nbsp; @thebullishvalue &nbsp;·&nbsp; v{VERSION} &nbsp;·&nbsp; {now_ist.strftime("%Y-%m-%d %H:%M:%S IST")}
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -664,17 +909,14 @@ def _run_analysis(
         }
         log.main_header(f"PRAGYAM | Portfolio Intelligence | {VERSION}", run_details)
 
-        # PHASE 1: DATA FETCHING
-        progress_bar = st.progress(0, text="Initializing…")
-        status_text = st.empty()
-        sub_progress = st.progress(0, text="")
+        # Custom styled progress container (matches Nishkarsh)
+        progress_container = st.empty()
 
+        # PHASE 1: DATA FETCHING
+        progress_bar(progress_container, 2, "Fetching market data", f"yfinance · {len(SYMBOLS_UNIVERSE)} symbols")
         metrics.start_phase("total_execution")
         LOOKBACK_FILES = 100
 
-        progress_bar.progress(0.05, text="Fetching market data…")
-        status_text.text(f"Downloading {len(SYMBOLS_UNIVERSE)} symbols from yfinance…")
-        log.section("Data Fetching", "Phase 1")
         metrics.start_phase("data_fetching")
 
         if not SYMBOLS_UNIVERSE:
@@ -689,16 +931,13 @@ def _run_analysis(
         metrics.end_phase("data_fetching", success=True, items=len(all_hist))
         metrics.days_count = len(all_hist)
 
-        progress_bar.progress(0.20, text="Data loaded.")
-        status_text.text("Detecting market regime…")
-        log.checkpoint(f"Loaded {len(all_hist)} days for {len(SYMBOLS_UNIVERSE)} symbols")
+        progress_bar(progress_container, 15, "Data loaded", f"{len(all_hist)} days · {len(SYMBOLS_UNIVERSE)} symbols")
 
         # Regime detection
-        log.detail("Detecting market regime…")
+        progress_bar(progress_container, 20, "Detecting market regime", "7-factor composite scoring")
         regime_result = _detect_regime_cached(selected_date)
         regime_name = regime_result.get("regime", "UNKNOWN")
         confidence = regime_result.get("confidence", 0.0)
-        log.checkpoint(f"Regime detected: {regime_name.replace('_', ' ')} ({confidence:.0%} confidence)")
 
         st.session_state.regime_result_dict = regime_result
         st.session_state.suggested_mix = regime_result.get("mix_name", "Chop/Consolidate Mix")
@@ -706,46 +945,34 @@ def _run_analysis(
 
         if len(all_hist) < 10:
             st.error(f"Insufficient training data: {len(all_hist)} days (need ≥10).")
-            log.failure("Phase 1", f"Insufficient training data: {len(all_hist)} days")
             metrics.end_phase("data_fetching", success=False, error_msg=f"Insufficient data: {len(all_hist)} days")
             st.stop()
 
         if not st.session_state.suggested_mix:
             st.error("Market regime could not be determined. Select a valid date.")
-            log.failure("Phase 1", "Market regime undetermined")
             metrics.end_phase("data_fetching", success=False, error_msg="Regime undetermined")
             st.stop()
 
-        log.checkpoint(f"Validated {len(all_hist)} days of training data")
-
         st.session_state.current_df = all_hist[-1][1] if all_hist else pd.DataFrame()
-        log.checkpoint("Data ready for portfolio curation")
+
+        progress_bar(progress_container, 25, "Phase 1 complete", "Data acquisition ready")
 
         # PHASE 2: CONVICTION-BASED CURATION
-        progress_bar.progress(0.25, text="Curating portfolio…")
-        status_text.text(f"Running {len(discover_strategies())} strategies…")
-        sub_progress.progress(0, text="Initializing conviction scoring…")
-        log.section("Conviction-Based Curation", "Phase 2")
+        progress_bar(progress_container, 25, "Running strategies", f"95 strategies · {len(SYMBOLS_UNIVERSE)} candidates")
         metrics.start_phase("conviction_curation")
 
         try:
-            log.detail("Loading strategies from registry…")
             strategies = discover_strategies()
             strategies_to_run = {name: strategies[name] for name in strategies if name != "System_Curated"}
 
             if not strategies_to_run:
                 st.error("No strategies available.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty strategies")
-                log.failure("Phase 2", "No strategies available")
                 st.stop()
 
-            log.checkpoint(f"Loaded {len(strategies_to_run)} strategies (excluded System_Curated)")
-            log.success(f"Running ALL {len(strategies_to_run)} strategies")
-
             # Aggregate holdings
-            log.detail("Aggregating holdings across all strategies…")
             aggregated_holdings = {}
-            sub_progress.progress(30, text=f"Aggregating from {len(strategies_to_run)} strategies…")
+            progress_bar(progress_container, 35, "Aggregating holdings", f"Processing {len(strategies_to_run)} strategies")
 
             for name, strategy in strategies_to_run.items():
                 try:
@@ -763,13 +990,9 @@ def _run_analysis(
             if not aggregated_holdings:
                 st.error("No holdings generated.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty holdings")
-                log.failure("Phase 2", "No holdings generated from strategies")
                 st.stop()
 
-            log.checkpoint(f"Aggregated {len(aggregated_holdings)} unique candidate symbols")
-
-            sub_progress.progress(60, text=f"Computing conviction for {len(aggregated_holdings)} symbols…")
-            log.detail("Computing conviction scores and applying style dispersion…")
+            progress_bar(progress_container, 50, "Computing conviction", f"{len(aggregated_holdings)} candidates")
 
             # Conviction-based weighting with style-aware dispersion
             # SIP: +125% boost / -50% penalty | Swing: +225% boost / -75% penalty
@@ -787,14 +1010,9 @@ def _run_analysis(
             if st.session_state.portfolio.empty:
                 st.error("No portfolio generated. Check data quality.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty portfolio")
-                log.failure("Phase 2", "No portfolio generated after conviction weighting")
                 st.stop()
 
-            log.checkpoint(f"Curated {len(st.session_state.portfolio)} positions (avg conviction: {st.session_state.portfolio.get('conviction_score', pd.Series([50])).mean():.1f}/100)")
-            log.success(f"Final portfolio: {len(st.session_state.portfolio)} positions ready")
-            log.detail(f"Total deployed value: ₹{st.session_state.portfolio['value'].sum():,.0f}")
-            sub_progress.progress(100, text="✓ Complete")
-            sub_progress.empty()
+            progress_bar(progress_container, 85, "Portfolio curated", f"{len(st.session_state.portfolio)} positions")
 
             # End conviction_curation phase tracking
             metrics.end_phase("conviction_curation", success=True)
@@ -811,10 +1029,8 @@ def _run_analysis(
                 st.session_state.regime_history_series = []
 
             metrics.end_phase("total_execution", success=True)
-            progress_bar.progress(1.0, text="Complete!")
-            status_text.text(f"Portfolio: {len(st.session_state.portfolio)} positions ready")
+            progress_bar(progress_container, 100, "Analysis complete", f"Portfolio: {len(st.session_state.portfolio)} positions ready")
 
-            log.section("ANALYSIS COMPLETE", "DONE")
             avg_conviction = st.session_state.portfolio.get("conviction_score", pd.Series([50])).mean()
             top_conviction = st.session_state.portfolio.get("conviction_score", pd.Series([50])).max()
 
@@ -828,20 +1044,35 @@ def _run_analysis(
                 "Status": "SUCCESS",
             })
             metrics.print_summary(log)
-            progress_bar.empty()
-            status_text.empty()
+            
+            # Clear progress container after short delay
+            import time
+            time.sleep(1.5)
+            progress_container.empty()
+            
             st.toast("Analysis Complete!", icon="✅")
 
         except Exception as e:
             metrics.end_phase("total_execution", success=False, error_msg=str(e))
-            log.failure("Analysis", str(e))
             st.error(f"Analysis failed: {e}")
-            progress_bar.empty()
-            status_text.empty()
+            progress_container.empty()
 
     except Exception as e:
-        log.failure("Initialization", str(e))
         st.error(f"Initialization failed: {e}")
+
+
+def _render_footer() -> None:
+    """Render the app footer with copyright and version info."""
+    utc_now = datetime.now(timezone.utc)
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    st.markdown(
+        f'<div class="app-footer">'
+        f'<div class="content">'
+        f'© {ist_now.year} <strong>{PRODUCT_NAME}</strong> &nbsp;·&nbsp; {COMPANY} &nbsp;·&nbsp; v{VERSION} &nbsp;·&nbsp; {ist_now.strftime("%Y-%m-%d %H:%M:%S IST")}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def main():
@@ -850,32 +1081,35 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.markdown("""
-        <div style="text-align:center; padding:1rem 0; margin-bottom:1rem;">
-            <div style="font-size:1.75rem; font-weight:800; color:#FFC300;">PRAGYAM</div>
-            <div style="color:#888; font-size:0.75rem; margin-top:0.25rem;">प्रज्ञम | Portfolio Intelligence</div>
+        st.markdown(
+            """
+        <div style="text-align:center;padding:0.75rem 0 1rem 0;">
+            <div style="font-family:var(--display);font-size:1.5rem;font-weight:700;color:var(--amber);letter-spacing:0.06em;">PRAGYAM</div>
+            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.65rem;margin-top:0.2rem;letter-spacing:0.08em;text-transform:uppercase;">प्रज्ञम | Portfolio Intelligence</div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-title">📅 Analysis Date</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Analysis Date</div>', unsafe_allow_html=True)
         selected_date = st.date_input(
             "Select Date",
             value=datetime.now().date(),
             max_value=datetime.now().date(),
             help="Select the date for portfolio curation",
         )
-        
+
         # Update regime display when date changes
         previous_date = st.session_state.get("regime_date", st.session_state.get("selected_date"))
         date_changed = previous_date != selected_date
         st.session_state.selected_date = selected_date
         selected_date_obj = datetime.combine(selected_date, datetime.min.time())
-        
+
         # Auto-detect regime when date changes or if not yet detected for this date
         rd = st.session_state.get("regime_result_dict", {})
         regime_needs_update = not rd or date_changed
-        
+
         if regime_needs_update:
             with st.spinner("Detecting regime..."):
                 rd = _detect_regime_cached(selected_date_obj)
@@ -891,18 +1125,18 @@ def main():
             st.markdown(f"""
             <div style="background:{color_sb}12; border:1px solid {color_sb}40; border-radius:10px;
                         padding:12px; margin:10px 0 20px 0;">
-                <div style="color:#888; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:4px;">Market Regime</div>
-                <div style="color:{color_sb}; font-size:1.1rem; font-weight:700; line-height:1.2;">
+                <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
+                <div style="color:{color_sb}; font-size:1.1rem; font-weight:700; line-height:1.2; font-family:var(--display);">
                     {rd.get('icon', '')} {regime_name_sb.replace('_', ' ')}
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-                    <span style="color:#888; font-size:0.75rem;">Score {score_sb:+.2f}</span>
-                    <span style="color:{color_sb}; font-weight:700; font-size:0.8rem;">{conf_sb:.0%} confidence</span>
+                    <span style="color:var(--ink-tertiary); font-size:0.75rem; font-family:var(--data);">Score {score_sb:+.2f}</span>
+                    <span style="color:{color_sb}; font-weight:700; font-size:0.8rem; font-family:var(--data);">{conf_sb:.0%} confidence</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-title">💼 Portfolio Style</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Portfolio Style</div>', unsafe_allow_html=True)
         investment_style = st.selectbox(
             "Investment Style",
             options=["Swing Trading", "SIP Investment"],
@@ -910,7 +1144,7 @@ def main():
             help="Primary investment objective",
         )
 
-        st.markdown('<div class="sidebar-title">⚙️ Portfolio Parameters</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Portfolio Parameters</div>', unsafe_allow_html=True)
         capital = st.number_input(
             "Capital (₹)",
             min_value=1000,
@@ -919,6 +1153,8 @@ def main():
             step=1000,
             help="Total capital to allocate"
         )
+        st.session_state["capital"] = capital
+
         num_positions = st.slider(
             "Number of Positions",
             min_value=5,
@@ -936,27 +1172,46 @@ def main():
         run_clicked = st.button("Run Analysis", type="primary", width='stretch')
 
         if run_clicked:
-            _run_analysis(
-                selected_date_obj, investment_style, capital,
-                num_positions, selected_date,
-            )
+            # Store params in session state so they persist across rerun
+            st.session_state["run_params"] = {
+                "selected_date_obj": selected_date_obj,
+                "investment_style": investment_style,
+                "capital": capital,
+                "num_positions": num_positions,
+                "selected_date": selected_date,
+            }
+            st.session_state["run_analysis"] = True
+            st.rerun()
 
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown(f"""
-        <div class='info-box'>
-            <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
-                <strong>Version:</strong> {VERSION}<br>
-                <strong>Engine:</strong> Conviction-Based Curation<br>
-                <strong>Data:</strong> Live yfinance (NSE)
-            </p>
+        <div class='system-spec'>
+            <div class='spec-row'><span class='spec-label'>Version</span><span class='spec-value'>{VERSION}</span></div>
+            <div class='spec-row'><span class='spec-label'>System</span><span class='spec-value'>Conviction-Based</span></div>
+            <div class='spec-row'><span class='spec-label'>Data</span><span class='spec-value'>yfinance</span></div>
         </div>
         """, unsafe_allow_html=True)
 
-    # Main content
-    if st.session_state.portfolio is None:
+    # Main content area
+    # ─── Show progress bar in main area (outside sidebar) when running analysis ───
+    if st.session_state.get("run_analysis") and st.session_state.get("run_params"):
+        params = st.session_state["run_params"]
+        _run_analysis(
+            params["selected_date_obj"], params["investment_style"],
+            params["capital"], params["num_positions"], params["selected_date"],
+        )
+        # Clear the flag after analysis completes
+        st.session_state.pop("run_analysis", None)
+        st.session_state.pop("run_params", None)
+
+    if st.session_state.portfolio is None and not st.session_state.get("run_analysis"):
+        _render_header()
         _render_landing_page()
-    else:
-        _render_results(capital)
+        _render_footer()
+    elif st.session_state.portfolio is not None:
+        # Get capital from session state or default
+        display_capital = st.session_state.get("capital", 2500000)
+        _render_results(display_capital)
 
 
 if __name__ == "__main__":
