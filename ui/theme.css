@@ -608,22 +608,20 @@ footer {
    System cards (landing page)
    ================================================================ */
 
-/* Force equal-height columns in Streamlit's grid */
+/* Equal-height columns — single source of truth (flex, not grid) */
 [data-testid="stHorizontalBlock"] {
-    display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: var(--sp-3) !important;
+    display: flex !important;
+    align-items: stretch !important;
 }
 
-[data-testid="stHorizontalBlock"]>div {
+[data-testid="stHorizontalBlock"]>div,
+[data-testid="stHorizontalBlock"]>div>div,
+[data-testid="stHorizontalBlock"]>div>div>div {
+    display: flex !important;
+    flex-direction: column !important;
     height: 100% !important;
 }
 
-[data-testid="stHorizontalBlock"]>div>div {
-    height: 100% !important;
-}
-
-/* Fallback for 3-column layouts */
 .stColumns>div {
     height: 100% !important;
 }
@@ -983,22 +981,7 @@ footer {
     z-index: 1;
 }
 
-/* ================================================================
-   Equal-height column containers for metric cards
-   ================================================================ */
-[data-testid="stHorizontalBlock"] {
-    display: flex !important;
-    align-items: stretch !important;
-}
-
-[data-testid="stHorizontalBlock"]>div,
-[data-testid="stHorizontalBlock"]>div>div,
-[data-testid="stHorizontalBlock"]>div>div>div {
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-}
-
+/* Equal-height columns defined above — DRY, single source */
 .metric-card .sub-metric {
     font-family: var(--data);
     font-size: 0.68rem;
@@ -3667,5 +3650,259 @@ footer {
     .section-hdr,
     .chart-container {
         will-change: transform, opacity;
+    }
+}
+
+/* ================================================================
+   MOBILE PERFORMANCE — Reduce GPU load on small screens
+   ================================================================ */
+@media (max-width: 768px) {
+
+    /* Disable expensive backdrop-filter on mobile */
+    .metric-card,
+    .system-card,
+    .signal-card,
+    .position-card,
+    .stPlotlyChart,
+    [data-testid="stSidebar"] {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+
+    /* Reduce infinite animations on mobile (keep 1 cycle, stop) */
+    .system-card::before,
+    .conviction-bar-fill::after,
+    .progress-bar-fill::after,
+    .skeleton-pulse {
+        animation-iteration-count: 1 !important;
+        animation-duration: 3s !important;
+    }
+
+    .landing-prompt::before {
+        animation-duration: 12s !important;
+    }
+
+    .landing-prompt h4 svg {
+        animation-duration: 4s !important;
+    }
+
+    /* Remove GPU-heavy hover states on touch */
+    .section-hdr:hover .icon {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .section-hdr:hover .icon svg {
+        transform: none;
+        filter: none;
+    }
+
+    .stButton>button::before {
+        display: none;
+    }
+}
+
+/* ================================================================
+   TABLE RESPONSIVE — Horizontal scroll on narrow screens
+   ================================================================ */
+@media (max-width: 992px) {
+
+    .portfolio-table,
+    [data-testid="stDataFrame"],
+    .stMarkdown table {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .portfolio-table table,
+    [data-testid="stDataFrame"] table,
+    .stMarkdown table {
+        min-width: 600px;
+    }
+}
+
+/* ================================================================
+   FIXED-POSITION ELEMENTS — Prevent overlap on mobile
+   ================================================================ */
+@media (max-width: 768px) {
+
+    /* Theme toggle — move below header */
+    .theme-toggle {
+        position: relative !important;
+        top: auto !important;
+        right: auto !important;
+        margin: var(--sp-2) auto;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: fit-content;
+    }
+
+    /* Sidebar hint — hide on mobile (no sidebar overlap risk) */
+    .sidebar-hint {
+        display: none !important;
+    }
+
+    /* Keyboard shortcuts — hide on mobile */
+    .kbd-shortcuts {
+        display: none !important;
+    }
+}
+
+/* ================================================================
+   METRIC TOOLTIP — Prevent overflow on small screens
+   ================================================================ */
+@media (max-width: 480px) {
+
+    .metric-tooltip-text {
+        max-width: 200px;
+        right: -40px;
+        font-size: 0.6rem;
+    }
+}
+
+/* ================================================================
+   LANDSCAPE PHONE — Handle width > height at narrow breakpoints
+   ================================================================ */
+@media (max-width: 992px) and (orientation: landscape) {
+
+    .block-container {
+        padding-top: var(--sp-4) !important;
+        padding-bottom: var(--sp-4) !important;
+    }
+
+    .premium-header {
+        margin-bottom: var(--sp-6) !important;
+    }
+
+    .premium-header h1 {
+        font-size: 1.6rem !important;
+    }
+
+    .premium-header .tagline {
+        font-size: 0.55rem !important;
+    }
+
+    /* Reduce card minimum heights in landscape */
+    .metric-card {
+        min-height: 70px !important;
+        padding: var(--sp-3) var(--sp-3) !important;
+    }
+
+    .metric-card h2 {
+        font-size: 1.1rem !important;
+    }
+
+    .system-card {
+        min-height: 180px !important;
+    }
+
+    /* Charts shorter in landscape */
+    .stPlotlyChart>div {
+        height: 220px !important;
+    }
+}
+
+/* ================================================================
+   BLOCK CONTAINER — Better mobile spacing
+   ================================================================ */
+@media (max-width: 768px) {
+
+    .block-container {
+        max-width: 100%;
+        padding-left: var(--sp-3) !important;
+        padding-right: var(--sp-3) !important;
+    }
+
+    /* Landing prompt padding reduced on mobile */
+    .landing-prompt {
+        padding: var(--sp-5) var(--sp-4) !important;
+    }
+
+    /* System spec card tighter on mobile */
+    .system-spec {
+        padding: var(--sp-2) var(--sp-3) !important;
+    }
+
+    .spec-row {
+        font-size: 0.55rem !important;
+    }
+
+    .spec-label {
+        font-size: 0.5rem !important;
+    }
+
+    .spec-value {
+        font-size: 0.55rem !important;
+    }
+}
+
+/* ================================================================
+   480px ADDITIONAL — Fill gaps in existing breakpoints
+   ================================================================ */
+@media (max-width: 480px) {
+
+    /* Section headers not yet scaled */
+    .section-hdr .text h3 {
+        font-size: 0.85rem !important;
+    }
+
+    /* System cards tighter */
+    .system-card {
+        padding: var(--sp-4) !important;
+        min-height: 200px !important;
+    }
+
+    .system-card h3 {
+        font-size: 0.8rem !important;
+    }
+
+    .system-card p {
+        font-size: 0.7rem !important;
+    }
+
+    .system-card .spec {
+        font-size: 0.6rem !important;
+    }
+
+    /* Metric cards minimal */
+    .metric-card {
+        min-height: 80px !important;
+        padding: var(--sp-3) !important;
+    }
+
+    .metric-card h4 {
+        font-size: 0.55rem !important;
+    }
+
+    .metric-card h2 {
+        font-size: 1rem !important;
+    }
+
+    /* Position guide tables */
+    .position-card {
+        padding: var(--sp-3) !important;
+    }
+
+    .position-card-header {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: var(--sp-2);
+    }
+
+    .position-card-signals {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* Regime badge compact */
+    .regime-badge {
+        padding: var(--sp-3) !important;
+    }
+
+    /* Info/warning boxes compact */
+    .info-box,
+    .warning-box,
+    .interp-card {
+        padding: var(--sp-3) var(--sp-4) !important;
     }
 }
