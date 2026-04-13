@@ -7,76 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [7.2.1] - 2026-04-13
-
-### 🚀 Deployment Readiness & Code Cleanup
-
-**Thesis**
-- Production hardening: removed all dead code, improved error handling, added deployment infrastructure
-- Streamlined codebase for maintainability and deployment reliability
-
-### ✨ Added
-
-**Deployment Infrastructure**
-- `.gitignore` — Comprehensive ignore rules for Python, IDE, runtime artifacts, and secrets
-- `.env.example` — Configuration template with 20+ environment variables for deployment flexibility
-- `DEPLOYMENT.md` — Complete deployment guide covering:
-  - Docker deployment (with Dockerfile template)
-  - Cloud Run, Heroku, ECS deployment options
-  - Production best practices (logging, security, performance, monitoring)
-  - Environment variables reference
-  - Troubleshooting guide
-  - Post-deployment validation checklist
-
-**Error Handling Improvements**
-- Replaced silent `except Exception: pass` with proper error logging
-- Added warning messages for portfolio processing failures
-- Added warning messages for regime history computation failures
-- All errors now logged via `console.warning()` for visibility
-
-### 🧹 Removed
-
-**Dead Code Cleanup (338 lines removed)**
-- Removed 4 unused imports across the codebase:
-  - `app.py`: Removed unused `os` import
-  - `backdata.py`: Removed unused `RetryWithBackoff` import
-- Removed 15 unused functions:
-  - `ui/components.py` (8 functions, 177 lines):
-    `render_conviction_signal`, `render_info_box`, `render_warning_box`,
-    `render_chart_skeleton`, `render_collapsible_section`, `render_collapsible_section_close`,
-    `render_export_button_row`, `render_interpretation_card`
-  - `ui/theme.py` (1 function): `apply_chart_theme`
-  - `logger_config.py` (6 methods): `_timestamp`, `_run_id_short`, `main_header`, `failure`, `issue`, `checkpoint`
-  - `metrics.py` (1 function): `track_phase` decorator
-  - `regime.py` (1 constant): `FACTOR_SCORE_RANGE`
-- Removed 1 unused class:
-  - `circuit_breaker.py`: `RetryWithBackoff` class (73 lines)
-- Removed unused constants:
-  - `ui/theme.py`: `PLOTLY_MODEBAR`
-
-**Import Cleanup**
-- `app.py`: Removed 9 unused component imports from `ui.components`
-- Kept only actively used: `render_header`, `render_section_header`, `render_metric_card`, `render_system_card`, `section_gap`, `render_theme_toggle`
-
-### 📄 Documentation
-
-- Created `DEPLOYMENT.md` — Comprehensive deployment guide (250+ lines)
-- Created `CLEANUP_SUMMARY.md` — Detailed change documentation (170+ lines)
-- Updated version references to 7.2.1
-
-### 📊 Impact
-
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| Total Python lines | ~10,500 | ~10,162 | -338 lines |
-| Unused imports | 4 | 0 | -100% |
-| Unused functions | 15 | 0 | -100% |
-| Unused classes | 1 | 0 | -100% |
-| Bare except clauses | 2 | 0 | -100% |
-| Deployment config files | 0 | 3 | +3 |
-
----
-
 ## [7.2.0] - 2026-04-13
 
 ### 🎨 "Terminal Glass" Design System — Complete Card & Table Overhaul
@@ -613,14 +543,6 @@ weight = (adjusted / Σ all_adjusted) × 100
 
 | Version | Date | Architecture | Execution Time | Key Feature |
 |---------|------|--------------|----------------|-------------|
-| 7.2.1 | 2026-04-13 | 2 phases | 20-40 sec | Deployment readiness, dead code removal |
-| 7.2.0 | 2026-04-13 | 2 phases | 20-40 sec | Terminal Glass design system |
-| 7.1.0 | 2026-04-13 | 2 phases | 20-40 sec | UI/UX enhancements (Space Grotesk, IBM Plex Mono) |
-| 7.0.5 | 2026-04-05 | 2 phases | 20-40 sec | Production hardening, terminal logging |
-| 7.0.4 | 2026-04-02 | 2 phases | 20-40 sec | Style-aware dispersion (SIP/Swing) |
-| 7.0.3 | 2026-04-02 | 2 phases | 20-40 sec | Aggressive conviction dispersion (+75%/-50%) |
-| 7.0.2 | 2026-04-02 | 2 phases | 20-40 sec | Strong conviction dispersion (+40%/-30%) |
-| 7.0.1 | 2026-04-02 | 2 phases | 20-40 sec | Conviction dispersion weighting |
 | 7.0.0 | 2026-04-02 | 2 phases | 20-40 sec | Conviction-based curation |
 | 6.0.0 | Previous | 4 phases | 2-5 min | Walk-forward evaluation |
 

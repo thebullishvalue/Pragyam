@@ -1,4 +1,4 @@
-# PRAGYAM v7.2.1 - Dependencies
+# PRAGYAM v7.0.5 - Dependencies
 # @thebullishvalue - Conviction-Based Portfolio Intelligence
 # Python 3.10+ required
 

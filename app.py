@@ -14,14 +14,14 @@ Pipeline (2 phases):
   Phase 1: Data fetching + regime detection
   Phase 2: Conviction-based portfolio curation (ALL strategies)
 
-Version: 7.2.1
+Version: 7.0.5
 Author: @thebullishvalue
 """
 
 import streamlit as st
-from streamlit.components.v1 import html as st_html
 import pandas as pd
 import numpy as np
+import os
 import io
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -40,9 +40,17 @@ from ui.components import (
     render_header,
     render_section_header,
     render_metric_card,
+    render_info_box,
     render_system_card,
     section_gap,
+    render_conviction_signal,
+    render_warning_box,
+    render_chart_skeleton,
+    render_collapsible_section,
+    render_collapsible_section_close,
     render_theme_toggle,
+    render_export_button_row,
+    render_interpretation_card,
 )
 from regime import (
     MarketRegimeDetector,
@@ -87,7 +95,7 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v7.2.1"
+VERSION = "v7.0.5"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -310,7 +318,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     '''
 
     table_height = max(280, 220 + len(portfolio) * 42)
-    st_html(table_html, height=table_height, scrolling=False)
+    st.iframe(table_html, height=table_height, scrolling=False)
 
     # Conviction Signal Heatmap
     _section_divider()
@@ -549,7 +557,7 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     '''
 
     table_height = max(280, 220 + len(sorted_df) * 42)
-    st_html(table_html, height=table_height, scrolling=False)
+    st.iframe(table_html, height=table_height, scrolling=False)
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
@@ -975,8 +983,8 @@ def _run_analysis(
                         price = row["price"]
                         if symbol not in aggregated_holdings:
                             aggregated_holdings[symbol] = {"price": price, "weight": 1.0}
-                except Exception as e:
-                    console.warning(f"Failed to process portfolio for symbol {symbol}: {e}")
+                except Exception:
+                    pass
 
             if not aggregated_holdings:
                 st.error("No holdings generated.")
@@ -1016,8 +1024,7 @@ def _run_analysis(
             # Pre-compute regime history
             try:
                 st.session_state.regime_history_series = get_regime_history_series(all_hist, window_size=10, step=1)
-            except Exception as e:
-                console.warning(f"Regime history computation failed: {e}")
+            except Exception:
                 st.session_state.regime_history_series = []
 
             metrics.end_phase("total_execution", success=True)

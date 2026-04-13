@@ -58,6 +58,10 @@ def generate_run_id() -> str:
     run_uuid = str(uuid.uuid4())[:8]
     return f"{run_id}_{run_uuid}"
 
+def get_run_id() -> str:
+    """Get the session-level run identifier (fallback only)."""
+    return SESSION_RUN_IDENTIFIER
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ANSI COLOR CODES - Windows Compatible
@@ -108,6 +112,14 @@ class ConsoleOutput:
             sys.stdout.write(safe)
         sys.stdout.flush()
     
+    def _timestamp(self) -> str:
+        """Get current timestamp."""
+        return datetime.now().strftime('%H:%M:%S')
+    
+    def _run_id_short(self) -> str:
+        """Get short run ID."""
+        return SESSION_RUN_IDENTIFIER[-12:]
+
     def line(self, char: str = '─', length: int = 60):
         """Print a separator line."""
         self._write(f"{Colors.GRAY}{char * length}{Colors.RESET}")
@@ -132,7 +144,7 @@ class ConsoleOutput:
             self._write(f"  {Colors.GRAY}{key}:{Colors.RESET} {value}")
         self.line('═', 70)
         self._write()
-
+    
     def section(self, title: str, phase: str = ""):
         """Print section header."""
         self._write()
@@ -168,7 +180,23 @@ class ConsoleOutput:
     def error(self, message: str):
         """Print error message."""
         self._write(f"  {Colors.RED}{Colors.ERROR} ERROR:{Colors.RESET} {message}")
-
+    
+    def failure(self, step: str, error: str):
+        """Print failure with context."""
+        self._write(f"  {Colors.RED}{Colors.ERROR} FAILURE:{Colors.RESET} {step}")
+        self._write(f"      {Colors.GRAY}Reason:{Colors.RESET} {error}")
+    
+    def issue(self, issue_type: str, location: str, description: str):
+        """Flag an issue."""
+        self._write(f"  {Colors.YELLOW}{Colors.WARNING} ISSUE [{issue_type}]{Colors.RESET} at {location}")
+        self._write(f"      {Colors.GRAY}{description}{Colors.RESET}")
+    
+    def checkpoint(self, name: str, status: str = "OK"):
+        """Print checkpoint."""
+        symbol = Colors.GREEN + Colors.SUCCESS if status == "OK" else Colors.RED + Colors.ERROR
+        color = Colors.GREEN if status == "OK" else Colors.RED
+        self._write(f"  {symbol} Checkpoint:{Colors.RESET} {name} {Colors.GRAY}[{status}]{Colors.RESET}")
+    
     def summary(self, title: str, data: Dict[str, Any]):
         """Print summary box."""
         self._write()

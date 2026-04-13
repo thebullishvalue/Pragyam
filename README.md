@@ -1,12 +1,12 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 7.2.1
+**Version:** 7.0.5
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
 Conviction-based portfolio curation for Indian equity markets using 80+ quantitative strategies.
 
-**Latest:** v7.2.1 — Deployment readiness, dead code removal, and improved error handling.
+**Latest:** v7.0.5 — Production hardening, dead code removal, and refined terminal logging.
 
 ---
 
@@ -124,7 +124,7 @@ raw = (RSI_signal × 0.30 +
 conviction_score = (raw + 2) / 4 × 100
 ```
 
-### Conviction Dispersion Weighting (v7.2.1)
+### Conviction Dispersion Weighting (v7.0.5)
 
 Style-aware dispersion weighting automatically adjusts based on investment style:
 
@@ -167,7 +167,7 @@ weight_i = (adjusted_conviction_i / Σ all_adjusted_conviction) × 100
 ## Architecture
 
 ```
-PRAGYAM v7.2.1 — 2 Phases
+PRAGYAM v7.0.5 — 2 Phases
 
 ┌─────────────────────────────────────────────────────────────┐
 │ PHASE 1: DATA FETCHING                                      │
@@ -309,9 +309,6 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and notable changes.
 
 | Version | Date | Architecture | Execution Time | Key Feature |
 |---------|------|--------------|----------------|-------------|
-| 7.2.1 | 2026-04-13 | 2 phases | 20-40 sec | Deployment readiness, dead code removal |
-| 7.2.0 | 2026-04-13 | 2 phases | 20-40 sec | Terminal Glass design system |
-| 7.1.0 | 2026-04-13 | 2 phases | 20-40 sec | UI/UX enhancements (Space Grotesk, IBM Plex Mono) |
 | 7.0.5 | 2026-04-05 | 2 phases | 20-40 sec | Production hardening, dead code removal |
 | 7.0.4 | 2026-04-02 | 2 phases | 20-40 sec | Style-aware dispersion (SIP/Swing) |
 | 7.0.3 | 2026-04-02 | 2 phases | 20-40 sec | Aggressive conviction dispersion (+75%/-50%) |

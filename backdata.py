@@ -6,7 +6,8 @@ import os
 from typing import List, Tuple, Dict, Any
 import time
 
-from circuit_breaker import yfinance_circuit
+# Import circuit breaker and metrics
+from circuit_breaker import yfinance_circuit, RetryWithBackoff
 from metrics import get_metrics
 
 warnings.filterwarnings("ignore", category=FutureWarning)
