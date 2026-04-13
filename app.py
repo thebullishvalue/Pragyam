@@ -318,7 +318,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     '''
 
     table_height = max(280, 220 + len(portfolio) * 42)
-    st.iframe(table_html, height=table_height, scrolling=False)
+    st.iframe(table_html, height=table_height)
 
     # Conviction Signal Heatmap
     _section_divider()
