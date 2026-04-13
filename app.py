@@ -557,7 +557,7 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     '''
 
     table_height = max(280, 220 + len(sorted_df) * 42)
-    st.iframe(table_html, height=table_height, scrolling=False)
+    st.iframe(table_html, height=table_height)
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
