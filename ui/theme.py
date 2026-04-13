@@ -1,5 +1,5 @@
 """
-Pragyam v7.2.1 — Shared CSS, chart theming, and color constants for the UI layer.
+Pragyam v7.0.5 — Shared CSS, chart theming, and color constants for the UI layer.
 
 UI — "Obsidian Quant" Institutional Research Terminal design language.
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "7.2.1"
+VERSION = "7.0.5"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -47,6 +47,16 @@ PLOTLY_LEGEND = dict(
 PLOTLY_MARGIN = dict(t=20, l=50, r=20, b=40)
 PLOTLY_GRID = "rgba(255,255,255,0.035)"
 PLOTLY_GRID_ZERO = "rgba(255,255,255,0.06)"
+
+# Interactive chart config — click + zoom + pan
+PLOTLY_MODEBAR = dict(
+    modeBarButtonsToRemove=["lasso2d", "select2d"],
+    modeBarButtonsToAdd=[
+        "drawline",
+        "eraseshape",
+    ],
+    displaylogo=False,
+)
 
 
 def chart_layout(
@@ -155,3 +165,9 @@ def progress_bar(slot, pct: int, label: str, sub: str = "") -> None:
     """,
         unsafe_allow_html=True,
     )
+
+
+def apply_chart_theme(fig) -> None:
+    """Apply the Obsidian Quant Terminal theme to a Plotly figure (mutates in place)."""
+    fig.update_layout(**chart_layout())
+    style_axes(fig)

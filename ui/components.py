@@ -1,5 +1,5 @@
 """
-Pragyam v7.2.1 — Reusable UI components: metric cards, signal badges, headers, section headers.
+Pragyam v7.0.5 — Reusable UI components: metric cards, signal badges, headers, section headers.
 
 UI — Obsidian Quant Terminal design language.
 """
@@ -109,12 +109,98 @@ def render_metric_card(
     )
 
 
+def render_conviction_signal(
+    symbol: str,
+    conviction: float,
+    rsi: str = "—",
+    osc: str = "—",
+    zscore: str = "—",
+    ma: str = "—",
+) -> None:
+    """Render a conviction signal row for position guide.
+
+    Args:
+        symbol: Stock symbol.
+        conviction: Conviction score (0-100).
+        rsi: RSI value formatted.
+        osc: Oscillator value formatted.
+        zscore: Z-score value formatted.
+        ma: Moving average alignment formatted.
+    """
+    if conviction >= 65:
+        signal_class = "buy"
+        signal_text = "Strong Buy"
+        emoji = "🟢"
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--emerald)"
+    elif conviction >= 50:
+        signal_class = "buy"
+        signal_text = "Buy"
+        emoji = "🟩"
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--emerald-bright)"
+    elif conviction >= 35:
+        signal_class = "hold"
+        signal_text = "Hold"
+        emoji = "🟡"
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--amber)"
+    else:
+        signal_class = "sell"
+        signal_text = "Caution"
+        emoji = "🔴"
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--rose)"
+
+    st.markdown(
+        f"""
+        <div class="signal-row" style="display:flex; align-items:center; gap:0.75rem; padding:0.75rem 0; border-bottom:1px solid var(--border-subtle); position:relative; overflow:hidden;">
+            <div style="position:absolute; left:0; top:0; bottom:0; width:{conviction_bar_width} * 0.3%; background: linear-gradient(90deg, {conviction_bar_color}08, {conviction_bar_color}03); pointer-events:none;"></div>
+            <div style="flex:1; font-family:var(--data); font-weight:600; color:var(--ink-primary); position:relative; z-index:1;">{html_mod.escape(symbol)}</div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">RSI</span> {rsi}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">Osc</span> {osc}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">Z</span> {zscore}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">MA</span> {ma}
+            </div>
+            <div style="position:relative; z-index:1;">
+                <div style="width:60px; height:4px; background:var(--bg-elevated); border-radius:2px; overflow:hidden;">
+                    <div style="width:{conviction_bar_width}%; height:100%; background:{conviction_bar_color}; border-radius:2px; transition:width 0.6s cubic-bezier(0.16, 1, 0.3, 1);"></div>
+                </div>
+            </div>
+            <div style="font-family:var(--data); font-size:0.75rem; font-weight:700; color:var(--ink-primary); min-width:40px; text-align:right; position:relative; z-index:1;">{int(conviction)}</div>
+            <div class="signal-pill {signal_class}" style="display:inline-flex; align-items:center; gap:0.3rem; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.72rem; font-weight:600; position:relative; z-index:1;">
+                {emoji} {signal_text}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_header(title: str, tagline: str) -> None:
     """Render the terminal masthead."""
     st.markdown(
         f'<div class="premium-header">'
         f"<h1>{html_mod.escape(title)}</h1>"
         f'<div class="tagline">{html_mod.escape(tagline)}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_info_box(title: str, content: str, color: str = "cyan") -> None:
+    """Render an info box."""
+    st.markdown(
+        f'<div class="info-box">'
+        f"<h4>{html_mod.escape(title)}</h4>"
+        f"<p>{html_mod.escape(content)}</p>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -151,14 +237,106 @@ def render_system_card(
     )
 
 
+def render_warning_box(title: str, content: str) -> None:
+    """Render a themed alert/warning box."""
+    st.markdown(
+        f"""
+        <div class="warning-box">
+            <div class="icon"></div>
+            <div>
+                <div class="title">{html_mod.escape(title)}</div>
+                <div class="content">{html_mod.escape(content)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_chart_skeleton(height: int = 280) -> None:
+    """Render a loading skeleton placeholder for charts.
+
+    Provides visual feedback while chart data is being computed.
+    Uses CSS shimmer animation for a polished loading experience.
+    """
+    st.markdown(
+        f'<div class="skeleton-chart" style="min-height:{height}px;">'
+        f'<div class="skeleton-line skeleton-pulse"></div>'
+        f'<div class="skeleton-block skeleton-pulse"></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_collapsible_section(
+    title: str,
+    description: str = "",
+    icon: str = "chart",
+    accent: str = "",
+    default_open: bool = False,
+):
+    """Render a collapsible section header with chevron toggle.
+
+    Returns a context manager that yields content when expanded.
+    Uses Streamlit's container + checkbox pattern for state management.
+
+    Args:
+        title: Section title (rendered uppercase).
+        description: Optional one-line description below title.
+        icon: Key from ICONS dict.
+        accent: CSS color class — "", "cyan", "emerald", "violet", "rose".
+        default_open: Whether section starts expanded or collapsed.
+    """
+    svg = ICONS.get(icon, ICONS["chart"])
+    section_id = f"collapsible_{html_mod.escape(title.lower().replace(' ', '_'))}"
+    is_open = st.checkbox(
+        f"toggle_{section_id}",
+        value=default_open,
+        label_visibility="collapsed",
+        key=f"_{section_id}_state",
+    )
+
+    icon_class = f"icon {accent}" if accent else "icon"
+    hdr_class = f"section-hdr {accent}" if accent else "section-hdr"
+    desc_html = f'<div class="desc">{html_mod.escape(description)}</div>' if description else ""
+    open_class = "open" if is_open else ""
+
+    st.markdown(
+        f'<div class="collapsible-section {open_class}" id="{section_id}">'
+        f'<div class="collapsible-header" data-target="{section_id}">'
+        f'<span class="chevron">{ICONS["chevron-right"]}</span>'
+        f'<div class="{hdr_class}" style="margin:0;padding:0;border:none;flex:1;">'
+        f'<div class="{icon_class}">{svg}</div>'
+        f'<div class="text">'
+        f'<h3>{html_mod.escape(title)}</h3>'
+        f'{desc_html}'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+        f'<div class="collapsible-body">'
+        f'<div class="collapsible-body-inner">',
+        unsafe_allow_html=True,
+    )
+
+    return is_open
+
+
+def render_collapsible_section_close() -> None:
+    """Close a collapsible section opened by render_collapsible_section."""
+    st.markdown(
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_theme_toggle() -> None:
     """Render a fixed-position theme toggle button (dark/light mode).
 
     Uses JavaScript to toggle data-theme attribute on the html element.
     Persists preference in localStorage.
     """
-    from streamlit.components.v1 import html as st_html
-    st_html(
+    import streamlit as st
+    st.iframe(
         """
         <div class="theme-toggle" id="theme-toggle" title="Toggle theme" onclick="toggleTheme()">
             <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -211,4 +389,57 @@ def render_theme_toggle() -> None:
         </script>
         """,
         height=0,
+    )
+
+
+def render_export_button_row(
+    label: str = "Export",
+    icon: str = "download",
+    data: bytes = b"",
+    file_name: str = "export.csv",
+    mime: str = "text/csv",
+) -> None:
+    """Render a right-aligned export button with icon.
+
+    Args:
+        label: Button label text.
+        icon: Key from ICONS dict (defaults to "download").
+        data: Binary data to export.
+        file_name: Default download filename.
+        mime: MIME type for the download.
+    """
+    svg = ICONS.get(icon, ICONS["download"])
+    st.markdown(
+        f'<div class="export-btn-row">'
+        f'{svg}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.download_button(
+        label=f"{svg}  {label}",
+        data=data,
+        file_name=file_name,
+        mime=mime,
+        key=f"export_{file_name}",
+    )
+
+
+def render_interpretation_card(
+    title: str,
+    body: str,
+    color: str = "neutral",
+) -> None:
+    """Render a state-aware interpretation card — terminal readout style.
+
+    Args:
+        title: Short state label (e.g. "NEUTRAL", "STRONG OVERSOLD").
+        body: One-paragraph explanation.
+        color: Semantic color — "neutral", "success", "danger", "warning", "info".
+    """
+    st.markdown(
+        f'<div class="interp-card {html_mod.escape(color)}">'
+        f'<div class="interp-title">{html_mod.escape(title)}</div>'
+        f'<div class="interp-body">{html_mod.escape(body)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
