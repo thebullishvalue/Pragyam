@@ -69,10 +69,6 @@ REGIME_MIX_MAP: Dict[str, str] = {
     "CRISIS":      "Bear Market Mix", "UNKNOWN": "Chop/Consolidate Mix",
 }
 
-# Score normalisation helpers for factor bars in the UI
-# Score range per factor: [-2, +2]
-FACTOR_SCORE_RANGE = (-2.0, 2.0)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA CLASSES

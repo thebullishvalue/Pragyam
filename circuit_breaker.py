@@ -220,85 +220,12 @@ class CircuitBreaker:
             self.last_failure_time = None
             self.last_success_time = None
             self.half_open_calls = 0
-        
+
         try:
             from logger_config import console
             console.success(f"Circuit '{self.name}' manually reset")
         except Exception:
             pass
-
-
-class RetryWithBackoff:
-    """
-    Retry decorator with exponential backoff.
-    
-    Usage:
-        @RetryWithBackoff(max_retries=3, backoff_factor=2)
-        def fetch_data():
-            return yf.download(...)
-    """
-    
-    def __init__(
-        self,
-        max_retries: int = 3,
-        backoff_factor: float = 2.0,
-        initial_delay: float = 1.0,
-        max_delay: float = 60.0,
-        exceptions: tuple = (Exception,)
-    ):
-        """
-        Initialize retry decorator.
-        
-        Args:
-            max_retries: Maximum retry attempts
-            backoff_factor: Multiplier for delay (exponential)
-            initial_delay: Initial delay in seconds
-            max_delay: Maximum delay cap
-            exceptions: Exception types to catch
-        """
-        self.max_retries = max_retries
-        self.backoff_factor = backoff_factor
-        self.initial_delay = initial_delay
-        self.max_delay = max_delay
-        self.exceptions = exceptions
-    
-    def __call__(self, func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            delay = self.initial_delay
-            
-            for attempt in range(self.max_retries + 1):
-                try:
-                    return func(*args, **kwargs)
-                except self.exceptions as e:
-                    last_exception = e
-                    
-                    if attempt < self.max_retries:
-                        # Log retry
-                        try:
-                            from logger_config import console
-                            console.warning(
-                                f"Attempt {attempt + 1}/{self.max_retries + 1} failed: {type(e).__name__}. "
-                                f"Retrying in {delay:.1f}s..."
-                            )
-                        except Exception:
-                            pass
-                        
-                        time.sleep(delay)
-                        delay = min(delay * self.backoff_factor, self.max_delay)
-                    else:
-                        # All retries exhausted
-                        try:
-                            from logger_config import console
-                            console.error(
-                                f"All {self.max_retries + 1} attempts failed. Last error: {str(e)}"
-                            )
-                        except Exception:
-                            pass
-            
-            raise last_exception
-        return wrapper
 
 
 # ══════════════════════════════════════════════════════════════════════════════

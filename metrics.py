@@ -254,31 +254,3 @@ metrics = ExecutionMetrics()
 def get_metrics() -> ExecutionMetrics:
     """Get the global metrics instance."""
     return metrics
-
-
-def track_phase(name: str):
-    """
-    Decorator for tracking function execution time.
-    
-    Usage:
-        @track_phase("data_fetching")
-        def fetch_data():
-            # ... implementation ...
-    """
-    from functools import wraps
-    
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            m = get_metrics()
-            m.start_phase(name)
-            try:
-                result = func(*args, **kwargs)
-                m.end_phase(name, success=True)
-                return result
-            except Exception as e:
-                m.end_phase(name, success=False, error_msg=str(e))
-                m.add_error(type(e).__name__, str(e), location=func.__name__)
-                raise
-        return wrapper
-    return decorator

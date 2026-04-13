@@ -6,13 +6,13 @@ Conviction-based portfolio curation using regime.py signal scoring.
 
 Formula: weight_i = (conviction_score_i / Σ all_conviction_scores) × 100
 
-Conviction Dispersion Weighting (v7.0.5):
+Conviction Dispersion Weighting (v7.2.1):
   → SIP Mode: +75% boost above median, -50% penalty below
   → Swing Mode: +225% boost above median, -75% penalty below (2σ more aggressive)
   → Dynamic dispersion based on investment style and conviction volatility
 
 Author: @thebullishvalue
-Version: 7.0.5
+Version: 7.2.1
 """
 
 import pandas as pd
