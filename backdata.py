@@ -27,10 +27,15 @@ class LiquidityOscillator:
         if not required_columns.issubset(data.columns):
             return pd.Series(dtype=float)
 
+        # FX and some futures report volume as 0/NaN on Yahoo; the oscillator
+        # is volume-weighted and cannot be computed in that case.
+        if data['volume'].fillna(0).sum() == 0:
+            return pd.Series(index=data.index, dtype=float, name='liquidity_oscillator')
+
         df = data.copy()
         df['spread'] = (df['high'] + df['low']) / 2 - df['open']
         df['vol_ma'] = df['volume'].rolling(window=self.length).mean()
-        safe_vol_ma = df['vol_ma'].replace(0, pd.NA)
+        safe_vol_ma = df['vol_ma'].replace(0, pd.NA).astype(float)
         df['vwap_spread'] = (df['spread'] * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
         close_shifted = df['close'].shift(self.impact_window)
         df['price_impact'] = ((df['close'] - close_shifted) * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()

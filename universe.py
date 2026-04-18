@@ -169,20 +169,31 @@ def get_etf_universe() -> Tuple[List[str], str]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
-    """Fetch F&O stock list from NSE advances/declines API"""
+    """Fetch F&O stock list from NSE. NSE requires a warm session cookie before
+    the JSON API returns data, so we seed cookies via the homepage first."""
     try:
-        url = "https://www.nseindia.com/api/equity-stockIndices?index=ADVANCES%20DECLINES"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.nseindia.com/market-data/live-equity-market',
         }
-        response = requests.get(url, headers=headers, timeout=15)
+        session = requests.Session()
+        session.headers.update(headers)
+        # Warm cookies — NSE returns empty {} without a valid session
+        session.get("https://www.nseindia.com/", timeout=15)
+        session.get("https://www.nseindia.com/market-data/live-equity-market", timeout=15)
+
+        url = "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O"
+        response = session.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()
 
-        if 'data' in data:
+        if data.get('data'):
             symbols = [item.get('symbol', '') for item in data['data'] if item.get('symbol')]
-            symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
+            # Drop the index row itself (e.g. "NIFTY 50") if NSE includes it
+            symbols = [s for s in symbols if s and not s.startswith('NIFTY')]
+            symbols_ns = [str(s) + ".NS" for s in symbols if str(s).strip()]
             if symbols_ns:
                 return symbols_ns, f"✓ Fetched {len(symbols_ns)} F&O securities from NSE"
 
@@ -313,7 +324,9 @@ def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
             response.raise_for_status()
             tables = pd.read_html(io.StringIO(response.text))
             sp500_df = tables[0]
-            symbols = sp50_df['Symbol'].tolist()
+            symbols = sp500_df['Symbol'].dropna().astype(str).tolist()
+            # Yahoo uses '-' in place of '.' for class-share tickers (BRK.B → BRK-B)
+            symbols = [s.replace('.', '-') for s in symbols if s.strip()]
             return symbols, f"✓ Fetched {len(symbols)} S&P 500 constituents from Wikipedia"
 
         elif index == "NASDAQ 100":
@@ -324,7 +337,8 @@ def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
             for tbl in tables:
                 if 'Symbol' in tbl.columns or 'Ticker' in tbl.columns:
                     col = 'Symbol' if 'Symbol' in tbl.columns else 'Ticker'
-                    symbols = tbl[col].dropna().tolist()
+                    symbols = tbl[col].dropna().astype(str).tolist()
+                    symbols = [s.replace('.', '-') for s in symbols if s.strip()]
                     if len(symbols) > 50:
                         return symbols, f"✓ Fetched {len(symbols)} NASDAQ 100 constituents from Wikipedia"
             return None, "Could not parse NASDAQ 100 table"
