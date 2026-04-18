@@ -323,11 +323,19 @@ def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
             response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
             tables = pd.read_html(io.StringIO(response.text))
-            sp500_df = tables[0]
-            symbols = sp500_df['Symbol'].dropna().astype(str).tolist()
-            # Yahoo uses '-' in place of '.' for class-share tickers (BRK.B → BRK-B)
-            symbols = [s.replace('.', '-') for s in symbols if s.strip()]
-            return symbols, f"✓ Fetched {len(symbols)} S&P 500 constituents from Wikipedia"
+            # Scan tables for the constituents table — column name/order on Wikipedia
+            # has shifted historically ('Symbol' vs 'Ticker symbol'), so don't trust tables[0]
+            for tbl in tables:
+                cols = [str(c) for c in tbl.columns]
+                sym_col = next((c for c in cols if c.strip().lower() in ('symbol', 'ticker', 'ticker symbol')), None)
+                if not sym_col:
+                    continue
+                symbols = tbl[sym_col].dropna().astype(str).str.strip().tolist()
+                # Yahoo uses '-' in place of '.' for class-share tickers (BRK.B → BRK-B)
+                symbols = [s.replace('.', '-') for s in symbols if s and s.lower() != 'nan']
+                if len(symbols) >= 400:
+                    return symbols, f"✓ Fetched {len(symbols)} S&P 500 constituents from Wikipedia"
+            return None, "Could not parse S&P 500 table from Wikipedia"
 
         elif index == "NASDAQ 100":
             url = "https://en.wikipedia.org/wiki/NASDAQ-100"
@@ -422,7 +430,7 @@ def get_default_index(universe: str) -> Optional[str]:
     if universe == "India Indexes":
         return "NIFTY 50"
     elif universe == "US Indexes":
-        return "S&P 500"
+        return "DOW JONES"
     return None
 
 
