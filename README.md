@@ -64,17 +64,18 @@ pip install -r requirements.txt
 
 ## Usage
 
-### 1. Configure Symbols
+### 1. Select Universe
 
-Edit `symbols.txt` with your universe of NSE stocks (one symbol per line):
+Use the sidebar dropdown to choose your analysis universe:
 
-```
-RELIANCE.NS
-TCS.NS
-INFY.NS
-HDFCBANK.NS
-ICICIBANK.NS
-```
+**Available Universes:**
+- **ETF Universe** — 30 NSE ETFs covering major indices and sectors
+- **India Indexes** — NIFTY 50, NIFTY 100, NIFTY 500, F&O Stocks, sectoral indices
+- **US Indexes** — S&P 500, DOW JONES, NASDAQ 100
+- **Commodities** — 24 commodity futures
+- **Currency** — 24 currency pairs
+
+Simply select the universe and index (where applicable) from the sidebar dropdown before running analysis.
 
 ### 2. Run Application
 
@@ -190,8 +191,9 @@ PRAGYAM v7.0.5 — 2 Phases
 ### Module Structure
 
 ```
-Pragyam-02.01/
-├── app.py                    # Main UI (Streamlit) — ~950 lines
+Pragyam-Final/
+├── app.py                    # Main UI (Streamlit) — ~1300 lines
+├── universe.py               # Universe definitions & selection — ~450 lines
 ├── portfolio.py              # Conviction-based weighting — ~150 lines
 ├── regime.py                 # Market regime + conviction scoring — ~640 lines
 ├── strategies.py             # 95 BaseStrategy implementations
@@ -201,7 +203,6 @@ Pragyam-02.01/
 ├── logger_config.py          # Console output system — ~280 lines
 ├── metrics.py                # Execution metrics — ~270 lines
 ├── style.css                 # UI styling
-├── symbols.txt               # Stock universe
 ├── requirements.txt          # Dependencies
 └── pyproject.toml            # Project configuration
 ```
@@ -262,16 +263,17 @@ Cash Remaining: ₹12,650
 ## Troubleshooting
 
 ### "No historical data loaded"
-- Check `symbols.txt` format (should be `SYMBOL.NS`)
+- Check your universe selection in the sidebar
 - Verify internet connection
 - Reduce lookback period in sidebar
 - Ensure yfinance can access NSE data (may be rate-limited)
+- For India/US Indexes, ensure the index constituent fetch succeeded (check status message)
 
 ### "No holdings generated"
 - Some strategies may not generate signals for current market conditions
 - Try a different analysis date
 - Increase number of positions in sidebar
-- Check that `symbols.txt` has sufficient symbols (recommend 50+)
+- Check that your universe has sufficient symbols (recommend 50+ for best results)
 
 ### "Conviction signals unavailable"
 - Check that `current_df` has indicator columns
@@ -279,14 +281,15 @@ Cash Remaining: ₹12,650
 - Ensure data fetch completed successfully
 
 ### Slow execution or timeouts
-- v7.0.0 executes in 20-40 seconds (6-10x faster than v6.0.0)
-- Reduce number of symbols in `symbols.txt` if needed
+- v7.0.5 executes in 20-40 seconds for small universes (<50 symbols)
+- Larger universes (NIFTY 500, S&P 500) may take 1-3 minutes
+- Reduce universe size if needed (e.g., use NIFTY 50 instead of NIFTY 500)
 - Check internet connection stability
 - Increase Streamlit server timeout if deploying remotely
 
 ### Rate limiting from yfinance
 - Circuit breaker implemented in `circuit_breaker.py`
-- Add more symbols to universe to distribute requests
+- Add fewer symbols or use smaller universe to distribute requests
 - Consider using premium data source for production
 
 ---

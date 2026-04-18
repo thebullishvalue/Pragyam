@@ -125,20 +125,24 @@ def calculate_all_indicators(
     return all_results_df
 
 
-def load_symbols_from_file(filepath: str = "symbols.txt") -> List[str]:
-    """Load a list of stock symbols from a text file (one per line)."""
-    if not os.path.exists(filepath):
-        return []
-
+def get_default_universe() -> List[str]:
+    """Get the default ETF universe from the universe module."""
     try:
-        with open(filepath, 'r') as f:
-            symbols = [line.strip().upper() for line in f if line.strip()]
-        return symbols
-    except Exception:
-        return []
+        from universe import ETF_UNIVERSE
+        return ETF_UNIVERSE
+    except ImportError:
+        # Fallback hardcoded list if universe module is unavailable
+        return [
+            "SENSEXIETF.NS", "NIFTYIETF.NS", "MON100.NS", "MAKEINDIA.NS", "SILVERIETF.NS",
+            "HEALTHIETF.NS", "CONSUMIETF.NS", "GOLDIETF.NS", "INFRAIETF.NS", "CPSEETF.NS",
+            "TNIDETF.NS", "COMMOIETF.NS", "MODEFENCE.NS", "MOREALTY.NS", "PSUBNKIETF.NS",
+            "MASPTOP50.NS", "FMCGIETF.NS", "BANKIETF.NS", "ITIETF.NS", "EVINDIA.NS",
+            "MNC.NS", "FINIETF.NS", "AUTOIETF.NS", "PVTBANIETF.NS", "MONIFTY500.NS",
+            "ECAPINSURE.NS", "MIDCAPIETF.NS", "MOSMALL250.NS", "OILIETF.NS", "METALIETF.NS"
+        ]
 
-# Load the fixed universe
-SYMBOLS_UNIVERSE = load_symbols_from_file()
+# Default universe (can be overridden by caller)
+SYMBOLS_UNIVERSE = get_default_universe()
 
 # Define the column order here so it can be used by the generator
 COLUMN_ORDER = [
@@ -191,7 +195,7 @@ def generate_historical_data(
     # === VALIDATION 1: Symbol Universe ===
     if not symbols_to_process:
         metrics.add_error("ValueError", "Symbol universe is empty", "generate_historical_data")
-        raise ValueError("Symbol universe is empty - please add tickers to symbols.txt")
+        raise ValueError("Symbol universe is empty - please select a valid universe")
     
     if len(symbols_to_process) > 500:
         metrics.add_warning(f"Large universe ({len(symbols_to_process)} symbols) - may be slow")
@@ -273,7 +277,7 @@ def generate_historical_data(
                     "No valid tickers in data - all symbols failed", 
                     "ticker_validation"
                 )
-                raise ValueError("No valid tickers in data - all symbols failed. Check symbols.txt")
+                raise ValueError("No valid tickers in data - all symbols failed. Check your universe selection")
             
             all_data = all_data.loc[:, (slice(None), valid_tickers)]
             symbols_to_process = list(valid_tickers)
@@ -380,11 +384,11 @@ def main():
 
         st.header("2. Ticker Universe")
         if SYMBOLS_UNIVERSE:
-            st.info(f"Using fixed universe from `symbols.txt` ({len(SYMBOLS_UNIVERSE)} tickers).")
+            st.info(f"Using default ETF universe ({len(SYMBOLS_UNIVERSE)} tickers).")
             with st.expander("View Tickers"):
                 st.dataframe(SYMBOLS_UNIVERSE, width='stretch')
         else:
-            st.error("`symbols.txt` not found or is empty. Cannot proceed.")
+            st.error("No tickers available. Cannot proceed.")
         
         st.header("3. Generate")
         process_button = st.button("Generate Snapshots", type="primary", width='stretch')
@@ -393,7 +397,7 @@ def main():
         if start_date > end_date:
             st.error("Error: Start date cannot be after end date.")
         elif not SYMBOLS_UNIVERSE:
-            st.error("Error: Cannot generate data. `symbols.txt` is missing or empty.")
+            st.error("Error: No tickers available in the default universe.")
         else:
             symbols_to_process = SYMBOLS_UNIVERSE
             
@@ -471,7 +475,7 @@ __all__ = [
     'resample_data',
     'calculate_rsi',
     'calculate_all_indicators',
-    'load_symbols_from_file',
+    'get_default_universe',
     'generate_historical_data',
     'SYMBOLS_UNIVERSE',
     'MAX_INDICATOR_PERIOD',

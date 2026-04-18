@@ -63,9 +63,13 @@ from regime import (
 from strategies import BaseStrategy, discover_strategies
 from backdata import (
     generate_historical_data,
-    load_symbols_from_file,
+    get_default_universe,
     MAX_INDICATOR_PERIOD,
-    SYMBOLS_UNIVERSE,
+)
+from universe import (
+    resolve_universe,
+    render_universe_selector,
+    UNIVERSE_OPTIONS,
 )
 from portfolio import compute_conviction_based_weights
 
@@ -140,11 +144,23 @@ def _init_session_state():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple[datetime, pd.DataFrame]]:
+def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: str) -> List[Tuple[datetime, pd.DataFrame]]:
     """Fetch and cache historical indicator snapshots from yfinance."""
+    # Resolve symbols from the cache key
+    try:
+        if symbols_key.startswith("UNIVERSE:"):
+            universe_name, index = symbols_key.replace("UNIVERSE:", "", 1).split("|", 1)
+            index = index if index != "None" else None
+            symbols_list, _ = resolve_universe(universe_name, index)
+        else:
+            symbols_list = get_default_universe()
+    except Exception as e:
+        st.error(f"Error resolving universe: {e}")
+        return []
+    
     try:
         return generate_historical_data(
-            symbols_to_process=SYMBOLS_UNIVERSE,
+            symbols_to_process=symbols_list,
             start_date=end_date - timedelta(days=int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30),
             end_date=end_date,
         )
@@ -154,13 +170,33 @@ def _load_historical_data(end_date: datetime, lookback_files: int) -> List[Tuple
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _detect_regime_cached(end_date: datetime) -> Dict:
+def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
     """Detect market regime and return as serializable dict."""
+    # Resolve symbols from the cache key
+    try:
+        if symbols_key.startswith("UNIVERSE:"):
+            universe_name, index = symbols_key.replace("UNIVERSE:", "", 1).split("|", 1)
+            index = index if index != "None" else None
+            symbols_list, _ = resolve_universe(universe_name, index)
+        else:
+            symbols_list = get_default_universe()
+    except Exception as e:
+        return {
+            "regime": "UNKNOWN",
+            "mix_name": "Chop/Consolidate Mix",
+            "confidence": 0.30,
+            "composite_score": 0.0,
+            "explanation": f"Error resolving universe: {e}",
+            "color": REGIME_COLORS["UNKNOWN"],
+            "icon": "❓",
+            "description": "",
+        }
+    
     detector = MarketRegimeDetector()
     window_days = int(MAX_INDICATOR_PERIOD * 1.5) + 30
     try:
         hist = generate_historical_data(
-            symbols_to_process=SYMBOLS_UNIVERSE,
+            symbols_to_process=symbols_list,
             start_date=end_date - timedelta(days=window_days),
             end_date=end_date,
         )
@@ -318,7 +354,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     '''
 
     table_height = max(280, 220 + len(portfolio) * 42)
-    st.iframe(table_html, height=table_height)
+    st.components.v1.html(table_html, height=table_height)
 
     # Conviction Signal Heatmap
     _section_divider()
@@ -557,7 +593,7 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     '''
 
     table_height = max(280, 220 + len(sorted_df) * 42)
-    st.iframe(table_html, height=table_height)
+    st.components.v1.html(table_html, height=table_height)
 
 
 def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
@@ -887,6 +923,9 @@ def _run_analysis(
     capital: float,
     num_positions: int,
     selected_date_display: datetime.date,
+    symbols_key: str,
+    universe: str,
+    index: str,
 ):
     """Execute the 2-phase analysis pipeline."""
     metrics = get_metrics()
@@ -894,12 +933,22 @@ def _run_analysis(
     st.session_state.debug_info = []
     st.session_state.regime_history_series = None
 
+    # Resolve the universe to get symbols
+    try:
+        symbols_list, status_msg = resolve_universe(universe, index)
+    except Exception as e:
+        st.error(f"Error resolving universe: {e}")
+        st.stop()
+
     try:
         # Print main header with run details
         from logger_config import generate_run_id
         current_run_id = generate_run_id()  # Fresh ID for each analysis
         run_details = {
             "Analysis Date": str(selected_date_display),
+            "Universe": universe,
+            "Index": index if index else "N/A",
+            "Symbols": str(len(symbols_list)),
             "Investment Style": investment_style,
             "Capital": f"₹{capital:,.0f}",
             "Positions": str(num_positions),
@@ -912,29 +961,29 @@ def _run_analysis(
         progress_container = st.empty()
 
         # PHASE 1: DATA FETCHING
-        progress_bar(progress_container, 2, "Fetching market data", f"yfinance · {len(SYMBOLS_UNIVERSE)} symbols")
+        progress_bar(progress_container, 2, "Fetching market data", f"yfinance · {len(symbols_list)} symbols")
         metrics.start_phase("total_execution")
         LOOKBACK_FILES = 100
 
         metrics.start_phase("data_fetching")
 
-        if not SYMBOLS_UNIVERSE:
-            st.error("Symbol universe empty — check symbols.txt.")
+        if not symbols_list:
+            st.error("Symbol universe empty — select a valid universe.")
             st.stop()
 
-        all_hist = _load_historical_data(selected_date, LOOKBACK_FILES)
+        all_hist = _load_historical_data(selected_date, LOOKBACK_FILES, symbols_key)
         if not all_hist:
-            st.error("No historical data loaded. Check symbols.txt and date range.")
+            st.error("No historical data loaded. Check universe selection and date range.")
             st.stop()
 
         metrics.end_phase("data_fetching", success=True, items=len(all_hist))
         metrics.days_count = len(all_hist)
 
-        progress_bar(progress_container, 15, "Data loaded", f"{len(all_hist)} days · {len(SYMBOLS_UNIVERSE)} symbols")
+        progress_bar(progress_container, 15, "Data loaded", f"{len(all_hist)} days · {len(symbols_list)} symbols")
 
         # Regime detection
         progress_bar(progress_container, 20, "Detecting market regime", "7-factor composite scoring")
-        regime_result = _detect_regime_cached(selected_date)
+        regime_result = _detect_regime_cached(selected_date, symbols_key)
         regime_name = regime_result.get("regime", "UNKNOWN")
         confidence = regime_result.get("confidence", 0.0)
 
@@ -957,7 +1006,7 @@ def _run_analysis(
         progress_bar(progress_container, 25, "Phase 1 complete", "Data acquisition ready")
 
         # PHASE 2: CONVICTION-BASED CURATION
-        progress_bar(progress_container, 25, "Running strategies", f"95 strategies · {len(SYMBOLS_UNIVERSE)} candidates")
+        progress_bar(progress_container, 25, "Running strategies", f"95 strategies · {len(symbols_list)} candidates")
         metrics.start_phase("conviction_curation")
 
         try:
@@ -1099,23 +1148,35 @@ def main():
             help="Select the date for portfolio curation",
         )
 
-        # Update regime display when date changes
+        st.markdown('<div class="sidebar-title">Analysis Universe</div>', unsafe_allow_html=True)
+        universe, selected_index = render_universe_selector()
+        st.session_state.selected_universe = universe
+        st.session_state.selected_index = selected_index
+
+        # Create a cache key for the universe
+        symbols_key = f"UNIVERSE:{universe}|{selected_index}"
+        st.session_state.symbols_key = symbols_key
+
+        # Check if date or universe changed to trigger regime update
         previous_date = st.session_state.get("regime_date", st.session_state.get("selected_date"))
+        previous_symbols_key = st.session_state.get("regime_symbols_key", "")
         date_changed = previous_date != selected_date
+        universe_changed = previous_symbols_key != symbols_key
         st.session_state.selected_date = selected_date
         selected_date_obj = datetime.combine(selected_date, datetime.min.time())
 
-        # Auto-detect regime when date changes or if not yet detected for this date
+        # Auto-detect regime when date changes, universe changes, or if not yet detected
         rd = st.session_state.get("regime_result_dict", {})
-        regime_needs_update = not rd or date_changed
+        regime_needs_update = not rd or date_changed or universe_changed
 
         if regime_needs_update:
             with st.spinner("Detecting regime..."):
-                rd = _detect_regime_cached(selected_date_obj)
+                rd = _detect_regime_cached(selected_date_obj, symbols_key)
                 st.session_state.regime_result_dict = rd
                 st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
-                # Store the date for which regime was detected to detect future changes
+                # Store the date AND universe for which regime was detected
                 st.session_state.regime_date = selected_date
+                st.session_state.regime_symbols_key = symbols_key
         if rd and isinstance(rd, dict):
             regime_name_sb = rd.get("regime", "UNKNOWN")
             color_sb = rd.get("color", "#888888")
@@ -1178,18 +1239,38 @@ def main():
                 "capital": capital,
                 "num_positions": num_positions,
                 "selected_date": selected_date,
+                "symbols_key": symbols_key,
+                "universe": universe,
+                "index": selected_index,
             }
             st.session_state["run_analysis"] = True
             st.rerun()
 
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class='system-spec'>
-            <div class='spec-row'><span class='spec-label'>Version</span><span class='spec-value'>{VERSION}</span></div>
-            <div class='spec-row'><span class='spec-label'>System</span><span class='spec-value'>Conviction-Based</span></div>
-            <div class='spec-row'><span class='spec-label'>Data</span><span class='spec-value'>yfinance</span></div>
-        </div>
-        """, unsafe_allow_html=True)
+
+        # Show current universe info
+        try:
+            symbols_list, status_msg = resolve_universe(universe, selected_index)
+            rows = [
+                '<div class="system-spec">',
+                '<div class="spec-row"><span class="spec-label">Version</span><span class="spec-value">' + VERSION + '</span></div>',
+                '<div class="spec-row"><span class="spec-label">Universe</span><span class="spec-value">' + universe + '</span></div>',
+            ]
+            if selected_index:
+                rows.append('<div class="spec-row"><span class="spec-label">Index</span><span class="spec-value">' + selected_index + '</span></div>')
+            rows.append('<div class="spec-row"><span class="spec-label">Symbols</span><span class="spec-value">' + str(len(symbols_list)) + '</span></div>')
+            rows.append('<div class="spec-row"><span class="spec-label">Data</span><span class="spec-value">yfinance</span></div>')
+            rows.append('</div>')
+            st.markdown(''.join(rows), unsafe_allow_html=True)
+        except Exception:
+            rows = [
+                '<div class="system-spec">',
+                '<div class="spec-row"><span class="spec-label">Version</span><span class="spec-value">' + VERSION + '</span></div>',
+                '<div class="spec-row"><span class="spec-label">System</span><span class="spec-value">Conviction-Based</span></div>',
+                '<div class="spec-row"><span class="spec-label">Data</span><span class="spec-value">yfinance</span></div>',
+                '</div>',
+            ]
+            st.markdown(''.join(rows), unsafe_allow_html=True)
 
     # Main content area
     # ─── Show progress bar in main area (outside sidebar) when running analysis ───
@@ -1198,6 +1279,7 @@ def main():
         _run_analysis(
             params["selected_date_obj"], params["investment_style"],
             params["capital"], params["num_positions"], params["selected_date"],
+            params["symbols_key"], params["universe"], params["index"],
         )
         # Clear the flag after analysis completes
         st.session_state.pop("run_analysis", None)
