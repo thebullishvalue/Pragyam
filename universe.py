@@ -310,54 +310,60 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
     return None, f"Error: {primary_error}{fallback_note}"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
-    """Fetch US index constituents from Wikipedia with hardcoded fallback for Dow Jones"""
+    """Fetch US index constituents. Non-cached wrapper so transient failures
+    aren't pinned for the cache TTL — only successful fetches are memoised."""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-
-        if index == "S&P 500":
-            url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
-            tables = pd.read_html(io.StringIO(response.text))
-            # Scan tables for the constituents table — column name/order on Wikipedia
-            # has shifted historically ('Symbol' vs 'Ticker symbol'), so don't trust tables[0]
-            for tbl in tables:
-                cols = [str(c) for c in tbl.columns]
-                sym_col = next((c for c in cols if c.strip().lower() in ('symbol', 'ticker', 'ticker symbol')), None)
-                if not sym_col:
-                    continue
-                symbols = tbl[sym_col].dropna().astype(str).str.strip().tolist()
-                # Yahoo uses '-' in place of '.' for class-share tickers (BRK.B → BRK-B)
-                symbols = [s.replace('.', '-') for s in symbols if s and s.lower() != 'nan']
-                if len(symbols) >= 400:
-                    return symbols, f"✓ Fetched {len(symbols)} S&P 500 constituents from Wikipedia"
-            return None, "Could not parse S&P 500 table from Wikipedia"
-
-        elif index == "NASDAQ 100":
-            url = "https://en.wikipedia.org/wiki/NASDAQ-100"
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
-            tables = pd.read_html(io.StringIO(response.text))
-            for tbl in tables:
-                if 'Symbol' in tbl.columns or 'Ticker' in tbl.columns:
-                    col = 'Symbol' if 'Symbol' in tbl.columns else 'Ticker'
-                    symbols = tbl[col].dropna().astype(str).tolist()
-                    symbols = [s.replace('.', '-') for s in symbols if s.strip()]
-                    if len(symbols) > 50:
-                        return symbols, f"✓ Fetched {len(symbols)} NASDAQ 100 constituents from Wikipedia"
-            return None, "Could not parse NASDAQ 100 table"
-
-        elif index == "DOW JONES":
-            return DOW_JONES_TICKERS, f"✓ Loaded {len(DOW_JONES_TICKERS)} Dow Jones components"
-
-        return None, f"Unknown US index: {index}"
-
+        return _get_us_index_stock_list_cached(index)
     except Exception as e:
         return None, f"Error fetching {index}: {e}"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_us_index_stock_list_cached(index: str) -> Tuple[Optional[List[str]], str]:
+    """Inner cached fetcher. Raises on failure so Streamlit does not memoise
+    the failure — st.cache_data only caches successful return values."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+
+    if index == "S&P 500":
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        tables = pd.read_html(io.StringIO(response.text))
+        # Scan tables for the constituents table — column name/order on Wikipedia
+        # has shifted historically ('Symbol' vs 'Ticker symbol'), so don't trust tables[0]
+        for tbl in tables:
+            cols = [str(c) for c in tbl.columns]
+            sym_col = next((c for c in cols if c.strip().lower() in ('symbol', 'ticker', 'ticker symbol')), None)
+            if not sym_col:
+                continue
+            symbols = tbl[sym_col].dropna().astype(str).str.strip().tolist()
+            # Yahoo uses '-' in place of '.' for class-share tickers (BRK.B → BRK-B)
+            symbols = [s.replace('.', '-') for s in symbols if s and s.lower() != 'nan']
+            if len(symbols) >= 400:
+                return symbols, f"✓ Fetched {len(symbols)} S&P 500 constituents from Wikipedia"
+        raise RuntimeError("Could not parse S&P 500 table from Wikipedia")
+
+    elif index == "NASDAQ 100":
+        url = "https://en.wikipedia.org/wiki/NASDAQ-100"
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        tables = pd.read_html(io.StringIO(response.text))
+        for tbl in tables:
+            if 'Symbol' in tbl.columns or 'Ticker' in tbl.columns:
+                col = 'Symbol' if 'Symbol' in tbl.columns else 'Ticker'
+                symbols = tbl[col].dropna().astype(str).tolist()
+                symbols = [s.replace('.', '-') for s in symbols if s.strip()]
+                if len(symbols) > 50:
+                    return symbols, f"✓ Fetched {len(symbols)} NASDAQ 100 constituents from Wikipedia"
+        raise RuntimeError("Could not parse NASDAQ 100 table")
+
+    elif index == "DOW JONES":
+        return DOW_JONES_TICKERS, f"✓ Loaded {len(DOW_JONES_TICKERS)} Dow Jones components"
+
+    raise ValueError(f"Unknown US index: {index}")
 
 
 def get_commodity_list() -> Tuple[List[str], str]:

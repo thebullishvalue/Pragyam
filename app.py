@@ -940,6 +940,10 @@ def _run_analysis(
         st.error(f"Error resolving universe: {e}")
         st.stop()
 
+    if not symbols_list:
+        st.error(f"Could not load {index or universe}: {status_msg}")
+        st.stop()
+
     try:
         # Print main header with run details
         from logger_config import generate_run_id
