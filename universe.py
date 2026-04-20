@@ -4,7 +4,7 @@ PRAGYAM Universe Selection Module
 Dynamic universe definitions and fetching functions for portfolio analysis.
 
 Supports:
-- ETF Universe (fixed list of 30 NSE ETFs)
+- ETF Index (fixed list of 30 NSE ETFs)
 - India Indices (NIFTY 50, NIFTY 500, F&O Stocks, sectoral indices)
 - US Indices (S&P 500, DOW JONES, NASDAQ 100)
 - Commodities (24 futures)
