@@ -26,10 +26,10 @@ from typing import List, Tuple, Optional, Dict
 
 # ── ETF Universe (Fixed) ─────────────────────────────────────────────────────
 ETF_UNIVERSE = [
-    "CHEMICAL.NS", "NIFTYIETF.NS", "MON100.NS", "MAKEINDIA.NS", "SILVERIETF.NS",
+    "SENSEXIETF.NS", "NIFTYIETF.NS", "MON100.NS", "MAKEINDIA.NS", "SILVERIETF.NS",
     "HEALTHIETF.NS", "CONSUMIETF.NS", "GOLDIETF.NS", "INFRAIETF.NS", "CPSEETF.NS",
     "TNIDETF.NS", "COMMOIETF.NS", "MODEFENCE.NS", "MOREALTY.NS", "PSUBNKIETF.NS",
-    "MASPTOP50.NS", "FMCGIETF.NS", "GROWWPOWER.NS", "ITIETF.NS", "EVINDIA.NS",
+    "MASPTOP50.NS", "FMCGIETF.NS", "BANKIETF.NS", "ITIETF.NS", "EVINDIA.NS",
     "MNC.NS", "FINIETF.NS", "AUTOIETF.NS", "PVTBANIETF.NS", "MONIFTY500.NS",
     "ECAPINSURE.NS", "MIDCAPIETF.NS", "MOSMALL250.NS", "OILIETF.NS", "METALIETF.NS"
 ]
@@ -65,7 +65,8 @@ UNIVERSE_OPTIONS = [
     "US Indexes",
     "Commodities",
     "Currency",
-    "Crypto"
+    "Crypto",
+    "Custom List"
 ]
 
 # ── Index Sources ────────────────────────────────────────────────────────────
@@ -515,6 +516,13 @@ def resolve_universe(
     elif universe == "Crypto":
         return get_crypto_list()
 
+    elif universe == "Custom List":
+        symbols = st.session_state.get("custom_universe_symbols", [])
+        status = st.session_state.get("custom_universe_status", "No symbols loaded")
+        if not symbols:
+            return [], "Error: Please upload a file with a 'Symbol' column first."
+        return symbols, status
+
     else:
         raise ValueError(f"Unknown universe: {universe}. Choose from: {UNIVERSE_OPTIONS}")
 
@@ -571,6 +579,70 @@ def render_universe_selector() -> Tuple[str, Optional[str]]:
             index=default_idx,
             help=help_text
         )
+
+    # ── Custom List Handler ──────────────────────────────────────────────
+    if universe == "Custom List":
+        st.markdown('<div class="sidebar-title" style="margin-top:10px;">Custom Config</div>', unsafe_allow_html=True)
+        market_type = st.selectbox(
+            "Market Type",
+            ["India", "Global"],
+            index=0,
+            help="India adds .NS suffix; Global uses symbols as-is"
+        )
+        
+        uploaded_file = st.file_uploader(
+            "Upload Symbol List",
+            type=["csv", "xlsx"],
+            help="File must have a 'Symbol' or 'symbol' column"
+        )
+
+        if uploaded_file:
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    try:
+                        df = pd.read_excel(uploaded_file)
+                    except ImportError:
+                        st.error("Error: 'openpyxl' is required for Excel files. Please install it.")
+                        return universe, "ERROR:NO_OPENPYXL"
+                
+                # Find symbol column
+                col = next((c for c in df.columns if str(c).strip().lower() == "symbol"), None)
+                if col:
+                    raw_symbols = df[col].dropna().astype(str).str.strip().tolist()
+                    clean_symbols = []
+                    for s in raw_symbols:
+                        if not s: continue
+                        # Apply suffix logic
+                        if market_type == "India":
+                            if "=F" not in s and not s.endswith(".NS"):
+                                s = f"{s.upper()}.NS"
+                            else:
+                                s = s.upper()
+                        else:
+                            s = s.upper()
+                        clean_symbols.append(s)
+                    
+                    # Store in session state
+                    import hashlib
+                    list_str = ",".join(sorted(clean_symbols))
+                    list_hash = hashlib.md5((list_str + market_type).encode()).hexdigest()[:8]
+                    
+                    st.session_state.custom_universe_symbols = clean_symbols
+                    st.session_state.custom_universe_status = f"✓ Loaded {len(clean_symbols)} custom symbols ({market_type})"
+                    
+                    # Return hash as selected_index to ensure cache uniqueness
+                    selected_index = list_hash
+                    st.success(f"Loaded {len(clean_symbols)} symbols")
+                else:
+                    st.error("Error: No 'Symbol' column found in file.")
+                    st.session_state.custom_universe_symbols = []
+                    st.session_state.custom_universe_status = "Error: Column 'Symbol' missing"
+            except Exception as e:
+                st.error(f"Error parsing file: {e}")
+                st.session_state.custom_universe_symbols = []
+                st.session_state.custom_universe_status = f"Error: {e}"
 
     return universe, selected_index
 
