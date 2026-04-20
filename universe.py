@@ -9,8 +9,9 @@ Supports:
 - US Indices (S&P 500, DOW JONES, NASDAQ 100)
 - Commodities (24 futures)
 - Currency (24 pairs)
+- Crypto (21 digital assets)
 
-Adapted from Nirnay system.
+Adapted from Nirnay and Sanket systems.
 """
 
 import streamlit as st
@@ -59,15 +60,17 @@ US_INDEX_LIST = ["S&P 500", "DOW JONES", "NASDAQ 100"]
 
 # ── Universe Options for Dropdown ────────────────────────────────────────────
 UNIVERSE_OPTIONS = [
-    "ETF Universe",
+    "ETF Index",
     "India Indexes",
     "US Indexes",
     "Commodities",
-    "Currency"
+    "Currency",
+    "Crypto"
 ]
 
-# ── Index URL Map for fetching constituents ──────────────────────────────────
+# ── Index Sources ────────────────────────────────────────────────────────────
 BASE_URL = "https://www.niftyindices.com/IndexConstituent/"
+NSE_ARCHIVE_URL = "https://archives.nseindia.com/content/indices/"
 INDEX_URL_MAP = {
     "NIFTY 50": f"{BASE_URL}ind_nifty50list.csv",
     "NIFTY NEXT 50": f"{BASE_URL}ind_niftynext50list.csv",
@@ -143,6 +146,31 @@ CURRENCY_TICKERS = {
     "USDKRW=X": "USD/KRW",
 }
 
+# ── Crypto (Yahoo Finance) ────────────────────────────────────────────────────
+CRYPTO_TICKERS = {
+    "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
+    "SOL-USD": "Solana",
+    "BNB-USD": "Binance Coin",
+    "XRP-USD": "Ripple (XRP)",
+    "ADA-USD": "Cardano",
+    "DOGE-USD": "Dogecoin",
+    "TRX-USD": "Tron",
+    "LINK-USD": "Chainlink",
+    "DOT-USD": "Polkadot",
+    "POL-USD": "Polygon (POL)",
+    "LTC-USD": "Litecoin",
+    "BCH-USD": "Bitcoin Cash",
+    "SHIB-USD": "Shiba Inu",
+    "AVAX-USD": "Avalanche",
+    "NEAR-USD": "Near Protocol",
+    "UNI-USD": "Uniswap",
+    "XLM-USD": "Stellar",
+    "ETC-USD": "Ethereum Classic",
+    "XMR-USD": "Monero",
+    "ATOM-USD": "Cosmos"
+}
+
 # ── Hardcoded Dow Jones 30 components ─────────────────────────────────────────
 DOW_JONES_TICKERS = [
     "AMZN", "AMGN", "AAPL", "BA", "CAT", "CSCO", "CVX", "GS", "HD", "HON",
@@ -169,8 +197,8 @@ def get_etf_universe() -> Tuple[List[str], str]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
-    """Fetch F&O stock list from NSE. NSE requires a warm session cookie before
-    the JSON API returns data, so we seed cookies via the homepage first."""
+    """Fetch F&O stock list from NSE with institutional-grade fallbacks."""
+    # ── Primary: NSE JSON API ──
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -180,27 +208,57 @@ def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
         }
         session = requests.Session()
         session.headers.update(headers)
-        # Warm cookies — NSE returns empty {} without a valid session
-        session.get("https://www.nseindia.com/", timeout=15)
-        session.get("https://www.nseindia.com/market-data/live-equity-market", timeout=15)
+        session.get("https://www.nseindia.com/", timeout=10)
+        session.get("https://www.nseindia.com/market-data/live-equity-market", timeout=10)
 
         url = "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O"
-        response = session.get(url, timeout=15)
-        response.raise_for_status()
-        data = response.json()
+        response = session.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('data'):
+                symbols = [item.get('symbol', '') for item in data['data'] if item.get('symbol')]
+                symbols = [s for s in symbols if s and not s.startswith('NIFTY')]
+                symbols_ns = [str(s) + ".NS" for s in symbols if str(s).strip()]
+                if symbols_ns:
+                    return symbols_ns, f"✓ Fetched {len(symbols_ns)} F&O securities from NSE"
+    except Exception:
+        pass
 
-        if data.get('data'):
-            symbols = [item.get('symbol', '') for item in data['data'] if item.get('symbol')]
-            # Drop the index row itself (e.g. "NIFTY 50") if NSE includes it
-            symbols = [s for s in symbols if s and not s.startswith('NIFTY')]
-            symbols_ns = [str(s) + ".NS" for s in symbols if str(s).strip()]
-            if symbols_ns:
-                return symbols_ns, f"✓ Fetched {len(symbols_ns)} F&O securities from NSE"
+    # ── Fallback 1: nsepython (if installed) ──
+    try:
+        from nsepython import nse_get_advances_declines
+        stock_data = nse_get_advances_declines()
+        if isinstance(stock_data, pd.DataFrame):
+            symbols = None
+            if 'SYMBOL' in stock_data.columns:
+                symbols = stock_data['SYMBOL'].tolist()
+            elif 'symbol' in stock_data.columns:
+                symbols = stock_data['symbol'].tolist()
+            if symbols:
+                symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
+                return symbols_ns, f"⚠ NSE API failed → Loaded {len(symbols_ns)} F&O securities via nsepython"
+    except ImportError:
+        pass
+    except Exception:
+        pass
 
-        return None, "Could not extract F&O symbols from NSE API"
+    # ── Fallback 2: NSE Archives (NIFTY 500 as proxy for depth) ──
+    try:
+        url = f"{NSE_ARCHIVE_URL}ind_nifty500list.csv"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, verify=False, timeout=10)
+        if response.status_code == 200:
+            csv_file = io.StringIO(response.text)
+            stock_df = pd.read_csv(csv_file)
+            symbol_col = next((c for c in stock_df.columns if c.lower() == 'symbol'), None)
+            if symbol_col:
+                symbols = stock_df[symbol_col].tolist()
+                symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
+                return symbols_ns, f"⚠ NSE API failed → Loaded {len(symbols_ns)} stocks from NIFTY 500 Archive"
+    except Exception:
+        pass
 
-    except Exception as e:
-        return None, f"Error fetching F&O list: {e}"
+    return None, "All F&O fetch sources failed (NSE API, nsepython, Archives)"
 
 
 def _parse_wiki_table(url: str, min_count: int = 10) -> Optional[List[str]]:
@@ -213,9 +271,17 @@ def _parse_wiki_table(url: str, min_count: int = 10) -> Optional[List[str]]:
         response.raise_for_status()
         tables = pd.read_html(io.StringIO(response.text))
         for tbl in tables:
-            if 'Symbol' in tbl.columns:
-                symbols = tbl['Symbol'].dropna().astype(str).str.strip().tolist()
-                symbols = [s for s in symbols if s and len(s) <= 20 and s != 'nan']
+            # Flexible scanner: search for symbol/ticker/code columns
+            cols_lower = [str(c).lower() for c in tbl.columns]
+            sym_col = None
+            for candidate in ('symbol', 'ticker', 'nse code', 'code', 'ticker symbol'):
+                if candidate in cols_lower:
+                    sym_col = tbl.columns[cols_lower.index(candidate)]
+                    break
+            
+            if sym_col:
+                symbols = tbl[sym_col].dropna().astype(str).str.strip().tolist()
+                symbols = [s for s in symbols if s and len(s) <= 20 and s.lower() != 'nan']
                 if len(symbols) >= min_count:
                     return symbols
         return None
@@ -269,6 +335,10 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
     if index in US_INDEX_LIST:
         return get_us_index_stock_list(index)
 
+    # Route F&O Stocks to separate handler
+    if index == "F&O Stocks":
+        return get_fno_stock_list()
+
     url = INDEX_URL_MAP.get(index)
     if not url:
         return None, f"No URL for {index}"
@@ -285,15 +355,33 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
         csv_file = io.StringIO(response.text)
         stock_df = pd.read_csv(csv_file)
 
-        if 'Symbol' in stock_df.columns:
-            symbols = stock_df['Symbol'].tolist()
+        # Flexible scanner for symbol column names
+        symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker', 'code')), None)
+
+        if symbol_col:
+            symbols = stock_df[symbol_col].tolist()
             symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
             return symbols_ns, f"✓ Fetched {len(symbols_ns)} constituents from {index}"
         else:
-            primary_error = "No Symbol column found in CSV"
+            primary_error = f"No Symbol column found in {stock_df.columns.tolist()}"
 
     except Exception as e:
         primary_error = str(e)
+
+    # ── Fallback 1: NSE Archive ──
+    try:
+        arch_url = NSE_ARCHIVE_URL + url.split('/')[-1]
+        response = requests.get(arch_url, headers=headers, verify=False, timeout=10)
+        if response.status_code == 200:
+            csv_file = io.StringIO(response.text)
+            stock_df = pd.read_csv(csv_file)
+            symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker')), None)
+            if symbol_col:
+                symbols = stock_df[symbol_col].tolist()
+                symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
+                return symbols_ns, f"⚠ Primary source failed → Loaded {len(symbols_ns)} {index} constituents from NSE Archive"
+    except Exception:
+        pass
 
     # ── Fallback: Wikipedia ──
     wiki_result, wiki_msg = _fetch_india_index_from_wikipedia(index)
@@ -378,6 +466,12 @@ def get_currency_list() -> Tuple[List[str], str]:
     return tickers, f"✓ Loaded {len(tickers)} currency pairs"
 
 
+def get_crypto_list() -> Tuple[List[str], str]:
+    """Return all crypto digital asset tickers for analysis"""
+    tickers = list(CRYPTO_TICKERS.keys())
+    return tickers, f"✓ Loaded {len(tickers)} digital assets"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN RESOLVE FUNCTION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -399,7 +493,7 @@ def resolve_universe(
     Raises:
         ValueError: If universe is unknown or index is missing when required
     """
-    if universe == "ETF Universe":
+    if universe == "ETF Index":
         return get_etf_universe()
 
     elif universe == "India Indexes":
@@ -417,6 +511,9 @@ def resolve_universe(
 
     elif universe == "Currency":
         return get_currency_list()
+
+    elif universe == "Crypto":
+        return get_crypto_list()
 
     else:
         raise ValueError(f"Unknown universe: {universe}. Choose from: {UNIVERSE_OPTIONS}")
@@ -490,6 +587,7 @@ __all__ = [
     'UNIVERSE_OPTIONS',
     'COMMODITY_TICKERS',
     'CURRENCY_TICKERS',
+    'CRYPTO_TICKERS',
     'DOW_JONES_TICKERS',
     'INDEX_URL_MAP',
     # Fetching functions
@@ -499,6 +597,7 @@ __all__ = [
     'get_us_index_stock_list',
     'get_commodity_list',
     'get_currency_list',
+    'get_crypto_list',
     # Resolver
     'resolve_universe',
     'get_index_options',
