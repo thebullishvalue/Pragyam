@@ -98,11 +98,12 @@ def render_metric_card(
             f'</div>'
         )
 
+    sub_metric_html = f'<div class="sub-metric">{html_mod.escape(subtext)}</div>' if subtext else ""
     st.markdown(
         f'<div class="metric-card {html_mod.escape(color_class)}">'
         f"<h4>{html_mod.escape(label)}</h4>"
         f"<h2>{html_mod.escape(value)}</h2>"
-        f'{f"<div class=\"sub-metric\">{html_mod.escape(subtext)}</div>" if subtext else ""}'
+        f"{sub_metric_html}"
         f"{tooltip_html}"
         f"</div>",
         unsafe_allow_html=True,
