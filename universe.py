@@ -38,21 +38,34 @@ ETF_UNIVERSE = [
 INDIA_INDEX_LIST = [
     "NIFTY 50",
     "F&O Stocks",
+    # Broad market
     "NIFTY NEXT 50",
     "NIFTY 100",
     "NIFTY 200",
     "NIFTY 500",
+    # Midcap
     "NIFTY MIDCAP 50",
     "NIFTY MIDCAP 100",
+    "NIFTY MIDCAP 150",
+    "NIFTY MID SELECT",
+    # Smallcap
+    "NIFTY SMLCAP 50",
     "NIFTY SMLCAP 100",
+    "NIFTY SMLCAP 250",
+    # Sectoral
     "NIFTY BANK",
+    "NIFTY PRIVATE BANK",
+    "NIFTY PSU BANK",
     "NIFTY AUTO",
     "NIFTY FIN SERVICE",
     "NIFTY FMCG",
     "NIFTY IT",
     "NIFTY MEDIA",
     "NIFTY METAL",
-    "NIFTY PHARMA"
+    "NIFTY ENERGY",
+    "NIFTY INFRA",
+    "NIFTY PHARMA",
+    "NIFTY REALTY",
 ]
 
 # ── US Index Universe ────────────────────────────────────────────────────────
@@ -70,25 +83,37 @@ UNIVERSE_OPTIONS = [
 ]
 
 # ── Index Sources ────────────────────────────────────────────────────────────
-BASE_URL = "https://www.niftyindices.com/IndexConstituent/"
-NSE_ARCHIVE_URL = "https://archives.nseindia.com/content/indices/"
+BASE_URL = "https://archives.nseindia.com/content/indices/"
 INDEX_URL_MAP = {
-    "NIFTY 50": f"{BASE_URL}ind_nifty50list.csv",
-    "NIFTY NEXT 50": f"{BASE_URL}ind_niftynext50list.csv",
-    "NIFTY 100": f"{BASE_URL}ind_nifty100list.csv",
-    "NIFTY 200": f"{BASE_URL}ind_nifty200list.csv",
-    "NIFTY 500": f"{BASE_URL}ind_nifty500list.csv",
-    "NIFTY MIDCAP 50": f"{BASE_URL}ind_niftymidcap50list.csv",
+    # Broad market
+    "NIFTY 50":         f"{BASE_URL}ind_nifty50list.csv",
+    "NIFTY NEXT 50":    f"{BASE_URL}ind_niftynext50list.csv",
+    "NIFTY 100":        f"{BASE_URL}ind_nifty100list.csv",
+    "NIFTY 200":        f"{BASE_URL}ind_nifty200list.csv",
+    "NIFTY 500":        f"{BASE_URL}ind_nifty500list.csv",
+    # Midcap
+    "NIFTY MIDCAP 50":  f"{BASE_URL}ind_niftymidcap50list.csv",
     "NIFTY MIDCAP 100": f"{BASE_URL}ind_niftymidcap100list.csv",
+    "NIFTY MIDCAP 150": f"{BASE_URL}ind_niftymidcap150list.csv",
+    "NIFTY MID SELECT": f"{BASE_URL}ind_niftymidcapselectlist.csv",
+    # Smallcap
+    "NIFTY SMLCAP 50":  f"{BASE_URL}ind_niftysmallcap50list.csv",
     "NIFTY SMLCAP 100": f"{BASE_URL}ind_niftysmallcap100list.csv",
-    "NIFTY BANK": f"{BASE_URL}ind_niftybanklist.csv",
-    "NIFTY AUTO": f"{BASE_URL}ind_niftyautolist.csv",
-    "NIFTY FIN SERVICE": f"{BASE_URL}ind_niftyfinancelist.csv",
-    "NIFTY FMCG": f"{BASE_URL}ind_niftyfmcglist.csv",
-    "NIFTY IT": f"{BASE_URL}ind_niftyitlist.csv",
-    "NIFTY MEDIA": f"{BASE_URL}ind_niftymedialist.csv",
-    "NIFTY METAL": f"{BASE_URL}ind_niftymetallist.csv",
-    "NIFTY PHARMA": f"{BASE_URL}ind_niftypharmalist.csv"
+    "NIFTY SMLCAP 250": f"{BASE_URL}ind_niftysmallcap250list.csv",
+    # Sectoral
+    "NIFTY BANK":         f"{BASE_URL}ind_niftybanklist.csv",
+    "NIFTY PRIVATE BANK": f"{BASE_URL}ind_niftypvtbanklist.csv",
+    "NIFTY PSU BANK":     f"{BASE_URL}ind_niftypsubanklist.csv",
+    "NIFTY AUTO":         f"{BASE_URL}ind_niftyautolist.csv",
+    "NIFTY FIN SERVICE":  f"{BASE_URL}ind_niftyfinancelist.csv",
+    "NIFTY FMCG":         f"{BASE_URL}ind_niftyfmcglist.csv",
+    "NIFTY IT":           f"{BASE_URL}ind_niftyitlist.csv",
+    "NIFTY MEDIA":        f"{BASE_URL}ind_niftymedialist.csv",
+    "NIFTY METAL":        f"{BASE_URL}ind_niftymetallist.csv",
+    "NIFTY ENERGY":       f"{BASE_URL}ind_niftyenergylist.csv",
+    "NIFTY INFRA":        f"{BASE_URL}ind_niftyinfrastructurelist.csv",
+    "NIFTY PHARMA":       f"{BASE_URL}ind_niftypharmalist.csv",
+    "NIFTY REALTY":       f"{BASE_URL}ind_niftyrealtylist.csv",
 }
 
 # ── Commodity Futures (Yahoo Finance) ─────────────────────────────────────────
@@ -245,7 +270,7 @@ def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
 
     # ── Fallback 2: NSE Archives (NIFTY 500 as proxy for depth) ──
     try:
-        url = f"{NSE_ARCHIVE_URL}ind_nifty500list.csv"
+        url = f"{BASE_URL}ind_nifty500list.csv"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, verify=False, timeout=10)
         if response.status_code == 200:
@@ -329,74 +354,80 @@ def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], 
         return None, f"Wikipedia fallback error: {e}"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
-    """Fetch index constituents from NSE Indices with Wikipedia fallback, or US Indices"""
-    # Route US indices to separate handler
+    """Fetch index constituents with three-source fallback chain."""
     if index in US_INDEX_LIST:
         return get_us_index_stock_list(index)
 
-    # Route F&O Stocks to separate handler
     if index == "F&O Stocks":
         return get_fno_stock_list()
 
-    url = INDEX_URL_MAP.get(index)
-    if not url:
-        return None, f"No URL for {index}"
+    import urllib.parse
 
-    # ── Primary: niftyindices.com CSV ──
-    primary_error = None
+    nse_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.nseindia.com/market-data/live-equity-market',
+    }
+
+    # ── Source 1: NSE JSON API (most reliable for sectoral indexes) ──
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, verify=False, timeout=10)
-        response.raise_for_status()
-
-        csv_file = io.StringIO(response.text)
-        stock_df = pd.read_csv(csv_file)
-
-        # Flexible scanner for symbol column names
-        symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker', 'code')), None)
-
-        if symbol_col:
-            symbols = stock_df[symbol_col].tolist()
-            symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
-            return symbols_ns, f"✓ Fetched {len(symbols_ns)} constituents from {index}"
-        else:
-            primary_error = f"No Symbol column found in {stock_df.columns.tolist()}"
-
-    except Exception as e:
-        primary_error = str(e)
-
-    # ── Fallback 1: NSE Archive ──
-    try:
-        arch_url = NSE_ARCHIVE_URL + url.split('/')[-1]
-        response = requests.get(arch_url, headers=headers, verify=False, timeout=10)
+        api_url = f"https://www.nseindia.com/api/equity-stockIndices?index={urllib.parse.quote(index)}"
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=nse_headers, timeout=10)
+        response = session.get(api_url, headers=nse_headers, timeout=15)
         if response.status_code == 200:
-            csv_file = io.StringIO(response.text)
-            stock_df = pd.read_csv(csv_file)
-            symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker')), None)
-            if symbol_col:
-                symbols = stock_df[symbol_col].tolist()
-                symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
-                return symbols_ns, f"⚠ Primary source failed → Loaded {len(symbols_ns)} {index} constituents from NSE Archive"
+            data = response.json()
+            if data.get('data'):
+                # First item is always the index itself, not a constituent
+                symbols = [item['symbol'] for item in data['data'][1:] if item.get('symbol')]
+                symbols = [s for s in symbols if s and str(s).strip()]
+                if symbols:
+                    symbols_ns = [str(s) + ".NS" for s in symbols]
+                    return symbols_ns, f"✓ Fetched {len(symbols_ns)} constituents from {index}"
     except Exception:
         pass
 
-    # ── Fallback: Wikipedia ──
+    # ── Source 2: NSE Archives CSV (session-warmed) ──
+    url = INDEX_URL_MAP.get(index)
+    if url:
+        try:
+            arch_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0',
+            }
+            session = requests.Session()
+            session.get("https://archives.nseindia.com", headers=arch_headers, verify=False, timeout=10)
+            response = session.get(url, headers=arch_headers, verify=False, timeout=15)
+            response.raise_for_status()
+            stock_df = pd.read_csv(io.StringIO(response.text))
+            symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker', 'code')), None)
+            if symbol_col:
+                symbols = stock_df[symbol_col].tolist()
+                symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
+                if symbols_ns:
+                    return symbols_ns, f"✓ Fetched {len(symbols_ns)} constituents from {index} (NSE archive)"
+        except Exception:
+            pass
+
+    # ── Source 3: Wikipedia fallback ──
     wiki_result, wiki_msg = _fetch_india_index_from_wikipedia(index)
     if wiki_result:
         return wiki_result, wiki_msg
 
-    # Both failed — return informative error
     fallback_note = ""
     if wiki_msg is None:
-        fallback_note = " (no Wikipedia fallback available for this index — try NIFTY 50/100/500 or retry later)"
+        fallback_note = " (no Wikipedia fallback for this index — retry later)"
     elif wiki_msg:
         fallback_note = f" | {wiki_msg}"
 
-    return None, f"Error: {primary_error}{fallback_note}"
+    return None, f"Error: all sources failed for {index}{fallback_note}"
 
 
 def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
