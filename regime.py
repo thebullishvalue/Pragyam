@@ -46,9 +46,9 @@ REGIME_COLORS: Dict[str, str] = {
 }
 
 REGIME_ICONS: Dict[str, str] = {
-    "STRONG_BULL": "🚀", "BULL": "📈", "WEAK_BULL": "↗️",
-    "CHOP": "↔️", "WEAK_BEAR": "↘️", "BEAR": "📉",
-    "CRISIS": "⚡", "UNKNOWN": "❓",
+    "STRONG_BULL": "rocket", "BULL": "trending-up", "WEAK_BULL": "arrow-up-right",
+    "CHOP": "move-horizontal", "WEAK_BEAR": "arrow-down-right", "BEAR": "trending-down",
+    "CRISIS": "alert-triangle", "UNKNOWN": "help-circle",
 }
 
 REGIME_DESCRIPTIONS: Dict[str, str] = {
@@ -144,7 +144,7 @@ class RegimeResult:
 
     def __post_init__(self):
         self.color = REGIME_COLORS.get(self.regime, REGIME_COLORS["UNKNOWN"])
-        self.icon  = REGIME_ICONS.get(self.regime, "❓")
+        self.icon  = REGIME_ICONS.get(self.regime, "help-circle")
         self.description = REGIME_DESCRIPTIONS.get(self.regime, "")
 
     def to_dict(self) -> Dict[str, Any]:
@@ -290,10 +290,10 @@ class MarketRegimeDetector:
     def _momentum(self, window: list) -> Dict[str, Any]:
         rsi_vals = [df["rsi latest"].mean() for _, df in window]
         osc_vals = [df["osc latest"].mean() for _, df in window]
-        cur_rsi = float(rsi_vals[-1])
-        rsi_trend = float(np.polyfit(range(len(rsi_vals)), rsi_vals, 1)[0])
-        cur_osc = float(osc_vals[-1])
-        osc_trend = float(np.polyfit(range(len(osc_vals)), osc_vals, 1)[0])
+        cur_rsi = rsi_vals[-1]
+        rsi_trend = np.polyfit(range(len(rsi_vals)), rsi_vals, 1)[0]
+        cur_osc = osc_vals[-1]
+        osc_trend = np.polyfit(range(len(osc_vals)), osc_vals, 1)[0]
 
         if cur_rsi > 65 and rsi_trend > 0.5:    strength, score = "STRONG_BULLISH", 2.0
         elif cur_rsi > 55 and rsi_trend >= 0:    strength, score = "BULLISH", 1.0
@@ -310,9 +310,9 @@ class MarketRegimeDetector:
     def _trend(self, window: list) -> Dict[str, Any]:
         above200 = [(df["price"] > df["ma200 latest"]).mean() for _, df in window]
         align90 = [(df["ma90 latest"] > df["ma200 latest"]).mean() for _, df in window]
-        cur200   = float(above200[-1])
-        cur_align = float(align90[-1])
-        consistency = float(np.polyfit(range(len(above200)), above200, 1)[0])
+        cur200   = above200[-1]
+        cur_align = align90[-1]
+        consistency = np.polyfit(range(len(above200)), above200, 1)[0]
 
         if cur200 > 0.75 and cur_align > 0.70 and consistency >= 0: quality, score = "STRONG_UPTREND", 2.0
         elif cur200 > 0.60 and cur_align > 0.55:                    quality, score = "UPTREND", 1.0
@@ -328,10 +328,10 @@ class MarketRegimeDetector:
         }
 
     def _breadth(self, df: pd.DataFrame) -> Dict[str, Any]:
-        rsi_bull = float((df["rsi latest"] > 50).mean())
-        osc_pos  = float((df["osc latest"] > 0).mean())
-        rsi_weak = float((df["rsi latest"] < 40).mean())
-        osc_os   = float((df["osc latest"] < -50).mean())
+        rsi_bull = (df["rsi latest"] > 50).mean()
+        osc_pos  = (df["osc latest"] > 0).mean()
+        rsi_weak = (df["rsi latest"] < 40).mean()
+        osc_os   = (df["osc latest"] < -50).mean()
         divergence = abs(rsi_bull - osc_pos)
 
         if rsi_bull > 0.70 and osc_pos > 0.60 and divergence < 0.15: quality, score = "STRONG_BROAD", 2.0
@@ -353,8 +353,8 @@ class MarketRegimeDetector:
             ((4.0 * df["dev20 latest"]) / (df["ma20 latest"] + 1e-6)).mean()
             for _, df in window
         ]
-        cur_bbw = float(bbw[-1])
-        trend = float(np.polyfit(range(len(bbw)), bbw, 1)[0])
+        cur_bbw = bbw[-1]
+        trend = np.polyfit(range(len(bbw)), bbw, 1)[0]
 
         if cur_bbw < 0.08 and trend < 0:   regime, score = "SQUEEZE", 0.5
         elif cur_bbw > 0.15 and trend > 0:  regime, score = "PANIC", -1.0
@@ -368,8 +368,8 @@ class MarketRegimeDetector:
         }
 
     def _extremes(self, df: pd.DataFrame) -> Dict[str, Any]:
-        os_pct = float((df["zscore latest"] < -2.0).mean())
-        ob_pct = float((df["zscore latest"] > 2.0).mean())
+        os_pct = (df["zscore latest"] < -2.0).mean()
+        ob_pct = (df["zscore latest"] > 2.0).mean()
 
         if os_pct > 0.40:   ext, score = "DEEPLY_OVERSOLD", 1.5
         elif ob_pct > 0.40: ext, score = "DEEPLY_OVERBOUGHT", -1.5
@@ -384,16 +384,16 @@ class MarketRegimeDetector:
         }
 
     def _correlation(self, df: pd.DataFrame) -> Dict[str, Any]:
-        rsi_med = float(df["rsi latest"].median())
-        osc_med = float(df["osc latest"].median())
-        rsi_dir = abs(float((df["rsi latest"] > rsi_med).mean()) - 0.5) * 2.0
-        osc_dir = abs(float((df["osc latest"] > osc_med).mean()) - 0.5) * 2.0
+        rsi_med = df["rsi latest"].median()
+        osc_med = df["osc latest"].median()
+        rsi_dir = abs((df["rsi latest"] > rsi_med).mean() - 0.5) * 2.0
+        osc_dir = abs((df["osc latest"] > osc_med).mean() - 0.5) * 2.0
         agree = (
-            float(((df["rsi latest"] < 40) & (df["osc latest"] < -30)).mean()) +
-            float(((df["rsi latest"] > 60) & (df["osc latest"] > 30)).mean())
+            ((df["rsi latest"] < 40) & (df["osc latest"] < -30)).mean() +
+            ((df["rsi latest"] > 60) & (df["osc latest"] > 30)).mean()
         )
         disp = (df["rsi latest"].std() / 50 + df["osc latest"].std() / 100) / 2
-        raw = float(np.clip((rsi_dir + osc_dir) / 2 * (1.0 - disp) + agree * 0.3, 0, 1))
+        raw = np.clip((rsi_dir + osc_dir) / 2 * (1.0 - disp) + agree * 0.3, 0, 1)
 
         if raw > 0.7:   regime, score = "HIGH_CORRELATION", -0.5
         elif raw < 0.4: regime, score = "LOW_CORRELATION", 0.5
@@ -410,9 +410,9 @@ class MarketRegimeDetector:
 
         rsis = np.array([w[1]["rsi latest"].mean() for w in window[-5:]])
         vel = np.diff(rsis)
-        avg_vel = float(np.mean(vel))
+        avg_vel = np.mean(vel)
         accel_vals = np.diff(vel)
-        cur_accel = float(accel_vals[-1]) if len(accel_vals) else 0.0
+        cur_accel = accel_vals[-1] if len(accel_vals) else 0.0
 
         if avg_vel > 1.5 and cur_accel > 0:         label, score = "ACCELERATING_UP", 1.5
         elif avg_vel > 1.0 and cur_accel >= 0:       label, score = "RISING_FAST", 1.0
@@ -443,9 +443,12 @@ class MarketRegimeDetector:
     # ── Explanation ──────────────────────────────────────────────────────────
 
     def _explain(self, regime: str, confidence: float, factors: FactorScores, score: float) -> str:
-        icon = REGIME_ICONS.get(regime, "")
+        from ui.components import get_icon
+        icon_key = REGIME_ICONS.get(regime, "help-circle")
+        icon_svg = get_icon(icon_key, size=20, stroke_width=2)
+
         lines = [
-            f"**Detected Regime:** {icon} {regime.replace('_', ' ')}",
+            f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">{icon_svg} <span style="font-size:1.2rem; font-weight:700;">{regime.replace("_", " ")}</span></div>',
             f"**Composite Score:** {score:+.2f} | **Confidence:** {confidence:.0%}",
             "",
             f"**Market Assessment:** {REGIME_DESCRIPTIONS.get(regime, '')}",
@@ -455,8 +458,17 @@ class MarketRegimeDetector:
 
         display = factors.to_display_list()
         for fname, fscore, flabel, fweight in display:
-            direction = "▲" if fscore > 0.2 else ("▼" if fscore < -0.2 else "—")
-            lines.append(f"• **{fname}** ({fweight:.0%} weight): {flabel} {direction} {fscore:+.1f}")
+            if fscore > 0.2:
+                dir_icon = get_icon("arrow-up", size=12, stroke_width=2.5)
+            elif fscore < -0.2:
+                dir_icon = get_icon("arrow-down", size=12, stroke_width=2.5)
+            else:
+                dir_icon = "—"
+            
+            lines.append(f'<div style="display:flex; align-items:center; gap:6px; font-size:0.85rem; margin-bottom:4px;">'
+                         f'• <strong>{fname}</strong> ({fweight:.0%} weight): {flabel} '
+                         f'<span style="color:{"var(--emerald)" if fscore > 0.2 else ("var(--rose)" if fscore < -0.2 else "var(--ink-tertiary)")}; display:inline-flex; align-items:center;">'
+                         f'{dir_icon}</span> <strong>{fscore:+.1f}</strong></div>')
 
         if factors.breadth.get("quality") == "DIVERGENT":
             lines += ["", "⚠️ **Alert:** Breadth divergence detected — narrow leadership may not persist."]
@@ -612,7 +624,7 @@ def compute_conviction_signals(
             sig["ma_signal"]     * 0.20
         )
         # raw range: [-2, +2] → normalise to [0, 100]
-        sig["conviction_score"] = int(round(max(0.0, min(100.0, (raw + 2.0) / 4.0 * 100.0))))
+        sig["conviction_score"] = round(max(0.0, min(100.0, (raw + 2.0) / 4.0 * 100.0)))
 
         rows.append(sig)
 

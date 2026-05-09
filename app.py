@@ -24,8 +24,8 @@ import numpy as np
 import os
 import io
 import warnings
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Tuple
+from datetime import datetime, date, timedelta, timezone
+from typing import List, Dict, Tuple, Optional
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -51,7 +51,10 @@ from ui.components import (
     render_theme_toggle,
     render_export_button_row,
     render_interpretation_card,
+    render_kv_table,
+    get_icon,
 )
+import streamlit.components.v1 as components
 from regime import (
     MarketRegimeDetector,
     REGIME_COLORS,
@@ -188,7 +191,7 @@ def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
             "composite_score": 0.0,
             "explanation": f"Error resolving universe: {e}",
             "color": REGIME_COLORS["UNKNOWN"],
-            "icon": "❓",
+            "icon": "help-circle",
             "description": "",
         }
     
@@ -208,7 +211,7 @@ def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
                 "composite_score": 0.0,
                 "explanation": "Insufficient data for regime classification.",
                 "color": REGIME_COLORS["UNKNOWN"],
-                "icon": "❓",
+                "icon": "help-circle",
                 "description": "",
             }
         result = detector.detect(hist, analysis_date=end_date)
@@ -221,7 +224,7 @@ def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
             "composite_score": 0.0,
             "explanation": f"Regime detection error: {e}",
             "color": "#6b7280",
-            "icon": "❓",
+            "icon": "help-circle",
             "description": "",
         }
 
@@ -354,7 +357,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     '''
 
     table_height = max(280, 220 + len(portfolio) * 42)
-    st.components.v1.html(table_html, height=table_height)
+    components.html(table_html, height=table_height)
 
     # Conviction Signal Heatmap
     _section_divider()
@@ -414,7 +417,7 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     scores = []
     for _, row in portfolio_with_signals.iterrows():
         score = row.get("conviction_score", 50)
-        scores.append(float(score))
+        scores.append(score)
 
     strong_buy = sum(1 for s in scores if s >= 65)
     buy = sum(1 for s in scores if 50 <= s < 65)
@@ -470,16 +473,16 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         # Determine tier
         if score >= 65:
             tier_name = "Strong Buy"
-            emoji = "🟢"
+            icon_svg = get_icon("check-circle", size=14, stroke_width=2.2)
         elif score >= 50:
             tier_name = "Buy"
-            emoji = "🟩"
+            icon_svg = get_icon("circle", size=11)
         elif score >= 35:
             tier_name = "Hold"
-            emoji = "🟡"
+            icon_svg = get_icon("circle", size=11)
         else:
             tier_name = "Caution"
-            emoji = "🔴"
+            icon_svg = get_icon("alert-triangle", size=13, stroke_width=1.8)
 
         primary_color, bright_color, bg_color, border_color = tier_colors[tier_name]
 
@@ -495,8 +498,8 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             f'<tr>'
             f'<td class="symbol">{symbol_escaped}</td>'
             f'<td class="numeric currency">&#8377;{price:,.2f}</td>'
-            f'<td class="numeric"><span style="color: {bright_color};">{emoji} {tier_name}</span></td>'
-            f'<td class="numeric" style="color: {bright_color}; font-weight: 600;">{int(score)}</td>'
+            f'<td class="numeric"><div style="display:flex; align-items:center; gap:6px; justify-content:flex-end;"><span style="color: {bright_color};">{icon_svg}</span> <span style="color: {bright_color};">{tier_name}</span></div></td>'
+            f'<td class="numeric" style="color: {bright_color}; font-weight: 600;">{score}</td>'
             f'<td class="numeric">{rsi_str}</td>'
             f'<td class="numeric">{osc_str}</td>'
             f'<td class="numeric">{z_str}</td>'
@@ -593,10 +596,10 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     '''
 
     table_height = max(280, 220 + len(sorted_df) * 42)
-    st.components.v1.html(table_html, height=table_height)
+    components.html(table_html, height=table_height)
 
 
-def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: List = None):
+def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: Optional[List] = None):
     """Tab 2 — Market regime analysis."""
     if not regime_result:
         st.info("Run analysis to populate regime data.")
@@ -607,7 +610,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     confidence = regime_result.get("confidence", 0.0)
     score = regime_result.get("composite_score", 0.0)
     color = regime_result.get("color", "#888888")
-    icon = regime_result.get("icon", "❓")
+    icon_key = regime_result.get("icon", "help-circle")
     description = regime_result.get("description", "")
     explanation = regime_result.get("explanation", "")
     factors_raw = regime_result.get("factors", {})
@@ -620,8 +623,8 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     with col_badge:
         st.markdown(f"""
         <div class="regime-badge" style="border-color: {color}; background: {color}18;">
-            <div class="regime-icon">{icon}</div>
-            <div class="regime-name" style="color: {color};">{regime_name.replace('_', ' ')}</div>
+            <div class="regime-icon">{get_icon(icon_key, size=24, stroke_width=1.5)}</div>
+            <div class="regime-name" style="color: {color}; font-size: 1.4rem;">{regime_name.replace('_', ' ')}</div>
             <div class="regime-sub">{mix_name}</div>
             <div class="regime-score">Score: {score:+.2f}</div>
             <div class="regime-conf">
@@ -734,8 +737,7 @@ def _render_system_tab(training_window: List):
         "Lookback Period": f"{len(training_window)} days",
     }
 
-    details_df = pd.DataFrame([{"Setting": k, "Value": v} for k, v in details.items()])
-    st.dataframe(details_df, width='stretch', hide_index=True)
+    render_kv_table(details)
 
     _section_divider()
 
@@ -745,18 +747,20 @@ def _render_system_tab(training_window: List):
 
     with c1:
         render_metric_card(
-            "📊 Conviction Scoring",
+            "Conviction Scoring",
             "0-100 Range",
             "Signals: RSI (30%) · Oscillator (30%)<br>Z-Score (20%) · MA Alignment (20%)<br><br>Formula: (raw + 2) / 4 × 100",
-            "info"
+            "info",
+            icon="bar-chart"
         )
 
     with c2:
         render_metric_card(
-            "⚖️ Portfolio Weighting",
+            "Portfolio Weighting",
             "(conviction / total) × 100",
             "Bounds: Min 1% · Max 10%<br>Selection: Top 30 by conviction<br><br>No threshold: All symbols eligible",
-            "success"
+            "success",
+            icon="scale"
         )
 
 
@@ -787,7 +791,7 @@ def _render_landing_page():
         st.markdown("""
         <div class='system-card portfolio'>
             <h3>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                {get_icon("briefcase", size=16, stroke_width=1.8)}
                 PORTFOLIO
             </h3>
             <p>Conviction-based portfolio curation with composite scoring across four technical indicators for precision selection.</p>
@@ -804,7 +808,7 @@ def _render_landing_page():
         st.markdown("""
         <div class='system-card regime'>
             <h3>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                {get_icon("compass", size=16, stroke_width=1.8)}
                 REGIME
             </h3>
             <p>Seven-factor market regime detection with composite scoring for adaptive portfolio positioning and risk management.</p>
@@ -821,7 +825,7 @@ def _render_landing_page():
         st.markdown("""
         <div class='system-card strategies'>
             <h3>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                {get_icon("layers", size=16, stroke_width=1.8)}
                 STRATEGIES
             </h3>
             <p>Ninety-five quantitative strategies running in parallel across momentum, reversal, breakout, and pattern recognition.</p>
@@ -922,7 +926,7 @@ def _run_analysis(
     investment_style: str,
     capital: float,
     num_positions: int,
-    selected_date_display: datetime.date,
+    selected_date_display: date,
     symbols_key: str,
     universe: str,
     index: str,
@@ -1102,7 +1106,7 @@ def _run_analysis(
             time.sleep(1.5)
             progress_container.empty()
             
-            st.toast("Analysis Complete!", icon="✅")
+            st.toast("Analysis Complete!")
 
         except Exception as e:
             metrics.end_phase("total_execution", success=False, error_msg=str(e))
@@ -1190,8 +1194,8 @@ def main():
             <div style="background:{color_sb}12; border:1px solid {color_sb}40; border-radius:10px;
                         padding:12px; margin:10px 0 20px 0;">
                 <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
-                <div style="color:{color_sb}; font-size:1.1rem; font-weight:700; line-height:1.2; font-family:var(--display);">
-                    {rd.get('icon', '')} {regime_name_sb.replace('_', ' ')}
+                <div style="color:{color_sb}; font-size:1.25rem; font-weight:700; line-height:1.2; font-family:var(--display); display:flex; align-items:center; gap:8px;">
+                    {get_icon(rd.get('icon', ''), size=20, stroke_width=1.8)} {regime_name_sb.replace('_', ' ')}
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
                     <span style="color:var(--ink-tertiary); font-size:0.75rem; font-family:var(--data);">Score {score_sb:+.2f}</span>
