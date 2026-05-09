@@ -143,6 +143,11 @@ body,
     -moz-osx-font-smoothing: grayscale;
 }
 
+svg {
+    vertical-align: middle;
+    shape-rendering: geometricPrecision;
+}
+
 .stApp {
     background: var(--bg-deep) !important;
     color: var(--ink-primary);
@@ -1009,6 +1014,21 @@ footer {
     margin: 0 0 var(--sp-3) 0;
     position: relative;
     z-index: 1;
+    display: flex;
+    align-items: center;
+}
+
+.card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 0.45rem;
+    opacity: 0.9;
+    vertical-align: middle;
+}
+
+.card-icon svg {
+    display: block;
 }
 
 .metric-card h2 {
@@ -1498,11 +1518,16 @@ footer {
     backdrop-filter: blur(12px);
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
-    padding: var(--sp-6);
+    padding: var(--sp-8);
     text-align: center;
     position: relative;
     overflow: hidden;
     transition: all 300ms ease;
+    min-height: 285px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 
 .regime-badge:hover {
@@ -1511,9 +1536,10 @@ footer {
 }
 
 .regime-icon {
-    font-size: 3rem;
-    margin-bottom: var(--sp-3);
-    display: block;
+    margin-bottom: var(--sp-2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
 .regime-name {
@@ -4036,4 +4062,62 @@ footer {
     border: 1px solid rgba(45, 212, 168, 0.15) !important;
     border-radius: var(--r-sm) !important;
     padding: var(--sp-2) var(--sp-4) !important;
+}
+/* Custom Tables (Obsidian Quant Style - Matched to Portfolio Table) */
+.kv-table-container {
+    width: 100%;
+    margin: 1rem 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: linear-gradient(145deg, rgba(17, 24, 39, 0.45) 0%, rgba(17, 24, 39, 0.4) 100%);
+}
+
+.kv-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.kv-table thead th {
+    background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0.85) 100%);
+    color: #4B5563;
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0.75rem 0.75rem;
+    border-bottom: 2px solid rgba(212, 168, 83, 0.3);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.kv-table tbody td {
+    padding: 0.75rem 0.75rem;
+    color: #F1F5F9;
+    font-size: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    font-family: 'IBM Plex Mono', monospace;
+    vertical-align: middle;
+}
+
+.kv-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.kv-table tbody td.key {
+    font-weight: 700;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    font-family: 'Space Grotesk', sans-serif;
+    color: #F1F5F9;
+    width: 40%;
+}
+
+.kv-table tbody td.value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.kv-table tbody tr:hover {
+    background: rgba(212, 168, 83, 0.05);
 }
