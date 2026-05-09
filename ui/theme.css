@@ -638,9 +638,48 @@ footer {
     overflow: hidden;
     cursor: default;
     height: 100%;
-    min-height: 280px;
+    min-height: 320px;
     display: flex;
     flex-direction: column;
+}
+
+
+/* Force the column row containing system-cards to stretch all columns
+   to the height of the tallest card. Targets only Streamlit horizontal
+   blocks that contain a system-card, so the rest of the app is unaffected. */
+[data-testid="stHorizontalBlock"]:has(.system-card) {
+    align-items: stretch;
+}
+[data-testid="stHorizontalBlock"]:has(.system-card) > [data-testid="stColumn"],
+[data-testid="stHorizontalBlock"]:has(.system-card) > [data-testid="stColumn"] > div {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Equal-height metric cards — complete the flex/height chain from stColumn
+   all the way down to .metric-card regardless of Streamlit DOM depth.
+   Covers both testid variants (element-container / stElementContainer)
+   used across Streamlit versions, plus stMarkdownContainer. */
+[data-testid="stHorizontalBlock"]:has(.metric-card) {
+    align-items: stretch !important;
+}
+/* Propagate height through every unnamed intermediate div inside the column */
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="stColumn"] > div,
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="stColumn"] > div > div,
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="stColumn"] > div > div > div,
+[data-testid="stHorizontalBlock"]:has(.metric-card) > [data-testid="stColumn"] > div > div > div > div {
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+/* Cover both testid variants for element container + markdown wrapper */
+[data-testid="stHorizontalBlock"]:has(.metric-card) [data-testid="element-container"],
+[data-testid="stHorizontalBlock"]:has(.metric-card) [data-testid="stElementContainer"],
+[data-testid="stHorizontalBlock"]:has(.metric-card) [data-testid="stMarkdownContainer"] {
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
 }
 
 /* Diagonal accent line */
@@ -721,6 +760,9 @@ footer {
     z-index: 1;
 }
 
+/* Push the spec list to the bottom regardless of paragraph length —
+   keeps all three landing cards visually aligned even if one card's
+   paragraph wraps to a different number of lines. */
 .system-card .spec {
     font-family: var(--data);
     font-size: 0.68rem;
