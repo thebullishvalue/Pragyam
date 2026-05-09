@@ -788,7 +788,7 @@ def _render_landing_page():
     col1, col2, col3 = st.columns(3, gap="small")
 
     with col1:
-        st.markdown("""
+        st.markdown(f"""
         <div class='system-card portfolio'>
             <h3>
                 {get_icon("briefcase", size=16, stroke_width=1.8)}
@@ -805,7 +805,7 @@ def _render_landing_page():
         """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("""
+        st.markdown(f"""
         <div class='system-card regime'>
             <h3>
                 {get_icon("compass", size=16, stroke_width=1.8)}
@@ -822,7 +822,7 @@ def _render_landing_page():
         """, unsafe_allow_html=True)
 
     with col3:
-        st.markdown("""
+        st.markdown(f"""
         <div class='system-card strategies'>
             <h3>
                 {get_icon("layers", size=16, stroke_width=1.8)}
