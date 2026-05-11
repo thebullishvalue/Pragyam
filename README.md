@@ -1,25 +1,27 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 7.0.5
+**Version:** 8.0.0
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
-Conviction-based portfolio curation for Indian equity markets using 80+ quantitative strategies.
+Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with **self-tuning Bayesian calibration** of conviction weights per (universe, index, regime).
 
-**Latest:** v7.0.5 — Production hardening, dead code removal, and refined terminal logging.
+**Latest:** v8.0.0 — Intelligence Mode: per-scope passport calibration via Optuna TPE; Model Passport sidebar card; Phase 1.5 auto-calibration; explicit fallback diagnostics.
 
 ---
 
 ## Overview
 
-PRAGYAM uses a **pure conviction-based approach** to portfolio construction:
+PRAGYAM is a **two-and-a-half-phase** portfolio system:
 
-1. **All 80+ strategies run** — Every strategy generates candidate holdings
-2. **Conviction scoring** — Each symbol scored 0-100 using 4 technical signals
-3. **Top 30 selection** — Highest conviction scores selected
-4. **Simple weighting** — `weight = (conviction / total) × 100`
+1. **All 95 strategies run** — Every strategy generates candidate holdings
+2. **Conviction scoring** — Each symbol scored 0–100 from 4 technical signals (RSI, Oscillator, Z-Score, MA alignment)
+3. **Top N selection** — Highest conviction scores selected (default top 30)
+4. **Conviction-based weighting** — `weight = (conviction / total) × 100`, bounded 1%–10%
 
-**Execution time:** ~20-40 seconds (10x faster than v6.0.0)
+The four signal weights — historically hard-coded `0.30 / 0.30 / 0.20 / 0.20` — are now **learned per (universe, index, regime)** by maximising the cross-sectional Information Ratio of conviction against forward 10-day returns. Different market regimes reward different signals; the system discovers the right mix automatically.
+
+**Execution time:** ~20–40 s on the reuse path · ~30–50 s on first calibration of a new (universe, index, regime) scope.
 
 ---
 
@@ -27,21 +29,23 @@ PRAGYAM uses a **pure conviction-based approach** to portfolio construction:
 
 | Feature | Description |
 |---------|-------------|
-| **Conviction Scoring** | 4 signals: RSI (30%), Oscillator (30%), Z-Score (20%), MA Alignment (20%) |
-| **All Strategies** | 80+ quantitative strategies contribute candidates |
-| **Simple Formula** | `weight_i = (conviction_score_i / Σ all_conviction_scores) × 100` |
+| **Conviction Scoring** | 4 signals: RSI, Oscillator, Z-Score, MA alignment. Each in [-2, +2] |
+| **Per-Scope Calibration** | Weights learned by Optuna TPE per `(universe, selected_index, regime)` |
+| **Model Passport** | Sidebar card showing live profile state · trained-on label · regime · train/val IR · timestamp |
+| **All Strategies** | 95 quantitative strategies contribute candidates |
 | **Position Bounds** | 1% minimum, 10% maximum per position |
-| **Regime Detection** | 7-factor market regime analysis (display only) |
-| **Live Data** | Real-time NSE data via yfinance |
+| **Regime Detection** | 7-factor market regime analysis (drives passport key + display) |
+| **Profile Import/Export** | Share calibrated passports as JSON between machines |
+| **Live Data** | Real-time NSE / US / global data via yfinance |
+| **Graceful Fallback** | Insufficient data → defaults, with explicit reason surfaced in the UI |
 
 ---
 
 ## Installation
 
 ```bash
-# Clone repository
 git clone <repository-url>
-cd Pragyam-02.01
+cd Pragyam-main
 
 # Install dependencies
 pip install -r requirements.txt
@@ -50,247 +54,339 @@ pip install -r requirements.txt
 ### Requirements
 
 - Python 3.10+
-- streamlit>=1.28.0
-- pandas>=2.0.0
-- numpy>=1.24.0
-- plotly>=5.18.0
-- yfinance>=0.2.28
-- scipy>=1.11.0
-- colorama>=0.4.6
-
-**Note:** `scikit-learn` and `matplotlib` removed as dependencies in v7.0.0 (no longer needed).
+- streamlit >= 1.28.0
+- pandas >= 2.0.0
+- numpy >= 1.24.0
+- plotly >= 5.18.0
+- yfinance >= 0.2.28
+- scipy >= 1.11.0
+- scikit-learn >= 1.3.0
+- **optuna >= 3.5.0** (new in v8.0.0 — Bayesian calibration)
+- colorama >= 0.4.6
 
 ---
 
 ## Usage
 
-### 1. Select Universe
-
-Use the sidebar dropdown to choose your analysis universe:
-
-**Available Universes:**
-- **ETF Universe** — 30 NSE ETFs covering major indices and sectors
-- **India Indexes** — NIFTY 50, NIFTY 100, NIFTY 500, F&O Stocks, sectoral indices
-- **US Indexes** — S&P 500, DOW JONES, NASDAQ 100
-- **Commodities** — 24 commodity futures
-- **Currency** — 24 currency pairs
-
-Simply select the universe and index (where applicable) from the sidebar dropdown before running analysis.
-
-### 2. Run Application
+### 1. Launch
 
 ```bash
 streamlit run app.py
 ```
 
-### 3. Use the Interface
+### 2. Configure (Sidebar)
 
-1. **Select Analysis Date** — Choose the date for portfolio curation
-2. **Set Investment Style** — Swing Trading or SIP Investment (UI option, legacy feature)
-3. **Configure Parameters:**
-   - Capital (₹) — Total capital to deploy (default: ₹2,500,000)
-   - Number of Positions — Holdings in final portfolio (default: 30, range: 5-100)
-   - Min/Max Position Weight — Bounds for individual positions (1%-10% default)
-4. **Click "Run Analysis"**
+1. **Analysis Date** — Date for portfolio curation
+2. **Portfolio Style** — Swing Trading or SIP Investment (drives dispersion concentration)
+3. **Analysis Universe** — ETF Universe · India Indexes · US Indexes · Commodities · Currency · etc.
+4. **Portfolio Parameters** — Capital, Number of Positions
+5. **Run Analysis**
+6. **Model Passport** (below the Run button) — toggle Intelligence Mode · view active passport · import/export/reset
 
-### 4. Review Results
+### 3. Review Results
 
-- **Tab 1: Portfolio** — Holdings with conviction signals and position guide
-- **Tab 2: Performance** — Methodology explanation (walk-forward removed in v7.0.0)
-- **Tab 3: Regime** — Market regime analysis (7-factor composite)
-- **Tab 4: System** — Technical details and configuration
+Four tabs on the result page:
+
+| Tab | Contents |
+|-----|----------|
+| **Portfolio** | Holdings, conviction signals, position guide |
+| **Position Guide** | Per-position signal breakdown with entry conditions |
+| **Regime** | 7-factor regime composite + history |
+| **Intelligence** | Calibration status, train/val IR, manual recalibrate / reset, fallback diagnostics |
+| **System** | Execution metrics, configuration, version info |
 
 ---
 
-## Conviction Scoring Formula
+## Conviction Scoring
 
-### Signal Components
+### Signal Components (each ∈ [-2, +2])
 
-| Signal | Weight | Calculation |
-|--------|--------|-------------|
-| **RSI** | 30% | >60: +2, >52: +1, <48: -1, <40: -2 |
-| **Oscillator** | 30% | >EMA9 & >0: +2, >EMA9: +1, <EMA9 & <0: -2, else: -1 |
-| **Z-Score** | 20% | <-2: +2, <-1: +1, >2: -2, >1: -1 |
-| **MA Alignment** | 20% | Count of 5 bullish conditions (0-5 scaled to -2 to +2) |
+| Signal | Calculation |
+|--------|-------------|
+| **RSI**       | > 60: +2, > 52: +1, < 48: −1, < 40: −2 |
+| **Oscillator**| > EMA9 & > 0: +2, > EMA9: +1, < EMA9 & < 0: −2, else: −1 |
+| **Z-Score**   | < −2: +2, < −1: +1, > +2: −2, > +1: −1 |
+| **MA Align**  | Count of 5 bullish MA conditions, scaled to [-2, +2] |
 
-### Composite Score
-
-```python
-raw = (RSI_signal × 0.30 +
-       OSC_signal × 0.30 +
-       Z-Score_signal × 0.20 +
-       MA_signal × 0.20)
-
-# Normalize to 0-100 scale
-conviction_score = (raw + 2) / 4 × 100
-```
-
-### Conviction Dispersion Weighting (v7.0.5)
-
-Style-aware dispersion weighting automatically adjusts based on investment style:
-
-| Style | Boost (Above Median) | Penalty (Below Median) | Top Pick Advantage |
-|-------|---------------------|------------------------|-------------------|
-| **SIP Investment** | +125% (×2.25) | -50% (×0.50) | ~350% more weight |
-| **Swing Trading** | +225% (×3.25) | -75% (×0.25) | ~1200% more weight |
+### Composite
 
 ```python
-# SIP Mode (conservative concentration)
-if conviction_score > median:
-    adjusted_score = conviction_score × 2.25  # +125% boost
-else:
-    adjusted_score = conviction_score × 0.50  # -50% penalty
+raw = (rsi_signal    * w_rsi +
+       osc_signal    * w_osc +
+       zscore_signal * w_z +
+       ma_signal     * w_ma)
 
-# Swing Mode (aggressive concentration, 2σ more)
-if conviction_score > median:
-    adjusted_score = conviction_score × 3.25  # +225% boost
-else:
-    adjusted_score = conviction_score × 0.25  # -75% penalty
-
-weight_i = (adjusted_conviction_i / Σ all_adjusted_conviction) × 100
+# raw ∈ [-2, +2]  →  conviction_score ∈ [0, 100]
+conviction_score = (raw + 2) / 4 * 100
 ```
 
-**Effect:** 
-- SIP: Strong concentration in high-conviction picks (~350% tilt)
-- Swing: Very aggressive concentration (~1200% tilt) — maximum alpha capture
+### Weights — Two Modes
+
+| Mode | `w_rsi` | `w_osc` | `w_z` | `w_ma` |
+|------|---------|---------|-------|--------|
+| **Standard** (Intelligence off, or no passport) | 0.30 | 0.30 | 0.20 | 0.20 |
+| **Intelligence** (passport exists) | Learned | Learned | Learned | Learned |
+
+In Intelligence mode the four weights sit on the 4-simplex (sum to 1, each ≥ 0) and are read from `IntelligencePassport(universe, selected_index, regime).get_weights()`.
+
+### Conviction Dispersion (style-aware)
+
+Style is a user preference, not something the calibrator learns:
+
+| Style | Boost (Above Median) | Penalty (Below Median) |
+|-------|---------------------|------------------------|
+| **SIP Investment** | ×2.25 (+125%) | ×0.50 (−50%) |
+| **Swing Trading**  | ×3.25 (+225%) | ×0.25 (−75%) |
 
 ### Portfolio Weighting
 
 ```python
-# For top 30 positions by conviction score
-weight_i = (adjusted_conviction_i / Σ all_adjusted_conviction) × 100
+# For the top N positions by adjusted conviction:
+weight_i = (adjusted_conviction_i / Σ adjusted_conviction) * 100
 
-# Apply bounds: 1% ≤ weight_i ≤ 10%
+# Apply bounds:
+1% ≤ weight_i ≤ 10%
 ```
+
+---
+
+## Intelligence Mode — How Calibration Works
+
+### Objective
+
+Maximise the **Information Ratio (IR)** of the cross-sectional Spearman IC between the weighted conviction score and forward 10-day returns, evaluated on a chronological train/val split (70 / 30).
+
+```
+For each date d in train:
+  IC_d = SpearmanCorr( conviction_score(weights, d), forward_return_10d(d) )
+IR_train = mean(IC) / std(IC)
+```
+
+A passport is **saved only when val IR is measurable** on the held-out split.
+
+### Search Space — 4-Simplex
+
+The four weights must satisfy `w_rsi + w_osc + w_z + w_ma = 1` with each ≥ 0. The search reparameterises this as a softmax over four unconstrained scalars in `[-3, +3]`, giving Optuna's TPE sampler a smooth, full-support landscape with no boundary degeneracies.
+
+### Passport Keying
+
+```
+.passports/passport_<universe>__<index>__<regime>.json
+```
+
+Examples:
+- `.passports/passport_india_indexes__nifty_50__bear.json`
+- `.passports/passport_etf_universe__all__weak_bull.json`
+- `.passports/passport_commodities__all__chop.json`
+
+Switching universe, index, or regime routes to a different passport file. Calibration learned on `NIFTY 500 · BEAR` is **never** silently applied to `Commodities · CHOP`.
+
+### Passport Schema
+
+```json
+{
+  "universe": "India Indexes",
+  "selected_index": "NIFTY 500",
+  "regime": "BEAR",
+  "weights": {
+    "w_rsi": 0.683,
+    "w_osc": 0.035,
+    "w_z":   0.261,
+    "w_ma":  0.021
+  },
+  "train_ir": 0.243,
+  "val_ir":   0.360,
+  "n_train_dates": 127,
+  "n_val_dates":   55,
+  "n_trials": 100,
+  "horizon": 10,
+  "timestamp": "2026-05-11T15:42:00.000000",
+  "engine_version": "v4-pragyam-conviction",
+  "is_calibrated": true
+}
+```
+
+The `engine_version` field invalidates stale passports automatically when the calibration schema changes.
+
+### Model Passport Card (Sidebar)
+
+Located directly below the **Run Analysis** button. Shows live state of the passport for the currently-selected `(universe, selected_index, regime)`:
+
+| Field | Source |
+|-------|--------|
+| **Profile** | `Default` · `Calibrated` · `Default · Off` (toggle off) |
+| **Trained on** | `selected_index` (falls back to `universe`) |
+| **Regime** | Currently-detected market regime |
+| **Train IR** | Optimizer's best train IR |
+| **Val IR**   | Hold-out validation IR |
+| **Updated** | ISO timestamp of last calibration |
+
+Controls:
+- **↑ Import Profile** — upload a passport JSON (or a `{"weights": {...}}` shape)
+- **↓ Export Profile** — download the active passport as JSON
+- **↺ Reset to Defaults** — delete the passport file for the current scope only
 
 ---
 
 ## Architecture
 
 ```
-PRAGYAM v7.0.5 — 2 Phases
+PRAGYAM v8.0.0 — 2.5 Phases
 
-┌─────────────────────────────────────────────────────────────┐
-│ PHASE 1: DATA FETCHING                                      │
-│ → Fetch historical data for all symbols (yfinance)          │
-│ → Detect market regime (7-factor composite)                 │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ PHASE 1: DATA FETCHING                                       │
+│ → Fetch historical data for all symbols (yfinance)           │
+│ → Detect market regime (7-factor composite)                  │
+└──────────────────────────────────────────────────────────────┘
                             ↓
-┌─────────────────────────────────────────────────────────────┐
-│ PHASE 2: CONVICTION-BASED CURATION                          │
-│ → Run ALL 80+ strategies                                    │
-│ → Aggregate all candidate holdings (~200-400 symbols)       │
-│ → Compute conviction scores (regime.py)                     │
-│ → Select top 30 by conviction                               │
-│ → Apply formula: weight = (conviction / total) × 100        │
-│ → Apply bounds (1%-10%)                                     │
-│ → Calculate units and value                                 │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ PHASE 1.5: INTELLIGENCE (on first encounter of a scope)      │
+│ → Look up passport for (universe, index, regime)             │
+│ → If exists  → reuse calibrated weights, skip to Phase 2     │
+│ → If missing → harvest signals + forward returns             │
+│              → Optuna TPE × 100 trials                       │
+│              → save passport on measurable val IR            │
+│              → st.rerun() so the sidebar repaints fresh      │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ PHASE 2: CONVICTION-BASED CURATION                           │
+│ → Run ALL 95 strategies                                      │
+│ → Aggregate candidate holdings (~200–400 symbols)            │
+│ → Score conviction using active weights (passport or default)│
+│ → Select top N by conviction                                 │
+│ → Apply style-aware dispersion (SIP / Swing)                 │
+│ → Apply formula: weight = (adj_conviction / total) × 100     │
+│ → Apply position bounds (1%–10%)                             │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Module Structure
 
 ```
-Pragyam-Final/
-├── app.py                    # Main UI (Streamlit) — ~1300 lines
+Pragyam-main/
+├── app.py                    # Main UI (Streamlit) — ~1700 lines
+├── intelligence.py           # Bayesian calibration + passport persistence — ~430 lines (NEW)
 ├── universe.py               # Universe definitions & selection — ~450 lines
-├── portfolio.py              # Conviction-based weighting — ~150 lines
-├── regime.py                 # Market regime + conviction scoring — ~640 lines
+├── portfolio.py              # Conviction-based weighting — ~165 lines
+├── regime.py                 # Market regime + conviction scoring — ~690 lines
 ├── strategies.py             # 95 BaseStrategy implementations
 ├── backdata.py               # Data fetching (yfinance)
-├── charts.py                 # Plotly visualizations — ~250 lines
+├── charts.py                 # Plotly visualisations — ~250 lines
 ├── circuit_breaker.py        # yfinance rate limiting — ~315 lines
 ├── logger_config.py          # Console output system — ~280 lines
 ├── metrics.py                # Execution metrics — ~270 lines
-├── style.css                 # UI styling
-├── requirements.txt          # Dependencies
-└── pyproject.toml            # Project configuration
+├── ui/
+│   ├── theme.py              # CSS injection + chart theming
+│   ├── theme.css             # Obsidian-style design system
+│   └── components.py         # Reusable UI primitives
+├── .passports/               # Calibrated passports (one JSON per scope) — NEW
+│   └── passport_<universe>__<index>__<regime>.json
+├── requirements.txt
+└── pyproject.toml
 ```
 
 ---
 
 ## Performance
 
-| Metric | v7.0.0 | v6.0.0 | Improvement |
-|--------|--------|--------|-------------|
-| Execution Time | 20-40 sec | 2-5 min | **6-10x faster** |
-| Code Lines | 3,500 | 5,000+ | **-30%** |
-| Phases | 2 | 4 | Simpler |
-| Strategies | All 80+ | 4 selected | Maximum diversification |
-| Candidate Pool | ~200-400 | ~40-80 | **5x larger** |
+| Metric | v8.0.0 (reuse) | v8.0.0 (first cal) | v7.x | v6.0.0 |
+|--------|----------------|---------------------|------|--------|
+| Execution Time | 20–40 s | 30–50 s | 20–40 s | 2–5 min |
+| Phases | 2.5 | 2.5 | 2 | 4 |
+| Strategies | All 95 | All 95 | All 80+ | 4 selected |
+| Calibration | per-scope, persisted | per-scope, persisted | none | none |
+
+Calibration is a one-time cost per `(universe, index, regime)` tuple. The passport persists on disk; subsequent runs in the same scope reuse it instantly.
 
 ---
 
-## Key Changes from v6.0.0
+## Key Changes from v7.x
 
-### Removed Features
-- ❌ Walk-forward evaluation (Phase 3)
-- ❌ Strategy selection (Phase 2 old)
-- ❌ Meta-weighting competition
-- ❌ Tier-based allocation
-- ❌ Conviction threshold filter (>50)
+### New
+- ✅ **Intelligence Mode** — per-scope conviction-weight calibration
+- ✅ **Model Passport** sidebar card (mirrors Sanket's design)
+- ✅ **Phase 1.5** — auto-calibration on first encounter of a scope
+- ✅ **`intelligence.py`** module with Optuna TPE + passport persistence
+- ✅ **Import / Export / Reset** controls for sharing passports across machines
+- ✅ **Explicit fallback diagnostics** — Intelligence tab states *why* a calibration was skipped (insufficient history, sparse harvest, validation IR not measurable) instead of silently defaulting
 
-### New Features
-- ✅ All 80+ strategies run (no filtering)
-- ✅ Pure conviction-based weighting
-- ✅ Simple, transparent formula
-- ✅ No threshold (all symbols eligible)
-- ✅ 10x faster execution
+### Changed
+- 🔧 `regime.compute_conviction_signals(...)` — new `universe` + `selected_index` parameters
+- 🔧 `portfolio.compute_conviction_based_weights(...)` — same new parameters threaded through
+- 🔧 Conviction weights are now **scope-aware**: Standard mode = defaults, Intelligence mode = passport-driven
+- 🔧 Dispersion remains style-aware (SIP / Swing); it is **not** something the calibrator learns
+
+### Removed
+- ❌ Hard-coded `0.30 / 0.30 / 0.20 / 0.20` as the only available weighting (still the fallback default)
 
 ---
 
-## Example Output
+## Example Run Output
 
 ```
+Phase 1.5 (first time on India Indexes · NIFTY 500 · BEAR):
+─────────────────────────────────────────────────
+Building signal-return panel · 10-day horizon
+Optuna TPE · 127 dates · 5,080 (date, symbol) rows
+Trial 47/100 · best IR +0.341
+…
+Train IR +0.243 · Val IR +0.360 · Passport saved
+─────────────────────────────────────────────────
+
+Subsequent runs on the same scope:
+─────────────────────────────────────────────────
+Intelligence ready · India Indexes · NIFTY 500 · BEAR
+Val IR +0.360 · calibrated 2026-05-11 15:42
+─────────────────────────────────────────────────
+
 Execution Summary
-─────────────────────────────────────────
-Run ID:             20260402_143022
-Strategies Run:     83
+─────────────────────────────────────────────────
+Run ID:             20260511_154200
+Strategies Run:     95
 Candidate Symbols:  287
 Positions Selected: 30
 Avg Conviction:     62.3/100
 Top Conviction:     78/100
 Status:             SUCCESS
-─────────────────────────────────────────
-
-Portfolio: 30 positions
-Total Value: ₹2,487,350
-Cash Remaining: ₹12,650
+─────────────────────────────────────────────────
 ```
 
 ---
 
 ## Troubleshooting
 
-### "No historical data loaded"
-- Check your universe selection in the sidebar
-- Verify internet connection
-- Reduce lookback period in sidebar
-- Ensure yfinance can access NSE data (may be rate-limited)
-- For India/US Indexes, ensure the index constituent fetch succeeded (check status message)
+### Intelligence tab shows "FELL BACK TO DEFAULTS · SKIPPED"
 
-### "No holdings generated"
-- Some strategies may not generate signals for current market conditions
-- Try a different analysis date
-- Increase number of positions in sidebar
-- Check that your universe has sufficient symbols (recommend 50+ for best results)
+The Intelligence tab now states the specific reason. Common causes:
 
-### "Conviction signals unavailable"
-- Check that `current_df` has indicator columns
-- Verify regime.py is functioning correctly
-- Ensure data fetch completed successfully
+| Reason | Resolution |
+|--------|-----------|
+| `Need >15 days of history (have N)` | Increase lookback or pick a later analysis date |
+| `Harvest produced no usable rows` | Universe has too-sparse indicator coverage on the date range |
+| `Validation IR not measurable` | Cross-section too small or signals too constant; try a broader universe |
 
-### Slow execution or timeouts
-- v7.0.5 executes in 20-40 seconds for small universes (<50 symbols)
-- Larger universes (NIFTY 500, S&P 500) may take 1-3 minutes
-- Reduce universe size if needed (e.g., use NIFTY 50 instead of NIFTY 500)
-- Check internet connection stability
-- Increase Streamlit server timeout if deploying remotely
+### Sidebar Model Passport shows "Default" after Run Analysis
+
+This was a v8.0.0 pre-release bug where the sidebar painted before Phase 1.5 ran. Fixed: after a successful first-run calibration, Phase 1.5 triggers an `st.rerun()` so the sidebar repaints with the freshly-saved passport. If you still see this, hit **Run Analysis** once more — the passport is on disk and will be picked up.
+
+### Passport doesn't persist across `streamlit cloud` deploys
+
+Streamlit Cloud rebuilds the container on each deploy and the `.passports/` directory is ephemeral. Use the **↓ Export Profile** button to download, then **↑ Import Profile** after the rebuild.
+
+### "Engine version mismatch — passport ignored"
+
+The `engine_version` field in the JSON is checked at load time. If you have old `passport_<regime>.json` (regime-only key, v7.x prototype) or `v3.0-sanket-fidelity` files, they are auto-rejected. Safe to delete `.passports/*.json` and recalibrate.
+
+### Slow execution
+
+- First calibration adds ~5–10 s; subsequent runs in the same scope are unchanged
+- For NIFTY 500 / S&P 500 the calibration trial loop is still <10 s thanks to vectorised IC computation
+- Disable Intelligence Mode (sidebar toggle) to skip Phase 1.5 entirely if you're benchmarking
 
 ### Rate limiting from yfinance
-- Circuit breaker implemented in `circuit_breaker.py`
-- Add fewer symbols or use smaller universe to distribute requests
-- Consider using premium data source for production
+
+Circuit breaker in `circuit_breaker.py` handles this. Reduce universe size or use a premium data source for production.
 
 ---
 
@@ -298,27 +394,26 @@ Cash Remaining: ₹12,650
 
 Proprietary Software License — See LICENSE file for details.
 
-Copyright (c) 2024-2026 @thebullishvalue. All Rights Reserved.
+Copyright (c) 2024–2026 @thebullishvalue. All Rights Reserved.
 
 ---
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and notable changes.
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 
 ## Version History
 
-| Version | Date | Architecture | Execution Time | Key Feature |
-|---------|------|--------------|----------------|-------------|
-| 7.0.5 | 2026-04-05 | 2 phases | 20-40 sec | Production hardening, dead code removal |
-| 7.0.4 | 2026-04-02 | 2 phases | 20-40 sec | Style-aware dispersion (SIP/Swing) |
-| 7.0.3 | 2026-04-02 | 2 phases | 20-40 sec | Aggressive conviction dispersion (+75%/-50%) |
-| 7.0.2 | 2026-04-02 | 2 phases | 20-40 sec | Strong conviction dispersion (+40%/-30%) |
-| 7.0.1 | 2026-04-02 | 2 phases | 20-40 sec | Conviction dispersion weighting |
-| 7.0.0 | 2026-04-02 | 2 phases | 20-40 sec | Conviction-based curation |
-| 6.0.0 | Previous | 4 phases | 2-5 min | Walk-forward evaluation |
+| Version | Date | Architecture | Headline |
+|---------|------|--------------|----------|
+| **8.0.0** | 2026-05-11 | 2.5 phases | **Intelligence Mode** — per-scope Bayesian calibration via Optuna TPE; Model Passport sidebar; Phase 1.5 |
+| 7.2.0 | 2026-04-13 | 2 phases | "Terminal Glass" design system overhaul |
+| 7.0.5 | 2026-04-05 | 2 phases | Production hardening, dead code removal |
+| 7.0.4 | 2026-04-02 | 2 phases | Style-aware dispersion (SIP / Swing) |
+| 7.0.0 | 2026-04-02 | 2 phases | Conviction-based curation |
+| 6.0.0 | Previous | 4 phases | Walk-forward evaluation |
 
 ---
 

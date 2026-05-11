@@ -1,7 +1,7 @@
 [project]
 name = "pragyam"
-version = "7.0.5"
-description = "Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies — @thebullishvalue"
+version = "8.0.0"
+description = "Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with Bayesian per-regime calibration of conviction weights — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.28.0",
@@ -12,6 +12,9 @@ dependencies = [
     "scipy>=1.11.0",
     "scikit-learn>=1.3.0",
     "colorama>=0.4.6",
+    "optuna>=3.5.0",
+    "requests>=2.31.0",
+    "openpyxl>=3.1.2",
 ]
 
 [tool.ruff]
@@ -36,7 +39,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["strategies", "backdata", "charts", "regime", "walk_forward"]
+known-first-party = ["strategies", "backdata", "charts", "regime", "intelligence", "portfolio"]
 
 [tool.ruff.format]
 quote-style = "single"

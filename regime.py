@@ -524,31 +524,34 @@ def get_regime_history_series(
 
 
 def compute_conviction_signals(
-    portfolio: "pd.DataFrame",
-    current_df: "pd.DataFrame",
-) -> "pd.DataFrame":
+    portfolio: pd.DataFrame,
+    current_df: pd.DataFrame,
+    universe: str = "default",
+    selected_index: Optional[str] = None,
+    regime_name: str = "NEUTRAL",
+    mode: str = "Standard",
+) -> pd.DataFrame:
     """
     Compute signal-based conviction scores for each portfolio holding.
 
-    Reads the live indicator snapshot (current_df) and produces four binary
-    signals plus a composite conviction score (0–100) per position.
+    Reads the live indicator snapshot (current_df) and produces four signals
+    plus a composite conviction score (0–100) per position.
 
-    Signal definitions
-    ──────────────────
-    RSI:       +2 overbought-bull (>60), +1 mild bull, −1 mild bear, −2 bearish (<40)
-    OSC:       +2 osc above 9EMA and positive, +1 above 9EMA, −1/−2 below
-    Z-Score:   +2 deeply oversold (<−2σ), −2 deeply overbought (>+2σ)
-    MA Align:  0–5 count of: price>MA20, price>MA90, price>MA200, MA20>MA90, MA90>MA200
-    Conviction: normalised weighted composite → 0–100
-
-    Returns the original portfolio DataFrame with appended signal columns.
+    The four signals (RSI, OSC, Z-Score, MA-alignment) each lie in [-2, +2].
+    The composite is a weighted average; in Standard mode the weights are the
+    canonical 0.30 / 0.30 / 0.20 / 0.20, in Intelligence mode they come from
+    the per-(universe, index, regime) passport (also on the simplex). Either
+    way the raw score stays in [-2, +2] and is mapped linearly to [0, 100].
     """
     if portfolio.empty or current_df.empty:
         return portfolio.copy()
 
-    result = portfolio.copy()
+    from intelligence import get_active_weights, DEFAULT_WEIGHTS
+    w = get_active_weights(universe, selected_index, regime_name, mode)
+    for k, default in DEFAULT_WEIGHTS.items():
+        w.setdefault(k, default)
 
-    # Build a symbol-indexed lookup — strip .NS suffix if present
+    result = portfolio.copy()
     lookup_df = current_df.copy()
     if "symbol" in lookup_df.columns:
         lookup_df = lookup_df.set_index("symbol")
@@ -612,26 +615,24 @@ def compute_conviction_signals(
             price, ma20, ma90, ma200 = [float(v) for v in vals]
             count = sum([price > ma20, price > ma90, price > ma200, ma20 > ma90, ma90 > ma200])
             sig["ma_count"] = count
-            # Map 0-5 to -2.0 to +2.0
             sig["ma_signal"] = round((count - 2.5) * (4.0 / 5.0), 1)
 
-        # ── Composite Conviction (0–100) ──────────────────────────────────────
-        # Weighted sum: RSI 30%, OSC 30%, Z-Score 20%, MA 20%
+        # ── Composite Conviction (0–100) ─────────────────────────────────────
         raw = (
-            sig["rsi_signal"]    * 0.30 +
-            sig["osc_signal"]    * 0.30 +
-            sig["zscore_signal"] * 0.20 +
-            sig["ma_signal"]     * 0.20
+            sig["rsi_signal"]    * w["w_rsi"] +
+            sig["osc_signal"]    * w["w_osc"] +
+            sig["zscore_signal"] * w["w_z"]   +
+            sig["ma_signal"]     * w["w_ma"]
         )
-        # raw range: [-2, +2] → normalise to [0, 100]
         sig["conviction_score"] = round(max(0.0, min(100.0, (raw + 2.0) / 4.0 * 100.0)))
-
         rows.append(sig)
 
     conv_df = pd.DataFrame(rows)
-    # Merge back by symbol; drop duplicate columns that already exist
     merge_cols = [c for c in conv_df.columns if c not in result.columns or c == "symbol"]
-    return result.merge(conv_df[merge_cols], on="symbol", how="left")
+    merged = result.merge(conv_df[merge_cols], on="symbol", how="left")
+    if "conviction_score" in merged.columns:
+        merged["conviction_score"] = merged["conviction_score"].fillna(50)
+    return merged
 
 
 __all__ = [

@@ -7,6 +7,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [8.0.0] - 2026-05-11
+
+### 🧠 Intelligence Mode — Per-(Universe, Index, Regime) Bayesian Calibration
+
+**Architectural Thesis**
+
+The four conviction signals (RSI, Oscillator, Z-Score, MA-alignment) were previously
+combined with hard-coded weights `0.30 / 0.30 / 0.20 / 0.20`. v8.0.0 introduces a
+self-tuning calibration layer that learns these four weights — on the 4-simplex
+(sum-to-1, non-negative) — by maximising the cross-sectional Spearman Information
+Ratio of the weighted conviction score against forward 10-day returns. Calibration
+is keyed by the `(universe, selected_index, regime)` tuple, so a passport learned
+on `India Indexes · NIFTY 500 · BEAR` is never silently applied to
+`Commodities · GOLD · BEAR`.
+
+### ✨ Added
+
+**Intelligence Engine** (`intelligence.py`, new module — ~340 lines)
+- 4-dim Bayesian search via Optuna TPE (seed=42 for reproducibility) over the
+  conviction-weight simplex, parameterised through softmax of four unconstrained
+  scalars
+- Objective: mean per-date Spearman IC across all training dates, divided by IC
+  std → Information Ratio (IR)
+- Train / validation split by date (chronological, 70 / 30) — passports are saved
+  only when validation IR is measurable on the held-out split
+- Cross-sectional minimum (`MIN_XSECT = 5`) and total-dates minimum
+  (`MIN_TOTAL_DATES = 20`) gates prevent calibrating on degenerate panels
+- `IntelligencePassport(universe, selected_index, regime)` — JSON persistence at
+  `.passports/passport_<universe>__<index>__<regime>.json`. Engine version
+  (`v4-pragyam-conviction`) is recorded so future schema changes invalidate stale
+  passports automatically
+- `build_harvest(history_window, horizon)` — converts the Phase 1 indicator
+  history into a flat (date, symbol) panel of signal values + forward returns
+- Public API: `get_active_weights`, `calibrate`, `IntelligencePassport`,
+  `passport_filename`, `DEFAULT_WEIGHTS`, `DEFAULT_HORIZON`, `PASSPORT_VERSION`
+
+**Phase 1.5 — Auto-Calibration**
+- New phase between Phase 1 (data fetching) and Phase 2 (curation): when
+  `intelligence_mode` is on and no passport exists for the current
+  `(universe, index, regime)` tuple, the engine harvests the historical window
+  and runs 100 Optuna trials before Phase 2 begins
+- Subsequent runs skip calibration and reuse the saved passport
+- Outcome (calibrated / reused / skipped / failed + reason + IRs) is mirrored to
+  `st.session_state.last_intel_outcome` for surface in the UI
+- Progress bar reports trial-by-trial: best-IR-so-far, dates / observation counts,
+  and the final train/val IR + passport-save confirmation
+
+**Sidebar — Model Passport Card**
+- New panel below the **Run Analysis** button (mirrors Sanket's sidebar layout):
+  - Profile state (`Default` / `Calibrated` / `Default · Off`) with `metric-card`
+    success / warning / neutral accents
+  - **Trained on** (universe or index, trimmed to 22 chars)
+  - **Regime** (Pragyam analogue of Sanket's `Depth`)
+  - **Train IR** and **Val IR** with emerald / rose colour coding
+  - **Updated** timestamp
+- **↑ Import Profile** — `st.file_uploader` accepts a passport JSON (full payload
+  or a bare `{"weights": {...}}` dict) and writes it through `IntelligencePassport.save`
+- **↓ Export Profile** — `st.download_button` serialising the active passport
+  (or a defaults-shape envelope when none exists). Filename:
+  `pragyam_profile_<universe>__<index>__<regime>__<YYYYMMDD>.json`
+- **↺ Reset to Defaults** — deletes the passport file for the current scope only
+  (other scopes' passports are untouched)
+- **Intelligence Mode toggle** — turns the calibration layer on/off; when off the
+  card greys to neutral and conviction reverts to canonical defaults
+
+**Intelligence Tab** (Result page)
+- Calibration status card with full metrics (train IR · val IR · n_train_dates ·
+  n_val_dates · horizon · n_trials · engine version)
+- Manual **Calibrate** / **Reset** controls
+- **Explicit fallback messaging**: when calibration was attempted but skipped or
+  failed (e.g., insufficient history, sparse harvest, validation IR not
+  measurable), the tab shows the specific reason instead of silently reverting to
+  defaults
+
+**Persistence**
+- `.passports/` directory holds one JSON per `(universe, index, regime)` scope
+- Passport schema includes calibrated weights, train / val IR, n dates, horizon,
+  n_trials, ISO timestamp, engine version, and the scope tuple itself
+
+### 🔧 Changed
+
+**`regime.compute_conviction_signals(...)`**
+- New signature: `compute_conviction_signals(portfolio, current_df, universe,
+  selected_index, regime_name, mode)` — was `(portfolio, current_df, regime_name,
+  mode)`
+- Reads weights via `intelligence.get_active_weights(universe, selected_index,
+  regime_name, mode)`. Standard mode returns canonical 0.30 / 0.30 / 0.20 / 0.20;
+  Intelligence mode returns per-scope calibrated weights, falling back to defaults
+  when no passport exists
+
+**`portfolio.compute_conviction_based_weights(...)`**
+- New `universe` and `selected_index` keyword parameters threaded through to
+  `compute_conviction_signals`
+
+**Phase 1.5 → automatic `st.rerun()` after first calibration**
+- The sidebar Model Passport card paints before Phase 1.5 runs. To avoid the
+  card showing stale "NOT CALIBRATED" pixels after a passport is saved mid-run,
+  Phase 1.5 issues a single `st.rerun()` on first calibration. The script
+  re-enters with `run_analysis` still True, the data cache is hit instantly,
+  Phase 1.5 takes the reuse path, and Phase 2 curates the portfolio with the
+  freshly-saved passport active. Adds ~2–4s of cache-hit work, eliminates the
+  stale-sidebar surprise. Subsequent runs (passport already exists) skip the
+  rerun entirely
+
+**Conviction dispersion is no longer overridden by passports**
+- Earlier prototypes attempted to "calibrate" the dispersion multipliers
+  (`boost_mult`, `penalty_mult`) through the passport. Those values are a
+  user-facing risk preference (SIP vs Swing concentration), not something to
+  learn from forward returns; v8.0.0 keeps dispersion strictly style-aware
+
+### 🚀 Performance
+
+- Calibration runs in ~5–10s for typical lookbacks (100 days × 50–500 symbols ×
+  100 Optuna trials), then never again for the same `(universe, index, regime)`
+- Reuse-path Run Analysis is unchanged from v7.x (~20–40s)
+- First-time-on-a-scope Run Analysis adds calibration time on top
+
+### 📦 Dependencies
+
+- **Added:** `optuna>=3.5.0` (Bayesian hyperparameter optimisation, TPE sampler)
+
+### 🗂 Module Structure
+
+- **New:** `intelligence.py` — calibration engine and passport persistence
+- **New runtime artefact:** `.passports/` (one JSON per `(universe, index, regime)`)
+
+### ⚠️ Migration Notes
+
+- **Breaking signature change** for `regime.compute_conviction_signals` and
+  `portfolio.compute_conviction_based_weights`. Callers must pass `universe` and
+  `selected_index`. The default values (`"default"` / `None`) mean code that
+  hasn't been updated still runs but will route all calibrations to a single
+  generic scope. Update callers to thread the real universe context for proper
+  per-universe isolation
+- **Stale passports from earlier prototypes are auto-rejected.** The
+  `IntelligencePassport.exists()` check verifies `engine_version ==
+  PASSPORT_VERSION`, so any v3.0-sanket-fidelity or unkeyed
+  `passport_<regime>.json` files are ignored at load time. Safe to delete
+
+---
+
 ## [7.2.0] - 2026-04-13
 
 ### 🎨 "Terminal Glass" Design System — Complete Card & Table Overhaul

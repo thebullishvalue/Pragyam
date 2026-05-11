@@ -21,8 +21,8 @@ Author: @thebullishvalue
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 import io
+import re
 import warnings
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Tuple, Optional
@@ -30,8 +30,11 @@ from typing import List, Dict, Tuple, Optional
 # Suppress warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
+import html as html_module
+import intelligence
+
 # ── Imports ────────────────────────────────────────────────────────────────────
-from logger_config import console, get_console
+from logger_config import get_console
 log = get_console()
 
 from metrics import get_metrics
@@ -53,6 +56,7 @@ from ui.components import (
     render_interpretation_card,
     render_kv_table,
     get_icon,
+    get_signal_badge,
 )
 import streamlit.components.v1 as components
 from regime import (
@@ -63,7 +67,7 @@ from regime import (
     get_regime_history_series,
     compute_conviction_signals,
 )
-from strategies import BaseStrategy, discover_strategies
+from strategies import discover_strategies
 from backdata import (
     generate_historical_data,
     get_default_universe,
@@ -102,7 +106,7 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v7.0.5"
+VERSION = "v8.0.0"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -135,11 +139,37 @@ def _init_session_state():
         "regime_history_series": None,
         "min_pos_pct": 0.01,
         "max_pos_pct": 0.10,
+        "intelligence_mode": True,  # Use calibrated weights when a passport exists; falls back to defaults otherwise.
+        "selected_universe": None,
+        "selected_index": None,
+        # Last intelligence outcome from Phase 1.5 — read by sidebar/result UI.
+        # Shape: {"status": "reused"|"calibrated"|"skipped"|"failed", "reason": str,
+        #         "universe": str, "index": Optional[str], "regime": str,
+        #         "train_ir": float, "val_ir": float}
+        "last_intel_outcome": None,
         "debug_info": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def _intel_context() -> Tuple[str, Optional[str], str, str]:
+    """(universe, selected_index, regime_name, mode) read from session state.
+
+    Used by every site that constructs a passport or asks for active weights,
+    so the four conviction weights are always sourced from the right key.
+    """
+    rd = st.session_state.get("regime_result_dict", {}) or {}
+    universe = st.session_state.get("selected_universe") or "default"
+    selected_index = st.session_state.get("selected_index")
+    # "UNKNOWN" matches the regime-detector's own failure sentinel (see
+    # _detect_regime_cached and MarketRegimeDetector.detect), so a passport lookup
+    # before regime detection completes and a lookup after a failed detection
+    # route to the same scope rather than two different ones.
+    regime_name = rd.get("regime", "UNKNOWN")
+    mode = "Intelligence" if st.session_state.get("intelligence_mode") else "Standard"
+    return universe, selected_index, regime_name, mode
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -157,6 +187,9 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
             symbols_list, _ = resolve_universe(universe_name, index)
         else:
             symbols_list = get_default_universe()
+        
+        if not symbols_list:
+            raise ValueError("No symbols found in the selected universe.")
     except Exception as e:
         st.error(f"Error resolving universe: {e}")
         return []
@@ -172,49 +205,50 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
         return []
 
 
+# Single LOOKBACK used by both the regime detection cache and the main-flow
+# fetch — so the regime card, the Phase 2 curation, and the Regime Score
+# History chart all reason about the same historical panel.
+_REGIME_LOOKBACK_FILES = 100
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
-    """Detect market regime and return as serializable dict."""
-    # Resolve symbols from the cache key
+    """Detect market regime from the SAME cached panel the main flow uses.
+
+    Reads `_load_historical_data(end_date, _REGIME_LOOKBACK_FILES, symbols_key)`
+    so the trailing 10 days the detector consumes are identical to the trailing
+    10 days the Regime Score History chart's last bucket consumes. This makes
+    the sidebar card, the result page's regime banner, and the chart's last
+    bar three views of the SAME computation on the SAME data.
+    """
     try:
-        if symbols_key.startswith("UNIVERSE:"):
-            universe_name, index = symbols_key.replace("UNIVERSE:", "", 1).split("|", 1)
-            index = index if index != "None" else None
-            symbols_list, _ = resolve_universe(universe_name, index)
-        else:
-            symbols_list = get_default_universe()
+        hist = _load_historical_data(end_date, _REGIME_LOOKBACK_FILES, symbols_key)
     except Exception as e:
         return {
             "regime": "UNKNOWN",
             "mix_name": "Chop/Consolidate Mix",
             "confidence": 0.30,
             "composite_score": 0.0,
-            "explanation": f"Error resolving universe: {e}",
+            "explanation": f"Data fetch error: {e}",
+            "color": "#6b7280",
+            "icon": "help-circle",
+            "description": "",
+        }
+
+    if not hist or len(hist) < 5:
+        return {
+            "regime": "UNKNOWN",
+            "mix_name": "Chop/Consolidate Mix",
+            "confidence": 0.30,
+            "composite_score": 0.0,
+            "explanation": "Insufficient data for regime classification.",
             "color": REGIME_COLORS["UNKNOWN"],
             "icon": "help-circle",
             "description": "",
         }
-    
-    detector = MarketRegimeDetector()
-    window_days = int(MAX_INDICATOR_PERIOD * 1.5) + 30
+
     try:
-        hist = generate_historical_data(
-            symbols_to_process=symbols_list,
-            start_date=end_date - timedelta(days=window_days),
-            end_date=end_date,
-        )
-        if len(hist) < 5:
-            return {
-                "regime": "UNKNOWN",
-                "mix_name": "Chop/Consolidate Mix",
-                "confidence": 0.30,
-                "composite_score": 0.0,
-                "explanation": "Insufficient data for regime classification.",
-                "color": REGIME_COLORS["UNKNOWN"],
-                "icon": "help-circle",
-                "description": "",
-            }
-        result = detector.detect(hist, analysis_date=end_date)
+        result = MarketRegimeDetector().detect(hist, analysis_date=end_date)
         return result.to_dict()
     except Exception as e:
         return {
@@ -257,21 +291,24 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         accent="amber",
     )
 
-    portfolio_with_signals = compute_conviction_signals(portfolio, current_df)
+    universe, selected_index, regime_name, mode = _intel_context()
+    portfolio_with_signals = compute_conviction_signals(
+        portfolio, current_df,
+        universe=universe, selected_index=selected_index,
+        regime_name=regime_name, mode=mode,
+    )
 
     # Portfolio table — Custom HTML with inline CSS via st_html
-    import html as html_module
-    
     table_rows = []
     for _, row in portfolio.iterrows():
-        symbol_escaped = html_module.escape(str(row["symbol"]))
+        symbol_escaped = html_module.escape(row["symbol"])
         table_rows.append(
             f'<tr>'
-            f'<td class="symbol">{symbol_escaped}</td>'
-            f'<td class="numeric currency">&#8377;{row["price"]:,.2f}</td>'
-            f'<td class="numeric">{row["units"]:,.0f}</td>'
-            f'<td class="numeric percentage">{row["weightage_pct"]:.2f}%</td>'
-            f'<td class="numeric currency">&#8377;{row["value"]:,.2f}</td>'
+            f'<td class="col-port-symbol symbol">{symbol_escaped}</td>'
+            f'<td class="col-port-units numeric">{row["units"]:,.0f}</td>'
+            f'<td class="col-port-price numeric currency">&#8377;{row["price"]:,.2f}</td>'
+            f'<td class="col-port-weight numeric percentage">{row["weightage_pct"]:.2f}%</td>'
+            f'<td class="col-port-value numeric currency">&#8377;{row["value"]:,.2f}</td>'
             f'</tr>'
         )
 
@@ -299,6 +336,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         .portfolio-table table {{
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }}
         .portfolio-table thead th {{
             background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0.85) 100%);
@@ -333,6 +371,11 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
             text-align: right;
             font-variant-numeric: tabular-nums;
         }}
+        .col-port-symbol {{ width: 25%; }}
+        .col-port-price {{ width: 18%; }}
+        .col-port-units {{ width: 14%; }}
+        .col-port-weight {{ width: 16%; }}
+        .col-port-value {{ width: 27%; }}
     </style>
     </head>
     <body>
@@ -341,8 +384,8 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
             <thead>
                 <tr>
                     <th>Symbol</th>
-                    <th class="numeric">Price (&#8377;)</th>
                     <th class="numeric">Units</th>
+                    <th class="numeric">Price (&#8377;)</th>
                     <th class="numeric">Weight %</th>
                     <th class="numeric">Value (&#8377;)</th>
                 </tr>
@@ -401,9 +444,37 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     )
 
 
+def _conviction_label(score) -> Tuple[str, str]:
+    """Classify a conviction score (0–100) → (css_class, label).
+
+    Single source of truth for both the Signal Distribution cards and the
+    per-row Signal pill in the Position Guide. Whatever value type the score
+    is (int, float, np.int64), it's coerced to float once so the thresholds
+    apply uniformly: a stored 65.0 lands as Strong Buy, never as Buy.
+    """
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        s = 50.0
+    if not (s == s):  # NaN check; falls back to the same default as a missing value
+        s = 50.0
+    if s >= 65.0:
+        return "strong-buy", "Strong Buy"
+    if s >= 50.0:
+        return "buy", "Buy"
+    if s >= 35.0:
+        return "hold", "Hold"
+    return "caution", "Caution"
+
+
 def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame):
     """Tab — Position Guide with entry conditions and conviction signals."""
-    portfolio_with_signals = compute_conviction_signals(portfolio, current_df)
+    universe, selected_index, regime_name, mode = _intel_context()
+    portfolio_with_signals = compute_conviction_signals(
+        portfolio, current_df,
+        universe=universe, selected_index=selected_index,
+        regime_name=regime_name, mode=mode,
+    )
 
     if "rsi_signal" not in portfolio_with_signals.columns:
         st.info("Position guide signals unavailable.")
@@ -414,15 +485,15 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
 
     c1, c2, c3, c4 = st.columns(4)
 
-    scores = []
-    for _, row in portfolio_with_signals.iterrows():
-        score = row.get("conviction_score", 50)
-        scores.append(score)
-
-    strong_buy = sum(1 for s in scores if s >= 65)
-    buy = sum(1 for s in scores if 50 <= s < 65)
-    hold = sum(1 for s in scores if 35 <= s < 50)
-    caution = sum(1 for s in scores if s < 35)
+    # Single classification pass; both cards and per-row pills use the same labels.
+    labels = [
+        _conviction_label(row.get("conviction_score", 50))[1]
+        for _, row in portfolio_with_signals.iterrows()
+    ]
+    strong_buy = sum(1 for L in labels if L == "Strong Buy")
+    buy        = sum(1 for L in labels if L == "Buy")
+    hold       = sum(1 for L in labels if L == "Hold")
+    caution    = sum(1 for L in labels if L == "Caution")
 
     with c1:
         render_metric_card("Strong Buy", str(strong_buy), "High conviction (≥65)", "success")
@@ -446,65 +517,40 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         st.info("No position guide data available.")
         return
 
-    # Build single unified table sorted by conviction score
-    import html as html_module
-
-    # Tier colors mapping
-    tier_colors = {
-        'Strong Buy': ('#34D399', '#6EE7B7', 'rgba(52, 211, 153, 0.15)', 'rgba(52, 211, 153, 0.3)'),
-        'Buy': ('#6EE7B7', '#A7F3D0', 'rgba(52, 211, 153, 0.1)', 'rgba(52, 211, 153, 0.2)'),
-        'Hold': ('#D4A853', '#E8C478', 'rgba(212, 168, 83, 0.15)', 'rgba(212, 168, 83, 0.3)'),
-        'Caution': ('#FB7185', '#FDA4AF', 'rgba(251, 113, 133, 0.15)', 'rgba(251, 113, 133, 0.3)'),
-    }
-
     # Sort by conviction score descending
     sorted_df = portfolio_with_signals.sort_values('conviction_score', ascending=False).reset_index(drop=True)
 
+    # SVG icons per signal class — visual identity at a glance.
+    _SIGNAL_ICONS = {
+        "strong-buy": '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+        "buy":        '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="10"/></svg>',
+        "hold":       '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="10"/></svg>',
+        "caution":    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    }
+
     table_rows = []
     for _, row in sorted_df.iterrows():
-        score = row.get("conviction_score", 50)
-        rsi_val = row.get("rsi_value")
-        osc_val = row.get("osc_value")
-        z_val = row.get("zscore_value")
-        ma_count = row.get("ma_count", 0)
-        price = row.get("price", 0)
-        weight = row.get("weightage_pct", 0)
-
-        # Determine tier
-        if score >= 65:
-            tier_name = "Strong Buy"
-            icon_svg = get_icon("check-circle", size=14, stroke_width=2.2)
-        elif score >= 50:
-            tier_name = "Buy"
-            icon_svg = get_icon("circle", size=11)
-        elif score >= 35:
-            tier_name = "Hold"
-            icon_svg = get_icon("circle", size=11)
-        else:
-            tier_name = "Caution"
-            icon_svg = get_icon("alert-triangle", size=13, stroke_width=1.8)
-
-        primary_color, bright_color, bg_color, border_color = tier_colors[tier_name]
-
-        # Format signal values
-        rsi_str = f"{rsi_val:.2f}" if rsi_val is not None and not pd.isna(rsi_val) else "—"
-        osc_str = f"{osc_val:.2f}" if osc_val is not None and not pd.isna(osc_val) else "—"
-        z_str = f"{z_val:.2f}" if z_val is not None and not pd.isna(z_val) else "—"
-        ma_str = f"{int(ma_count)}/5" if pd.notna(ma_count) else "—"
-
-        symbol_escaped = html_module.escape(str(row["symbol"]))
+        symbol_escaped = html_module.escape(row["symbol"])
+        # Coerce once, classify once — same helper as the cards above.
+        raw_conv = row.get("conviction_score", 50)
+        signal_class, signal_text = _conviction_label(raw_conv)
+        signal_icon = _SIGNAL_ICONS[signal_class]
+        try:
+            conviction_display = round(float(raw_conv))
+        except (TypeError, ValueError):
+            conviction_display = 50
 
         table_rows.append(
             f'<tr>'
-            f'<td class="symbol">{symbol_escaped}</td>'
-            f'<td class="numeric currency">&#8377;{price:,.2f}</td>'
-            f'<td class="numeric"><div style="display:flex; align-items:center; gap:6px; justify-content:flex-end;"><span style="color: {bright_color};">{icon_svg}</span> <span style="color: {bright_color};">{tier_name}</span></div></td>'
-            f'<td class="numeric" style="color: {bright_color}; font-weight: 600;">{score}</td>'
-            f'<td class="numeric">{rsi_str}</td>'
-            f'<td class="numeric">{osc_str}</td>'
-            f'<td class="numeric">{z_str}</td>'
-            f'<td class="numeric">{ma_str}</td>'
-            f'<td class="numeric percentage">{weight:.2f}%</td>'
+            f'<td class="col-symbol symbol">{symbol_escaped}</td>'
+            f'<td class="col-price numeric currency">&#8377;{row["price"]:,.2f}</td>'
+            f'<td class="col-signal"><span class="signal-pill {signal_class}"><span class="signal-icon">{signal_icon}</span>{signal_text}</span></td>'
+            f'<td class="col-conviction numeric conviction-score">{conviction_display}</td>'
+            f'<td class="col-rsi numeric">{row["rsi_signal"]:+.1f}</td>'
+            f'<td class="col-osc numeric">{row["osc_signal"]:+.1f}</td>'
+            f'<td class="col-z numeric">{row["zscore_signal"]:+.2f}</td>'
+            f'<td class="col-ma numeric">{row["ma_signal"]:+.1f}</td>'
+            f'<td class="col-weight numeric">{row["weightage_pct"]:.2f}%</td>'
             f'</tr>'
         )
 
@@ -521,6 +567,19 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             color: #F1F5F9;
             padding: 0.5rem 0.5rem 1.5rem 0.5rem;
         }}
+        .table-layout {{
+            table-layout: fixed;
+            width: 100%;
+        }}
+        .col-symbol {{ width: 15%; }}
+        .col-price {{ width: 12%; }}
+        .col-signal {{ width: 18%; }}
+        .col-conviction {{ width: 10%; }}
+        .col-rsi {{ width: 10%; }}
+        .col-osc {{ width: 10%; }}
+        .col-z {{ width: 10%; }}
+        .col-ma {{ width: 10%; }}
+        .col-weight {{ width: 15%; }}
         .portfolio-table {{
             width: 100%;
             border-radius: 10px;
@@ -531,6 +590,7 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         .portfolio-table table {{
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }}
         .portfolio-table thead th {{
             background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(10, 14, 23, 0.85) 100%);
@@ -568,6 +628,42 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             text-align: right;
             font-variant-numeric: tabular-nums;
         }}
+        .conviction-score {{ font-weight: 700; color: #F59E0B; }}
+        .signal-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.3rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }}
+        .signal-pill .signal-icon {{
+            display: inline-flex;
+            align-items: center;
+            flex-shrink: 0;
+        }}
+        .signal-pill.strong-buy {{
+            background: rgba(16, 185, 129, 0.18);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.55);
+            font-weight: 700;
+        }}
+        .signal-pill.buy {{
+            background: rgba(16, 185, 129, 0.06);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }}
+        .signal-pill.hold {{
+            background: rgba(245, 158, 11, 0.06);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }}
+        .signal-pill.caution, .signal-pill.sell {{
+            background: rgba(239, 68, 68, 0.06);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }}
     </style>
     </head>
     <body>
@@ -575,15 +671,15 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
         <table>
             <thead>
                 <tr>
-                    <th>Symbol</th>
-                    <th class="numeric">Price (&#8377;)</th>
-                    <th class="numeric">Signal</th>
-                    <th class="numeric">Conviction</th>
-                    <th class="numeric">RSI</th>
-                    <th class="numeric">Osc</th>
-                    <th class="numeric">Z</th>
-                    <th class="numeric">MA</th>
-                    <th class="numeric">Weight %</th>
+                    <th class="col-symbol">Symbol</th>
+                    <th class="col-price numeric">Price</th>
+                    <th class="col-signal">Signal</th>
+                    <th class="col-conviction numeric">Conviction</th>
+                    <th class="col-rsi numeric">RSI</th>
+                    <th class="col-osc numeric">Osc</th>
+                    <th class="col-z numeric">Z</th>
+                    <th class="col-ma numeric">MA</th>
+                    <th class="col-weight numeric">Weight</th>
                 </tr>
             </thead>
             <tbody>
@@ -595,7 +691,11 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
     </html>
     '''
 
-    table_height = max(280, 220 + len(sorted_df) * 42)
+    # Each row in this table contains a pill (extra vertical padding) plus a
+    # numeric grid, so it's taller than the Portfolio tab's plain row. Budget
+    # ~50px per row + a 60px tail so the last row + body padding clears the
+    # iframe edge; otherwise the bottom rows get clipped.
+    table_height = max(320, 240 + len(sorted_df) * 50 + 60)
     components.html(table_html, height=table_height)
 
 
@@ -677,6 +777,9 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
 
         regimes_seq = [r.regime for r in regime_series_to_use]
         transitions = sum(1 for i in range(1, len(regimes_seq)) if regimes_seq[i] != regimes_seq[i-1])
+        # The chart and the cards share the same underlying panel as the sidebar
+        # regime card (see _detect_regime_cached + _load_historical_data), so the
+        # last bar of the chart is the canonical regime by construction.
         last_regime = regimes_seq[-1] if regimes_seq else "—"
         prev_regime = regimes_seq[-2] if len(regimes_seq) > 1 else "—"
 
@@ -689,19 +792,17 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
         c1, c2, c3 = st.columns(3)
 
         # Map regime names to semantic metric card colors
-        # Matches actual regimes from regime.py: STRONG_BULL, BULL, WEAK_BULL,
-        # CHOP, WEAK_BEAR, BEAR, CRISIS, UNKNOWN
         def regime_color(regime: str) -> str:
             r = regime.upper().replace("-", "_")
             if r in ("STRONG_BULL", "BULL", "WEAK_BULL"):
-                return "success"   # emerald — bullish
+                return "success"
             elif r in ("BEAR", "CRISIS"):
-                return "danger"    # rose — bearish/crisis
+                return "danger"
             elif r == "WEAK_BEAR":
-                return "warning"   # amber — cautionary
+                return "warning"
             elif r in ("CHOP", "UNKNOWN"):
-                return "info"      # cyan — neutral/choppy
-            return "neutral"       # slate — fallback
+                return "info"
+            return "neutral"
 
         with c1:
             render_metric_card("Transitions", str(transitions), "Over analysis window", "info")
@@ -769,7 +870,7 @@ def _render_system_tab(training_window: List):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_header() -> None:
-    """Render the main masthead header (matches Nishkarsh design)."""
+    """Render the main masthead header."""
     render_header(
         title=f"{PRODUCT_NAME}",
         tagline="Conviction-Based Portfolio Curation · All 95 Strategies · Live NSE Data"
@@ -777,70 +878,55 @@ def _render_header() -> None:
 
 
 def _render_landing_page():
-    """Render landing page when no portfolio is available.
-    
-    Exact Nishkarsh design thesis: 3 system cards in a row, followed by landing prompt.
-    Adapted for Pragyam's portfolio intelligence features.
-    """
-    # Three system cards — Portfolio, Regime, Strategies
+    """Render landing page with system status cards."""
     section_gap()
 
     col1, col2, col3 = st.columns(3, gap="small")
 
     with col1:
-        st.markdown(f"""
-        <div class='system-card portfolio'>
-            <h3>
-                {get_icon("briefcase", size=16, stroke_width=1.8)}
-                PORTFOLIO
-            </h3>
-            <p>Conviction-based portfolio curation with composite scoring across four technical indicators for precision selection.</p>
-            <div class='spec'>
-                <span>Signals:</span> RSI (30%) + Osc (30%) + Z (20%) + MA (20%)<br>
-                <span>Selection:</span> Top 30 by conviction score<br>
-                <span>Weighting:</span> (conviction / total) × 100<br>
-                <span>Dispersion:</span> SIP + Swing modes
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_system_card(
+            title="PORTFOLIO",
+            description="Conviction-based portfolio curation with composite scoring across four technical indicators.",
+            specs=[
+                ("Signals", "RSI (30%) + Osc (30%) + Z (20%) + MA (20%)"),
+                ("Selection", "Top 30 by conviction score"),
+                ("Weighting", "(conviction / total) × 100"),
+                ("Dispersion", "SIP + Swing modes")
+            ],
+            card_class="portfolio",
+            icon="briefcase"
+        )
 
     with col2:
-        st.markdown(f"""
-        <div class='system-card regime'>
-            <h3>
-                {get_icon("compass", size=16, stroke_width=1.8)}
-                REGIME
-            </h3>
-            <p>Seven-factor market regime detection with composite scoring for adaptive portfolio positioning and risk management.</p>
-            <div class='spec'>
-                <span>Regimes:</span> Strong Bull · Bull · Neutral · Bear<br>
-                <span>Factors:</span> Momentum · Trend · Breadth · Velocity<br>
-                <span>Output:</span> Confidence score + mix classification<br>
-                <span>History:</span> 30-day rolling window
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_system_card(
+            title="REGIME",
+            description="Seven-factor market regime detection with composite scoring for adaptive positioning.",
+            specs=[
+                ("Regimes", "Strong Bull · Bull · Neutral · Bear"),
+                ("Factors", "Momentum · Trend · Breadth · Velocity"),
+                ("Output", "Confidence score + mix classification"),
+                ("History", "30-day rolling window")
+            ],
+            card_class="regime",
+            icon="compass"
+        )
 
     with col3:
-        st.markdown(f"""
-        <div class='system-card strategies'>
-            <h3>
-                {get_icon("layers", size=16, stroke_width=1.8)}
-                STRATEGIES
-            </h3>
-            <p>Ninety-five quantitative strategies running in parallel across momentum, reversal, breakout, and pattern recognition.</p>
-            <div class='spec'>
-                <span>Categories:</span> Momentum + Reversal + Breakout<br>
-                <span>Universe:</span> Nifty 500 + F&O symbols<br>
-                <span>Style:</span> SIP + Swing trading dispersion<br>
-                <span>Strategies:</span> 95 parallel engines
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_system_card(
+            title="STRATEGIES",
+            description="Parallel quantitative engines scanning for momentum, reversal, breakout, and pattern signals.",
+            specs=[
+                ("Categories", "Momentum + Reversal + Breakout"),
+                ("Universe", "Nifty 500 + F&O symbols"),
+                ("Style", "SIP + Swing trading dispersion"),
+                ("Strategies", "95 parallel engines")
+            ],
+            card_class="strategies",
+            icon="layers"
+        )
 
     section_gap()
     
-    # Landing prompt
     st.markdown("""
     <div class='landing-prompt'>
         <h4>
@@ -854,7 +940,223 @@ def _render_landing_page():
     """, unsafe_allow_html=True)
 
 
-def _render_results(capital: float):
+def _render_intelligence_tab(regime_d: Dict):
+    """Tab — per-(universe, index, regime) conviction-weight calibration (4-dim, simplex)."""
+    from intelligence import (
+        IntelligencePassport, DEFAULT_WEIGHTS, DEFAULT_HORIZON,
+        build_harvest, calibrate,
+    )
+
+    universe = st.session_state.get("selected_universe") or "default"
+    selected_index = st.session_state.get("selected_index")
+    regime_name = regime_d.get("regime", "UNKNOWN")
+    passport = IntelligencePassport(universe, selected_index, regime_name)
+
+    # Most-recent run outcome (mirrored from Phase 1.5)
+    outcome = st.session_state.get("last_intel_outcome") or {}
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        render_section_header("Calibration Status", passport.label, icon="check-circle", accent="emerald")
+
+        if passport.exists():
+            m = passport.metrics()
+            render_interpretation_card(
+                title="CALIBRATED",
+                body=(
+                    f"Scope: <strong>{passport.label}</strong><br>"
+                    f"Last calibrated: <strong>{passport.last_calibrated}</strong><br>"
+                    f"Train IR: <strong>{m['train_ir']:+.3f}</strong> "
+                    f"(over {m['n_train_dates']} dates)<br>"
+                    f"Validation IR: <strong>{m['val_ir']:+.3f}</strong> "
+                    f"(over {m['n_val_dates']} dates)<br>"
+                    f"Horizon: <strong>{m['horizon']} trading days</strong> · "
+                    f"Trials: <strong>{m['n_trials']}</strong>"
+                ),
+                color="success" if m["val_ir"] > 0 else "warning",
+            )
+        else:
+            # Distinguish "never calibrated" from "tried but failed/skipped"
+            status = outcome.get("status")
+            reason = outcome.get("reason")
+            if status in ("skipped", "failed") and outcome.get("regime") == regime_name:
+                render_interpretation_card(
+                    title=f"FELL BACK TO DEFAULTS · {status.upper()}",
+                    body=(
+                        f"Scope: <strong>{passport.label}</strong><br>"
+                        f"Reason: <strong>{html_module.escape(reason or 'Unknown')}</strong><br>"
+                        f"Conviction scoring is using Pragyam's default weights "
+                        f"(RSI 0.30 · OSC 0.30 · Z 0.20 · MA 0.20)."
+                    ),
+                    color="warning",
+                )
+            else:
+                render_interpretation_card(
+                    title="NOT CALIBRATED",
+                    body=(
+                        f"No passport for <strong>{passport.label}</strong> yet. Conviction scoring "
+                        f"uses Pragyam's default weights (RSI 0.30 · OSC 0.30 · Z 0.20 · MA 0.20). "
+                        f"Run a calibration to learn weights for this scope."
+                    ),
+                    color="warning",
+                )
+
+        k1, k2 = st.columns(2)
+        with k1:
+            if st.button("Calibrate", type="primary", use_container_width=True, key="btn_calibrate"):
+                hist_window = st.session_state.get("training_data_window", [])
+                if not hist_window or len(hist_window) <= DEFAULT_HORIZON + 5:
+                    st.error(
+                        f"Need at least {DEFAULT_HORIZON + 5} days of history for a {DEFAULT_HORIZON}-day horizon. "
+                        "Run an analysis with a longer lookback first."
+                    )
+                else:
+                    with st.spinner(f"Calibrating {passport.label} ({DEFAULT_HORIZON}-day horizon, 100 trials)..."):
+                        harvest = build_harvest(hist_window, horizon=DEFAULT_HORIZON)
+                        if harvest.empty:
+                            st.error("Harvest produced no usable rows. Indicator coverage may be too sparse.")
+                        else:
+                            result = calibrate(
+                                universe, selected_index, regime_name,
+                                harvest, n_trials=100, horizon=DEFAULT_HORIZON,
+                            )
+                            if result is None:
+                                st.error(
+                                    "Calibration could not produce a usable validation IR. "
+                                    "Try a longer lookback or a regime with more historical coverage."
+                                )
+                            else:
+                                st.success(
+                                    f"Calibrated {passport.label} · Train IR {result['train_ir']:+.3f} · "
+                                    f"Val IR {result['val_ir']:+.3f}"
+                                )
+                                st.rerun()
+        with k2:
+            if st.button("Reset", use_container_width=True, key="btn_reset"):
+                if passport.exists():
+                    passport.delete()
+                    st.session_state.last_intel_outcome = None
+                    st.rerun()
+
+    with col2:
+        render_section_header("Active Weights", "Conviction signal mix", icon="scale")
+
+        weights = passport.get_weights()
+        rows_html = []
+        labels = [("RSI", "w_rsi"), ("Oscillator", "w_osc"), ("Z-Score", "w_z"), ("MA Alignment", "w_ma")]
+        for label, key in labels:
+            v = weights.get(key, DEFAULT_WEIGHTS[key])
+            d = DEFAULT_WEIGHTS[key]
+            delta = v - d
+            color = "var(--emerald)" if delta > 0.005 else ("var(--rose)" if delta < -0.005 else "var(--ink-secondary)")
+            arrow = "▲" if delta > 0.005 else ("▼" if delta < -0.005 else "—")
+            rows_html.append(
+                f'<tr>'
+                f'<td class="iw-label">{html_module.escape(label)}</td>'
+                f'<td class="iw-long" style="color:{color}">{v:.3f} '
+                f'<span class="iw-delta">{arrow} {abs(delta):.3f}</span></td>'
+                f'<td class="iw-short" style="color:var(--ink-secondary)">{d:.3f}</td>'
+                f'</tr>'
+            )
+
+        st.markdown(
+            f'''
+            <div class="intel-table-wrap">
+                <table class="portfolio-table-2col">
+                    <colgroup>
+                        <col style="width:40%;">
+                        <col style="width:35%;">
+                        <col style="width:25%;">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th class="col-iw-factor">Signal</th>
+                            <th class="col-iw-long">Active</th>
+                            <th class="col-iw-short">Default</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {"".join(rows_html)}
+                    </tbody>
+                </table>
+            </div>
+            ''',
+            unsafe_allow_html=True,
+        )
+
+        total = sum(weights.get(k, DEFAULT_WEIGHTS[k]) for k in DEFAULT_WEIGHTS)
+        st.markdown(f'<div class="intel-sigma">Σ = {total:.3f}</div>', unsafe_allow_html=True)
+
+    # ── Full-width METHOD card (Obsidian Quant fidelity) ───────────────────
+    # Placed after the two-column block so it spans the entire content width.
+    # All styling lives in theme.css (.intel-method-*). The 4-tile grid calls
+    # out each mechanic of the calibration individually rather than burying
+    # it in a paragraph of jargon.
+    method_html = (
+        '<div class="intel-method-card">'
+            '<div class="intel-method-header">'
+                '<div class="intel-method-title">Method</div>'
+                '<div class="intel-method-pill">'
+                f'Optuna TPE · seed 42 · 100 trials · {DEFAULT_HORIZON}-day horizon'
+                '</div>'
+            '</div>'
+            '<div class="intel-method-lede">'
+                'The four conviction-signal weights (RSI · Oscillator · Z-Score · MA-alignment) are '
+                '<strong>learned per (universe, index, regime)</strong> from historical '
+                'signal-to-forward-return evidence — instead of the hard-coded 0.30 / 0.30 / 0.20 / 0.20 '
+                'used in Standard mode. Different regimes reward different signals: bull markets favour '
+                'momentum (RSI / MA), choppy markets favour mean-reversion (Z-Score). Intelligence Mode '
+                'discovers the right mix automatically and stores it as a passport on disk.'
+            '</div>'
+            '<div class="intel-method-grid">'
+
+                '<div class="intel-method-tile tile-learns">'
+                    '<div class="tile-label">What it learns</div>'
+                    '<div class="tile-body">'
+                        'Four weights on the 4-simplex: '
+                        '<code>w_rsi + w_osc + w_z + w_ma = 1</code>, each ≥ 0. '
+                        'Parameterised via softmax over four unconstrained scalars, so the optimizer '
+                        'sees a smooth, full-support landscape with no boundary degeneracies.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-how">'
+                    '<div class="tile-label">How</div>'
+                    '<div class="tile-body">'
+                        'Bayesian search via <strong>Optuna Tree-structured Parzen Estimator (TPE)</strong> '
+                        'with a fixed seed for reproducibility. 100 trials per calibration — typically '
+                        '&lt;10 s on a 100-day, ~50-symbol panel thanks to vectorised IC evaluation.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-obj">'
+                    '<div class="tile-label">Objective</div>'
+                    '<div class="tile-body">'
+                        '<strong>Information Ratio</strong> = <code>mean(IC) / std(IC)</code>, '
+                        'where IC is the per-date Spearman rank correlation between the weighted '
+                        f'conviction score and <strong>{DEFAULT_HORIZON}-day forward returns</strong>. '
+                        'Maximises ranked predictive power per unit of cross-date volatility.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-safety">'
+                    '<div class="tile-label">Safety rails</div>'
+                    '<div class="tile-body">'
+                        '<strong>70 / 30 chronological train-val split.</strong> A passport is saved only '
+                        'when the held-out val IR is measurable. Calibration falls back to defaults — '
+                        'and the Intelligence tab states the reason — when history is too short or the '
+                        'harvest is too sparse.'
+                    '</div>'
+                '</div>'
+
+            '</div>'
+        '</div>'
+    )
+    st.markdown(method_html, unsafe_allow_html=True)
+
+
+def _render_results(display_capital: float):
     """Render results page with portfolio, regime, and system tabs."""
     portfolio = st.session_state.portfolio
     if portfolio.empty or "value" not in portfolio.columns:
@@ -866,13 +1168,13 @@ def _render_results(capital: float):
     training_window = st.session_state.get("training_data_window", [])
 
     total_value = portfolio["value"].sum()
-    cash_remaining = capital - total_value
+    cash_remaining = display_capital - total_value
 
     # Top metrics — logical color coding
     mc1, mc2, mc3, mc4 = st.columns(4)
 
     # Cash health: <5% = danger, <15% = warning, else = success
-    cash_pct = (cash_remaining / capital * 100) if capital > 0 else 0
+    cash_pct = (cash_remaining / display_capital * 100) if display_capital > 0 else 0
     cash_color = "danger" if cash_pct < 5 else ("warning" if cash_pct < 15 else "success")
 
     # Avg conviction health: <35 = danger, 35-49 = warning, 50-64 = info, >=65 = success
@@ -880,7 +1182,7 @@ def _render_results(capital: float):
     conv_color = "danger" if avg_conv < 35 else ("warning" if avg_conv < 50 else ("info" if avg_conv < 65 else "success"))
 
     with mc1:
-        render_metric_card("Deployed", f"₹{total_value:,.0f}", f"{total_value/capital*100:.0f}% of capital", "info")
+        render_metric_card("Deployed", f"₹{total_value:,.0f}", f"{total_value / display_capital * 100:.0f}% of capital", "info")
     with mc2:
         render_metric_card("Cash", f"₹{cash_remaining:,.0f}", f"{cash_pct:.1f}% remaining", cash_color)
     with mc3:
@@ -894,18 +1196,22 @@ def _render_results(capital: float):
     st.markdown('<div class="tab-bg portfolio"></div>', unsafe_allow_html=True)
 
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Portfolio", "Position Guide", "Regime", "System"])
+    tabs = ["Portfolio", "Position Guide", "Regime", "Intelligence", "System"]
+    t_objs = st.tabs(tabs)
 
-    with tab1:
-        _render_portfolio_tab(portfolio, current_df, capital)
+    with t_objs[0]:
+        _render_portfolio_tab(portfolio, current_df, display_capital)
 
-    with tab2:
+    with t_objs[1]:
         _render_position_guide_tab(portfolio, current_df)
 
-    with tab3:
+    with t_objs[2]:
         _render_regime_tab(regime_d, st.session_state.get("regime_history_series", []), training_window)
 
-    with tab4:
+    with t_objs[3]:
+        _render_intelligence_tab(regime_d)
+
+    with t_objs[4]:
         _render_system_tab(training_window)
 
     # Footer
@@ -953,13 +1259,13 @@ def _run_analysis(
         from logger_config import generate_run_id
         current_run_id = generate_run_id()  # Fresh ID for each analysis
         run_details = {
-            "Analysis Date": str(selected_date_display),
+            "Analysis Date": selected_date_display,
             "Universe": universe,
             "Index": index if index else "N/A",
-            "Symbols": str(len(symbols_list)),
+            "Symbols": len(symbols_list),
             "Investment Style": investment_style,
             "Capital": f"₹{capital:,.0f}",
-            "Positions": str(num_positions),
+            "Positions": num_positions,
             "Run ID": current_run_id[-12:],
             "Started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -971,7 +1277,9 @@ def _run_analysis(
         # PHASE 1: DATA FETCHING
         progress_bar(progress_container, 2, "Fetching market data", f"yfinance · {len(symbols_list)} symbols")
         metrics.start_phase("total_execution")
-        LOOKBACK_FILES = 100
+        # Must match _REGIME_LOOKBACK_FILES so the regime card / regime banner /
+        # regime history chart / Phase 2 curation all share one cached panel.
+        LOOKBACK_FILES = _REGIME_LOOKBACK_FILES
 
         metrics.start_phase("data_fetching")
 
@@ -1013,6 +1321,127 @@ def _run_analysis(
 
         progress_bar(progress_container, 25, "Phase 1 complete", "Data acquisition ready")
 
+        # PHASE 1.5: Intelligence — calibrate weights for the (universe, index, regime)
+        # tuple on first encounter; reuse the saved passport on subsequent runs.
+        # Calibration outcome is mirrored to st.session_state.last_intel_outcome
+        # so the sidebar passport card and result page can show what happened.
+        if st.session_state.get("intelligence_mode"):
+            from intelligence import (
+                IntelligencePassport, build_harvest, calibrate, DEFAULT_HORIZON,
+            )
+            _universe = st.session_state.get("selected_universe") or "default"
+            _selected_index = st.session_state.get("selected_index")
+            _passport = IntelligencePassport(_universe, _selected_index, regime_name)
+            _outcome: Dict = {
+                "universe": _universe,
+                "index": _selected_index,
+                "regime": regime_name,
+                "label": _passport.label,
+            }
+
+            if _passport.exists():
+                _m = _passport.metrics()
+                _outcome.update({
+                    "status": "reused",
+                    "reason": "Passport already calibrated for this (universe, index, regime).",
+                    "train_ir": _m["train_ir"],
+                    "val_ir":   _m["val_ir"],
+                    "n_train_dates": _m["n_train_dates"],
+                    "n_val_dates":   _m["n_val_dates"],
+                })
+                progress_bar(
+                    progress_container, 25, "Intelligence ready",
+                    f"{_passport.label} · Val IR {_m['val_ir']:+.3f} · "
+                    f"calibrated {_passport.last_calibrated}",
+                )
+            elif len(all_hist) <= DEFAULT_HORIZON + 5:
+                _outcome.update({
+                    "status": "skipped",
+                    "reason": f"Need >{DEFAULT_HORIZON + 5} days of history (have {len(all_hist)}).",
+                })
+                progress_bar(
+                    progress_container, 25, "Intelligence skipped",
+                    f"Need >{DEFAULT_HORIZON + 5} days of history · using default weights",
+                )
+            else:
+                progress_bar(
+                    progress_container, 22, "Calibrating intelligence",
+                    f"Building signal-return panel · {_passport.label} · "
+                    f"{DEFAULT_HORIZON}-day horizon",
+                )
+                _harvest = build_harvest(all_hist, horizon=DEFAULT_HORIZON)
+                if _harvest.empty:
+                    _outcome.update({
+                        "status": "skipped",
+                        "reason": "Harvest produced no usable rows (sparse indicators).",
+                    })
+                    progress_bar(
+                        progress_container, 25, "Intelligence skipped",
+                        "Harvest produced no usable rows · using default weights",
+                    )
+                else:
+                    _n_dates = _harvest["date"].nunique()
+                    _n_obs = len(_harvest)
+                    _best_ir = [float("-inf")]
+                    progress_bar(
+                        progress_container, 23, "Calibrating intelligence",
+                        f"Optuna TPE · {_n_dates} dates · {_n_obs:,} (date, symbol) rows",
+                    )
+
+                    def _intel_cb(trial: int, total: int, score: float):
+                        if score > _best_ir[0]:
+                            _best_ir[0] = score
+                        pct = 23 + int((trial / max(total, 1)) * 5)
+                        best = _best_ir[0]
+                        best_str = f"{best:+.3f}" if best > float("-inf") else "—"
+                        progress_bar(
+                            progress_container, pct, "Calibrating intelligence",
+                            f"Trial {trial}/{total} · best IR {best_str}",
+                        )
+
+                    _result = calibrate(
+                        _universe, _selected_index, regime_name,
+                        _harvest, n_trials=100,
+                        horizon=DEFAULT_HORIZON, progress_callback=_intel_cb,
+                    )
+                    if _result is None:
+                        _outcome.update({
+                            "status": "failed",
+                            "reason": "Validation IR not measurable on the held-out split.",
+                        })
+                        progress_bar(
+                            progress_container, 28, "Intelligence skipped",
+                            "Validation IR not measurable · using default weights",
+                        )
+                    else:
+                        _outcome.update({
+                            "status": "calibrated",
+                            "reason": "Optimized 100 trials with measurable validation IR.",
+                            "train_ir": _result["train_ir"],
+                            "val_ir":   _result["val_ir"],
+                            "n_train_dates": _result["n_train_dates"],
+                            "n_val_dates":   _result["n_val_dates"],
+                        })
+                        progress_bar(
+                            progress_container, 28, "Intelligence calibrated",
+                            f"Train IR {_result['train_ir']:+.3f} · "
+                            f"Val IR {_result['val_ir']:+.3f} · "
+                            f"Passport saved for {_passport.label}",
+                        )
+                        # The sidebar passport card already painted before Phase 1.5
+                        # ran, so it shows the pre-calibration state. Persist the
+                        # outcome and rerun: run_analysis stays True, Phase 1 hits
+                        # the data cache, Phase 1.5 takes the reuse path, Phase 2
+                        # curates the portfolio, and the sidebar repaints with the
+                        # freshly-saved passport. Adds ~2-4s of cache-hit work but
+                        # eliminates the stale-sidebar surprise.
+                        st.session_state.last_intel_outcome = _outcome
+                        st.rerun()
+
+            st.session_state.last_intel_outcome = _outcome
+        else:
+            st.session_state.last_intel_outcome = {"status": "disabled", "reason": "Intelligence mode is off."}
+
         # PHASE 2: CONVICTION-BASED CURATION
         progress_bar(progress_container, 25, "Running strategies", f"95 strategies · {len(symbols_list)} candidates")
         metrics.start_phase("conviction_curation")
@@ -1052,6 +1481,10 @@ def _run_analysis(
 
             # Conviction-based weighting with style-aware dispersion
             # SIP: +125% boost / -50% penalty | Swing: +225% boost / -75% penalty
+            # Single source of truth for the intelligence context — mirrors what
+            # regime.compute_conviction_signals will read internally, so the curated
+            # weights and the displayed conviction column can never drift.
+            _u, _idx, _, _mode = _intel_context()
             st.session_state.portfolio = compute_conviction_based_weights(
                 aggregated_holdings,
                 st.session_state.current_df,
@@ -1061,6 +1494,10 @@ def _run_analysis(
                 st.session_state.max_pos_pct,
                 apply_dispersion=True,
                 investment_style=investment_style,  # Auto-selects dispersion based on style
+                universe=_u,
+                selected_index=_idx,
+                regime_name=regime_name,
+                mode=_mode,
             )
 
             if st.session_state.portfolio.empty:
@@ -1087,8 +1524,12 @@ def _run_analysis(
             metrics.end_phase("total_execution", success=True)
             progress_bar(progress_container, 100, "Analysis complete", f"Portfolio: {len(st.session_state.portfolio)} positions ready")
 
-            avg_conviction = st.session_state.portfolio.get("conviction_score", pd.Series([50])).mean()
-            top_conviction = st.session_state.portfolio.get("conviction_score", pd.Series([50])).max()
+            # Defensive: if conviction_score is all-NaN (shouldn't happen since
+            # compute_conviction_signals fillna's to 50, but guard anyway so the
+            # execution-summary line never prints "nan/100").
+            _conv = st.session_state.portfolio.get("conviction_score", pd.Series([50])).dropna()
+            avg_conviction = _conv.mean() if len(_conv) else 50.0
+            top_conviction = _conv.max()  if len(_conv) else 50.0
 
             log.summary("Execution Summary", {
                 "Run ID": current_run_id[-12:],
@@ -1139,41 +1580,55 @@ def main():
     with st.sidebar:
         st.markdown(
             """
-        <div style="text-align:center;padding:0.75rem 0 1rem 0;">
-            <div style="font-family:var(--display);font-size:1.5rem;font-weight:700;color:var(--amber);letter-spacing:0.06em;">PRAGYAM</div>
-            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.65rem;margin-top:0.2rem;letter-spacing:0.08em;text-transform:uppercase;">प्रज्ञम | Portfolio Intelligence</div>
+        <div style="text-align:center;padding:0.5rem 0 0.75rem 0;">
+            <div style="font-family:var(--display);font-size:1.35rem;font-weight:700;color:var(--amber);letter-spacing:0.04em;">PRAGYAM</div>
+            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.6rem;margin-top:0.1rem;letter-spacing:0.06em;text-transform:uppercase;">प्रज्ञम | Portfolio Intelligence</div>
         </div>
+        <hr style="margin: 0.5rem 0; opacity: 0.1;">
         """,
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-title">Analysis Date</div>', unsafe_allow_html=True)
+        # 1. Analysis Date
+        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Analysis Date</div>', unsafe_allow_html=True)
         selected_date = st.date_input(
-            "Select Date",
+            "Reference Date",
             value=datetime.now().date(),
             max_value=datetime.now().date(),
-            help="Select the date for portfolio curation",
+            help="Select the snapshot date for portfolio curation",
+            label_visibility="visible"
+        )
+        st.session_state.selected_date = selected_date
+        selected_date_obj = datetime.combine(selected_date, datetime.min.time())
+
+        # 2. Portfolio Style
+        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Portfolio Style</div>', unsafe_allow_html=True)
+        investment_style = st.selectbox(
+            "Investment Objective",
+            options=["Swing Trading", "SIP Investment"],
+            index=0,
+            help="Choose between short-term swing or long-term SIP curation",
+            label_visibility="visible"
         )
 
-        st.markdown('<div class="sidebar-title">Analysis Universe</div>', unsafe_allow_html=True)
+        # 3. Analysis Universe
+        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Analysis Universe</div>', unsafe_allow_html=True)
         universe, selected_index = render_universe_selector()
         st.session_state.selected_universe = universe
         st.session_state.selected_index = selected_index
 
-        # Create a cache key for the universe
+        # Create symbols key for regime detection
         symbols_key = f"UNIVERSE:{universe}|{selected_index}"
         st.session_state.symbols_key = symbols_key
 
-        # Check if date or universe changed to trigger regime update
+        st.markdown('<div style="margin-top: 0.8rem;"></div>', unsafe_allow_html=True)
+
+        # 4. Regime Card
         previous_date = st.session_state.get("regime_date", st.session_state.get("selected_date"))
         previous_symbols_key = st.session_state.get("regime_symbols_key", "")
         date_changed = previous_date != selected_date
         universe_changed = previous_symbols_key != symbols_key
-        st.session_state.selected_date = selected_date
-        selected_date_obj = datetime.combine(selected_date, datetime.min.time())
-
-        # Auto-detect regime when date changes, universe changes, or if not yet detected
+        
         rd = st.session_state.get("regime_result_dict", {})
         regime_needs_update = not rd or date_changed or universe_changed
 
@@ -1182,9 +1637,9 @@ def main():
                 rd = _detect_regime_cached(selected_date_obj, symbols_key)
                 st.session_state.regime_result_dict = rd
                 st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
-                # Store the date AND universe for which regime was detected
                 st.session_state.regime_date = selected_date
                 st.session_state.regime_symbols_key = symbols_key
+        
         if rd and isinstance(rd, dict):
             regime_name_sb = rd.get("regime", "UNKNOWN")
             color_sb = rd.get("color", "#888888")
@@ -1192,7 +1647,7 @@ def main():
             score_sb = rd.get("composite_score", 0.0)
             st.markdown(f"""
             <div style="background:{color_sb}12; border:1px solid {color_sb}40; border-radius:10px;
-                        padding:12px; margin:10px 0 20px 0;">
+                        padding:12px; margin:0px 0 0px 0;">
                 <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
                 <div style="color:{color_sb}; font-size:1.25rem; font-weight:700; line-height:1.2; font-family:var(--display); display:flex; align-items:center; gap:8px;">
                     {get_icon(rd.get('icon', ''), size=20, stroke_width=1.8)} {regime_name_sb.replace('_', ' ')}
@@ -1204,22 +1659,16 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-title">Portfolio Style</div>', unsafe_allow_html=True)
-        investment_style = st.selectbox(
-            "Investment Style",
-            options=["Swing Trading", "SIP Investment"],
-            index=0,
-            help="Primary investment objective",
-        )
-
-        st.markdown('<div class="sidebar-title">Portfolio Parameters</div>', unsafe_allow_html=True)
+        # 5. Portfolio Parameters
+        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Portfolio Parameters</div>', unsafe_allow_html=True)
         capital = st.number_input(
             "Capital (₹)",
             min_value=1000,
             max_value=100000000,
             value=2500000,
             step=1000,
-            help="Total capital to allocate"
+            help="Total capital to allocate",
+            label_visibility="visible"
         )
         st.session_state["capital"] = capital
 
@@ -1231,16 +1680,15 @@ def main():
             step=5,
             help="Maximum portfolio positions"
         )
-
         st.session_state.min_pos_pct = 1.0 / 100
         st.session_state.max_pos_pct = 10.0 / 100
 
-        _section_divider()
+        st.markdown('<div style="margin-top: 0.6rem;"></div>', unsafe_allow_html=True)
 
-        run_clicked = st.button("Run Analysis", type="primary", width='stretch')
+        # 6. Run Button
+        run_clicked = st.button("Run Analysis", type="primary", use_container_width=True)
 
         if run_clicked:
-            # Store params in session state so they persist across rerun
             st.session_state["run_params"] = {
                 "selected_date_obj": selected_date_obj,
                 "investment_style": investment_style,
@@ -1254,7 +1702,164 @@ def main():
             st.session_state["run_analysis"] = True
             st.rerun()
 
+        # ── Model Passport (Sanket-style) ──────────────────────────────────────
+        # Mirrors Sanket's sidebar passport: profile state · trained-on label ·
+        # regime · train/val IR · last-updated timestamp · import / export / reset.
+        # Located below the Run button so it surfaces the freshly-saved passport
+        # when Phase 1.5 has just calibrated and reran.
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Model Passport</div>', unsafe_allow_html=True)
+
+        st.session_state.intelligence_mode = st.toggle(
+            "Intelligence Mode",
+            value=bool(st.session_state.get("intelligence_mode", True)),
+            help="Use per-(universe, index, regime) calibrated conviction weights. "
+                 "When OFF, Pragyam uses the canonical 0.30 / 0.30 / 0.20 / 0.20 weights.",
+            key="passport_intel_toggle",
+        )
+
+        from intelligence import IntelligencePassport, DEFAULT_WEIGHTS, PASSPORT_VERSION
+        _pp_universe = universe or "default"
+        _pp_index = selected_index
+        _pp_regime = (rd.get("regime", "UNKNOWN") if rd else "UNKNOWN")
+        _pp_passport = IntelligencePassport(_pp_universe, _pp_index, _pp_regime)
+
+        if not st.session_state.intelligence_mode:
+            profile_label = "Default · Off"
+            train_str = val_str = updated = "—"
+            cal_label_disp = (_pp_index or _pp_universe or "—")
+            train_color = val_color = "var(--ink-secondary)"
+            card_class = ""  # neutral
+        elif _pp_passport.exists():
+            _m = _pp_passport.metrics()
+            train_v = _m.get("train_ir") or 0.0
+            val_v   = _m.get("val_ir") or 0.0
+            train_str = f"{train_v:+.3f}"
+            val_str   = f"{val_v:+.3f}"
+            updated   = _pp_passport.last_calibrated
+            train_color = "var(--emerald)" if train_v > 0 else "var(--rose)"
+            val_color   = "var(--emerald)" if val_v   > 0 else "var(--rose)"
+            cal_label_disp = (_pp_index or _pp_universe or "—")
+            profile_label = "Calibrated"
+            card_class = "success" if (val_v > 0 and train_v > 0) else "warning"
+        else:
+            profile_label = "Default"
+            train_str = val_str = updated = "—"
+            cal_label_disp = (_pp_index or _pp_universe or "—")
+            train_color = val_color = "var(--ink-secondary)"
+            card_class = ""  # neutral
+
+        def _trim(s, n=22):
+            s = str(s)
+            return s if len(s) <= n else s[: n - 1] + "…"
+        cal_label_disp = _trim(cal_label_disp)
+        regime_disp = _trim(_pp_regime.replace("_", " "), 22)
+
+        st.markdown(f"""
+        <div class="metric-card {card_class}" style="
+                min-height:auto;
+                padding:0.85rem 0.95rem;
+                margin-bottom:0.7rem;
+                animation:none;">
+            <h4 style="margin:0 0 0.3rem 0;">Profile</h4>
+            <h2 style="font-size:1.05rem; margin:0 0 0.7rem 0; letter-spacing:-0.01em;">{profile_label}</h2>
+            <div style="display:flex; flex-direction:column; gap:0.32rem;
+                        padding-top:0.55rem;
+                        border-top:1px solid rgba(255,255,255,0.06);">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.62rem;">
+                    <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Trained on</span>
+                    <span style="color:var(--ink-secondary); font-weight:500; max-width:62%; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{html_module.escape(cal_label_disp)}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.62rem;">
+                    <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Regime</span>
+                    <span style="color:var(--ink-secondary); font-weight:500;">{html_module.escape(regime_disp)}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.65rem;">
+                    <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Train IR</span>
+                    <span style="color:{train_color}; font-weight:600;">{train_str}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.65rem;">
+                    <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Val IR</span>
+                    <span style="color:{val_color}; font-weight:600;">{val_str}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.6rem;">
+                    <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Updated</span>
+                    <span style="color:var(--ink-secondary);">{html_module.escape(updated)}</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Import · Export · Reset (parity with Sanket's passport controls)
+        with st.expander("↑ Import Profile", expanded=False):
+            uploaded = st.file_uploader(
+                " ", type=["json"], label_visibility="collapsed",
+                key="passport_uploader",
+            )
+            if uploaded is not None:
+                try:
+                    import json as _json
+                    payload = _json.load(uploaded)
+                    if not isinstance(payload, dict):
+                        raise ValueError("file is not a JSON object")
+                    weights = payload.get("weights", payload)
+                    if not all(k in weights for k in DEFAULT_WEIGHTS):
+                        raise ValueError("missing one of w_rsi / w_osc / w_z / w_ma")
+                    _pp_passport.save(
+                        weights={k: float(weights[k]) for k in DEFAULT_WEIGHTS},
+                        train_ir=float(payload.get("train_ir", 0.0)),
+                        val_ir  =float(payload.get("val_ir",   0.0)),
+                        n_train_dates=int(payload.get("n_train_dates", 0)),
+                        n_val_dates  =int(payload.get("n_val_dates",   0)),
+                        n_trials=int(payload.get("n_trials", 0)),
+                        horizon =int(payload.get("horizon", 10)),
+                    )
+                    st.toast("Profile imported.", icon="✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Import failed: {e}")
+
+        # Export the active passport (or defaults wrapped in passport shape)
+        if _pp_passport.exists():
+            _export_payload = _pp_passport.data
+            _export_universe = _pp_universe
+            _export_index    = _pp_index
+        else:
+            _export_payload = {
+                "universe": _pp_universe,
+                "selected_index": _pp_index,
+                "regime": _pp_regime,
+                "weights": DEFAULT_WEIGHTS,
+                "engine_version": PASSPORT_VERSION,
+                "is_calibrated": False,
+            }
+            _export_universe = _pp_universe
+            _export_index    = _pp_index
+        _export_slug_parts = [
+            re.sub(r"[^a-z0-9]+", "_", (_export_universe or "default").lower()).strip("_"),
+            re.sub(r"[^a-z0-9]+", "_", (_export_index or "all").lower()).strip("_"),
+            re.sub(r"[^a-z0-9]+", "_", _pp_regime.lower()).strip("_"),
+            datetime.now().strftime("%Y%m%d"),
+        ]
+        _export_filename = "pragyam_profile_" + "__".join(_export_slug_parts) + ".json"
+
+        import json as _json
+        st.download_button(
+            "↓ Export Profile",
+            data=_json.dumps(_export_payload, indent=2, default=str),
+            file_name=_export_filename,
+            mime="application/json",
+            use_container_width=True,
+            key="passport_export",
+        )
+        if st.button("↺ Reset to Defaults", use_container_width=True, key="passport_reset"):
+            if _pp_passport.exists():
+                _pp_passport.delete()
+                st.session_state.last_intel_outcome = None
+            st.rerun()
+
+        st.markdown('<hr style="margin: 3.00rem 0; opacity: 0.05;">', unsafe_allow_html=True)
+
 
         # Show current universe info
         try:
@@ -1266,7 +1871,8 @@ def main():
             ]
             if selected_index:
                 rows.append('<div class="spec-row"><span class="spec-label">Index</span><span class="spec-value">' + selected_index + '</span></div>')
-            rows.append('<div class="spec-row"><span class="spec-label">Symbols</span><span class="spec-value">' + str(len(symbols_list)) + '</span></div>')
+            num_symbols = len(symbols_list) if symbols_list is not None else 0
+            rows.append('<div class="spec-row"><span class="spec-label">Symbols</span><span class="spec-value">' + str(num_symbols) + '</span></div>')
             rows.append('<div class="spec-row"><span class="spec-label">Data</span><span class="spec-value">yfinance</span></div>')
             rows.append('</div>')
             st.markdown(''.join(rows), unsafe_allow_html=True)
@@ -1279,6 +1885,7 @@ def main():
                 '</div>',
             ]
             st.markdown(''.join(rows), unsafe_allow_html=True)
+
 
     # Main content area
     # ─── Show progress bar in main area (outside sidebar) when running analysis ───

@@ -244,7 +244,7 @@ def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
             if data.get('data'):
                 symbols = [item.get('symbol', '') for item in data['data'] if item.get('symbol')]
                 symbols = [s for s in symbols if s and not s.startswith('NIFTY')]
-                symbols_ns = [str(s) + ".NS" for s in symbols if str(s).strip()]
+                symbols_ns = [s + ".NS" for s in symbols if s.strip()]
                 if symbols_ns:
                     return symbols_ns, f"✓ Fetched {len(symbols_ns)} F&O securities from NSE"
     except Exception:
@@ -298,7 +298,7 @@ def _parse_wiki_table(url: str, min_count: int = 10) -> Optional[List[str]]:
         tables = pd.read_html(io.StringIO(response.text))
         for tbl in tables:
             # Flexible scanner: search for symbol/ticker/code columns
-            cols_lower = [str(c).lower() for c in tbl.columns]
+            cols_lower = [c.lower() for c in tbl.columns]
             sym_col = None
             for candidate in ('symbol', 'ticker', 'nse code', 'code', 'ticker symbol'):
                 if candidate in cols_lower:
@@ -315,7 +315,7 @@ def _parse_wiki_table(url: str, min_count: int = 10) -> Optional[List[str]]:
         return None
 
 
-def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], Optional[str]]:
+def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], str]:
     """Fallback: Fetch Indian index constituents from Wikipedia when niftyindices.com is unreachable"""
     try:
         # NIFTY 100 is constructed from NIFTY 50 + NIFTY NEXT 50
@@ -348,7 +348,7 @@ def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], 
             return None, f"Wikipedia fallback: could not parse {index} table"
 
         # No Wikipedia fallback available for this index (sectoral/midcap)
-        return None, None
+        return None, "No Wikipedia fallback available for this index"
 
     except Exception as e:
         return None, f"Wikipedia fallback error: {e}"
@@ -407,7 +407,7 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
             response = session.get(url, headers=arch_headers, verify=False, timeout=15)
             response.raise_for_status()
             stock_df = pd.read_csv(io.StringIO(response.text))
-            symbol_col = next((c for c in stock_df.columns if str(c).strip().lower() in ('symbol', 'ticker', 'code')), None)
+            symbol_col = next((c for c in stock_df.columns if c.strip().lower() in ('symbol', 'ticker', 'code')), None)
             if symbol_col:
                 symbols = stock_df[symbol_col].tolist()
                 symbols_ns = [str(s) + ".NS" for s in symbols if s and str(s).strip()]
@@ -455,7 +455,7 @@ def _get_us_index_stock_list_cached(index: str) -> Tuple[Optional[List[str]], st
         # Scan tables for the constituents table — column name/order on Wikipedia
         # has shifted historically ('Symbol' vs 'Ticker symbol'), so don't trust tables[0]
         for tbl in tables:
-            cols = [str(c) for c in tbl.columns]
+            cols = list(tbl.columns)
             sym_col = next((c for c in cols if c.strip().lower() in ('symbol', 'ticker', 'ticker symbol')), None)
             if not sym_col:
                 continue
@@ -511,7 +511,7 @@ def get_crypto_list() -> Tuple[List[str], str]:
 def resolve_universe(
     universe: str,
     index: Optional[str] = None
-) -> Tuple[List[str], str]:
+) -> Tuple[Optional[List[str]], str]:
     """
     Resolve a universe selection to a list of symbols.
 
@@ -588,9 +588,10 @@ def render_universe_selector() -> Tuple[str, Optional[str]]:
         Tuple of (universe, selected_index) where selected_index may be None
     """
     universe = st.selectbox(
-        "Analysis Universe",
+        "Asset Class",
         UNIVERSE_OPTIONS,
-        help="Choose the universe of securities to analyze"
+        help="Choose the universe of securities to analyze",
+        label_visibility="visible"
     )
 
     selected_index = None
@@ -599,16 +600,17 @@ def render_universe_selector() -> Tuple[str, Optional[str]]:
     if universe in ("India Indexes", "US Indexes"):
         index_options = get_index_options(universe)
         default_index = get_default_index(universe)
-        default_idx = index_options.index(default_index) if default_index in index_options else 0
+        default_idx = index_options.index(str(default_index)) if default_index in index_options else 0
 
         label = "Select Index" if universe == "India Indexes" else "Select US Index"
         help_text = "Select the index for constituent analysis"
 
         selected_index = st.selectbox(
-            label,
+            "Market Index",
             index_options,
             index=default_idx,
-            help=help_text
+            help="Select the specific index for constituent analysis",
+            label_visibility="visible"
         )
 
     # ── Custom List Handler ──────────────────────────────────────────────
@@ -639,7 +641,7 @@ def render_universe_selector() -> Tuple[str, Optional[str]]:
                         return universe, "ERROR:NO_OPENPYXL"
                 
                 # Find symbol column
-                col = next((c for c in df.columns if str(c).strip().lower() == "symbol"), None)
+                col = next((c for c in df.columns if c.strip().lower() == "symbol"), None)
                 if col:
                     raw_symbols = df[col].dropna().astype(str).str.strip().tolist()
                     clean_symbols = []
