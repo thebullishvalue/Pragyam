@@ -139,6 +139,25 @@ def render_metric_card(
     )
 
 
+def get_signal_badge(score: float, compact: bool = False) -> str:
+    """Return HTML string for a signal badge based on a score (-2 to 2)."""
+    if score >= 1.5:
+        color, bg, text = "#2DD4A8", "rgba(45, 212, 168, 0.15)", "Bullish+"
+    elif score >= 0.5:
+        color, bg, text = "#34D399", "rgba(52, 211, 153, 0.1)", "Bullish"
+    elif score <= -1.5:
+        color, bg, text = "#E8555A", "rgba(232, 85, 90, 0.15)", "Bearish+"
+    elif score <= -0.5:
+        color, bg, text = "#FB7185", "rgba(251, 113, 133, 0.1)", "Bearish"
+    else:
+        color, bg, text = "#8B7E6A", "rgba(139, 126, 106, 0.1)", "Neutral"
+    
+    if compact:
+        return f'<span style="color:{color}; font-family:\'Space Grotesk\', sans-serif; font-weight:700;">{score:+.0f}</span>'
+    
+    return f'<span style="color:{color}; background:{bg}; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; border:1px solid {color}33;">{text}</span>'
+
+
 def render_conviction_signal(
     symbol: str,
     conviction: float,
@@ -241,6 +260,7 @@ def render_system_card(
     description: str,
     specs: list[tuple[str, str]],
     card_class: str = "portfolio",
+    icon: str = "briefcase"
 ) -> None:
     """Render a system feature card for landing page.
 
@@ -249,16 +269,21 @@ def render_system_card(
         description: Card description.
         specs: List of (label, value) tuples for specifications.
         card_class: CSS class — "portfolio", "regime", "strategies".
+        icon: Key from ICONS dict.
     """
     spec_html = "".join(
         f'<span>{html_mod.escape(label)}</span> {html_mod.escape(value)}<br>'
         for label, value in specs
     )
+    svg = get_icon(icon, size=16, stroke_width=1.8)
 
     st.markdown(
         f"""
         <div class='system-card {html_mod.escape(card_class)}'>
-            <h3>{html_mod.escape(title)}</h3>
+            <h3>
+                {svg}
+                {html_mod.escape(title)}
+            </h3>
             <p>{html_mod.escape(description)}</p>
             <div class='spec'>{spec_html}</div>
         </div>
@@ -469,7 +494,7 @@ def render_interpretation_card(
     st.markdown(
         f'<div class="interp-card {html_mod.escape(color)}">'
         f'<div class="interp-title">{html_mod.escape(title)}</div>'
-        f'<div class="interp-body">{html_mod.escape(body)}</div>'
+        f'<div class="interp-body">{body}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
