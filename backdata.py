@@ -35,7 +35,8 @@ class LiquidityOscillator:
         df = data.copy()
         df['spread'] = (df['high'] + df['low']) / 2 - df['open']
         df['vol_ma'] = df['volume'].rolling(window=self.length).mean()
-        safe_vol_ma = df['vol_ma'].replace(0, pd.NA).astype(float)
+        # Replace 0 with NaN to avoid division by zero, then fill with a small value
+        safe_vol_ma = df['vol_ma'].replace(0, pd.NA).fillna(1.0)
         df['vwap_spread'] = (df['spread'] * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
         close_shifted = df['close'].shift(self.impact_window)
         df['price_impact'] = ((df['close'] - close_shifted) * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
@@ -44,7 +45,7 @@ class LiquidityOscillator:
         df['lowest_value'] = df['source_value'].rolling(window=self.length).min()
         df['highest_value'] = df['source_value'].rolling(window=self.length).max()
         range_value = df['highest_value'] - df['lowest_value']
-        safe_range_value = range_value.replace(0, pd.NA)
+        safe_range_value = range_value.replace(0, pd.NA).fillna(1.0)
         oscillator = 200 * (df['source_value'] - df['lowest_value']) / safe_range_value - 100
         return oscillator.rename('liquidity_oscillator')
 
@@ -109,7 +110,7 @@ def calculate_all_indicators(
             if len(osc.dropna()) >= 20:
                 osc_sma20 = osc.rolling(window=20).mean()
                 osc_std20 = osc.rolling(window=20).std()
-                safe_std20 = osc_std20.replace(0, pd.NA)
+                safe_std20 = osc_std20.replace(0, pd.NA).fillna(1.0)
                 all_results_df[f'zscore {tf_name}'] = (osc - osc_sma20) / safe_std20
 
         rsi_series = calculate_rsi(df)
