@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [8.1.0] - 2026-07-01
+
+### 📈 Analytics & 🔗 Broker Sync — Curate → Analyse → Execute
+
+**Added**
+
+- **Analytics tab** — measures the LIVE curated portfolio's performance against a
+  **universe-matched benchmark** (NIFTY 500 for nifty500, S&P 500 for us_sp500,
+  NIFTY 50 default, etc.), anchored to the analysis date (metrics run anchor →
+  today). Adapts the standalone SWING Analysis engine into a new `analytics.py`
+  module. A normalized portfolio-vs-benchmark chart (indexed to 100) plus
+  metric-card rows for risk-adjusted (Period Return, CAGR, Alpha, Sharpe, Sortino,
+  Calmar, Info Ratio), risk (Volatility, Max Drawdown, VaR/CVaR, Beta, Tracking
+  Error) and benchmark comparison (Benchmark/Excess return, Up/Down capture,
+  Correlation, R²). Reads `st.session_state.portfolio` directly — no CSV/Excel
+  upload. The yfinance fetch is cached (`_analytics_series_cached`).
+- **Broker Sync tab** — writes the live curated portfolio's per-symbol units into
+  broker order-template JSONs (e.g. Kite `ETF.json` → `params.quantity`),
+  producing import-ready order files. Reads the curated book directly (no CSV
+  re-upload); the natural final step of the flow. Mirrors the Intelligence tab's
+  layout (status card + uploader | results table + downloads) plus a full-width
+  "How the Sync Works" method card, reusing existing Obsidian Quant chrome.
+- `analytics.py` — `resolve_benchmark`, `fetch_analysis_data`, `compute_metrics`,
+  and `build_return_series`. `charts.create_benchmark_comparison_chart` — the
+  normalized comparison line chart (amber portfolio, dotted cyan benchmark).
+
+**Changed**
+
+- Result tabs are now seven: Portfolio · Position Guide · **Analytics** · Regime ·
+  Intelligence · **Broker Sync** · System.
+- Regime tab hero rebuilt as one self-contained HTML flex block (factor scores
+  left, regime badge right, flush height) for reliable centring; factor bars now
+  render as center-anchored diverging bars (signed [-2, +2]), plus a full-width
+  "How the Regime Is Read" method card. Regime badge content scaled up to fill the
+  taller card.
+- Sidebar vertical rhythm normalized — a single spacing token drives every
+  inter-section gap (removed ad-hoc inline title margins and spacer divs; regime
+  card and Model Passport are now standard titled sections).
+
+**Fixed**
+
+- **"Data fetch failed: float() argument must be a string or a real number, not
+  'NAType'" on changing the analysis date** — `backdata` used `pd.NA` in its
+  safe-divides (LiquidityOscillator, RSI, oscillator z-score) and for missing
+  columns, producing nullable/object dtypes; a downstream `float()` on an `NA`
+  cell raised. Switched all of these to `np.nan` (identical missing-ness, keeps
+  columns `float64`). No change to indicator values.
+- Analytics tab now fetches **adjusted** close prices (matching how the curated
+  book is priced), anchors the value series to the first fully-priced date (no
+  fabricated jump from a not-yet-listed holding), and warns when a held symbol
+  can't be priced (so it isn't silently excluded from the metrics).
+- Sidebar regime card could paint a run behind the main flow — the main analysis
+  now syncs `regime_date` / `regime_symbols_key`, and the sidebar's change
+  detection no longer falls back to the just-overwritten `selected_date` (which
+  froze the card).
+- File-uploader dropzone rendered unstyled on Streamlit 1.5x because the theme
+  targeted only the legacy `stFileUploadDropzone` test-id; now targets both the
+  legacy and current (`stFileUploaderDropzone`) ids with a light-touch re-skin
+  that preserves the native compact layout.
+- `inject_css` now reads `theme.css` as UTF-8 (was failing on non-ASCII bytes
+  under the Windows cp1252 default) and cache-busts the injected `<style>` by
+  mtime so edits aren't served stale.
+
+---
+
 ## [8.0.0] - 2026-05-11
 
 ### 🧠 Intelligence Mode — Per-(Universe, Index, Regime) Bayesian Calibration

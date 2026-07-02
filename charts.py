@@ -277,8 +277,59 @@ def create_conviction_heatmap(portfolio_with_signals: pd.DataFrame) -> go.Figure
     return fig
 
 
+def create_benchmark_comparison_chart(
+    port_value: pd.Series,
+    bench_series: "pd.Series | None",
+    benchmark_name: str = "Benchmark",
+    port_return: float = 0.0,
+) -> go.Figure:
+    """Normalized portfolio-vs-benchmark line chart (both pegged to 100).
+
+    Args:
+        port_value: Portfolio value time series (any base; normalized to 100).
+        bench_series: Benchmark price series (or None to plot portfolio only).
+        benchmark_name: Legend label for the benchmark.
+        port_return: Portfolio period return (%) for the legend label.
+
+    Returns:
+        Plotly Figure in the Obsidian Quant theme — amber portfolio line,
+        dotted cyan benchmark line, value axis on the right.
+    """
+    fig = go.Figure()
+    if port_value is None or len(port_value) == 0:
+        fig.update_layout(**chart_layout(height=380))
+        return fig
+
+    port_norm = (port_value / port_value.iloc[0]) * 100.0
+    fig.add_trace(go.Scatter(
+        x=port_norm.index, y=port_norm.values, mode="lines",
+        name=f"Portfolio ({port_return:+.2f}%)",
+        line=dict(color=COLORS["amber"], width=2.5),
+        hovertemplate="%{x|%b %d, %Y}<br>Portfolio: %{y:.2f}<extra></extra>",
+    ))
+
+    if bench_series is not None and len(bench_series) > 0:
+        bench = bench_series.dropna()
+        if len(bench) > 0:
+            bench_norm = (bench / bench.iloc[0]) * 100.0
+            bench_ret = ((bench.iloc[-1] / bench.iloc[0]) - 1) * 100.0
+            fig.add_trace(go.Scatter(
+                x=bench_norm.index, y=bench_norm.values, mode="lines",
+                name=f"{benchmark_name} ({bench_ret:+.2f}%)",
+                line=dict(color=COLORS["cyan"], width=2, dash="dot"),
+                hovertemplate=f"%{{x|%b %d, %Y}}<br>{benchmark_name}: %{{y:.2f}}<extra></extra>",
+            ))
+
+    fig.update_layout(**chart_layout(height=380, show_legend=True))
+    style_axes(fig, y_title="Indexed to 100")
+    fig.update_yaxes(side="right")
+    fig.update_xaxes(rangeslider=dict(visible=False), rangeselector=dict(visible=False))
+    return fig
+
+
 __all__ = [
     "COLORS",
     "create_regime_history_chart",
     "create_conviction_heatmap",
+    "create_benchmark_comparison_chart",
 ]

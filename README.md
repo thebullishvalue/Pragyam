@@ -1,12 +1,12 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 8.0.0
+**Version:** 8.1.0
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
 Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with **self-tuning Bayesian calibration** of conviction weights per (universe, index, regime).
 
-**Latest:** v8.0.0 — Intelligence Mode: per-scope passport calibration via Optuna TPE; Model Passport sidebar card; Phase 1.5 auto-calibration; explicit fallback diagnostics.
+**Latest:** v8.1.0 — Analytics tab (curated book vs universe-matched benchmark) and Broker Sync tab (curated units → broker order JSONs); regime-tab redesign; sidebar vertical-rhythm polish; file-uploader re-skin.
 
 ---
 
@@ -85,15 +85,17 @@ streamlit run app.py
 
 ### 3. Review Results
 
-Four tabs on the result page:
+Seven tabs on the result page:
 
 | Tab | Contents |
 |-----|----------|
 | **Portfolio** | Holdings, conviction signals, position guide |
 | **Position Guide** | Per-position signal breakdown with entry conditions |
+| **Analytics** | Curated book vs universe-matched benchmark — normalized chart + risk-adjusted / risk / benchmark metrics (anchored to the analysis date) |
 | **Regime** | 7-factor regime composite + history |
 | **Intelligence** | Calibration status, train/val IR, manual recalibrate / reset, fallback diagnostics |
-| **System** | Execution metrics, configuration, version info |
+| **Broker Sync** | Write curated per-symbol units into broker order-template JSONs (e.g. Kite `ETF.json` → `params.quantity`) — import-ready downloads |
+| **System** | Configuration and curation methodology |
 
 ---
 
@@ -408,7 +410,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 | Version | Date | Architecture | Headline |
 |---------|------|--------------|----------|
-| **8.0.0** | 2026-05-11 | 2.5 phases | **Intelligence Mode** — per-scope Bayesian calibration via Optuna TPE; Model Passport sidebar; Phase 1.5 |
+| **8.1.0** | 2026-07-01 | 2.5 phases | **Analytics + Broker Sync tabs** — curated book vs benchmark; curated units → broker JSONs; regime-tab redesign + sidebar rhythm polish |
+| 8.0.0 | 2026-05-11 | 2.5 phases | **Intelligence Mode** — per-scope Bayesian calibration via Optuna TPE; Model Passport sidebar; Phase 1.5 |
 | 7.2.0 | 2026-04-13 | 2 phases | "Terminal Glass" design system overhaul |
 | 7.0.5 | 2026-04-05 | 2 phases | Production hardening, dead code removal |
 | 7.0.4 | 2026-04-02 | 2 phases | Style-aware dispersion (SIP / Swing) |

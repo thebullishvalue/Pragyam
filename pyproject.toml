@@ -1,7 +1,7 @@
 [project]
 name = "pragyam"
-version = "8.0.0"
-description = "Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with Bayesian per-regime calibration of conviction weights — @thebullishvalue"
+version = "8.1.0"
+description = "Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with Bayesian per-regime calibration of conviction weights, portfolio-vs-benchmark analytics, and broker-JSON sync — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.28.0",

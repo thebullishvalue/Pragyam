@@ -7,14 +7,23 @@ Architecture:
   regime.py         → MarketRegimeDetector, compute_conviction_signals
   portfolio.py      → compute_conviction_based_weights()
   backdata.py       → generate_historical_data()
+  intelligence.py   → conviction-weight calibration (passports)
+  analytics.py      → portfolio-vs-benchmark performance metrics (Analytics tab)
   charts.py         → Plotly chart builders
   strategies.py     → 80+ BaseStrategy implementations
+
+Conviction blend: 4 signals — RSI · Oscillator · Z-Score · MA-alignment. Weights
+are regime-calibrated in Intelligence mode (4-simplex), the canonical
+0.30 / 0.30 / 0.20 / 0.20 fallback otherwise.
 
 Pipeline (2 phases):
   Phase 1: Data fetching + regime detection
   Phase 2: Conviction-based portfolio curation (ALL strategies)
 
-Version: 7.0.5
+Result tabs: Portfolio · Position Guide · Analytics (curated book vs benchmark) ·
+Regime · Intelligence · Broker Sync (curated units → broker JSONs) · System.
+
+Version: 8.1.0
 Author: @thebullishvalue
 """
 
@@ -46,7 +55,6 @@ from ui.components import (
     render_info_box,
     render_system_card,
     section_gap,
-    render_conviction_signal,
     render_warning_box,
     render_chart_skeleton,
     render_collapsible_section,
@@ -56,7 +64,6 @@ from ui.components import (
     render_interpretation_card,
     render_kv_table,
     get_icon,
-    get_signal_badge,
 )
 import streamlit.components.v1 as components
 from regime import (
@@ -106,7 +113,7 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v8.0.0"
+VERSION = "v8.1.0"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -261,6 +268,26 @@ def _detect_regime_cached(end_date: datetime, symbols_key: str) -> Dict:
             "icon": "help-circle",
             "description": "",
         }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _analytics_series_cached(
+    symbols: Tuple[str, ...], units: Tuple[float, ...],
+    anchor_iso: str, days_back: int,
+    bench_ticker: str, bench_name: str,
+):
+    """Cached wrapper around analytics.build_return_series.
+
+    Keyed on the exact (symbols, units, anchor, benchmark) tuple so the yfinance
+    fetch runs ONCE per unique window and every subsequent render/tab-switch hits
+    cache — no repeated downloads. Returns (port_value, port_returns,
+    bench_returns, err). Compute stays in analytics.py; caching lives here (the
+    Streamlit boundary), mirroring _load_historical_data / _detect_regime_cached.
+    """
+    from analytics import build_return_series
+    _port = pd.DataFrame({"symbol": list(symbols), "units": list(units)})
+    anchor_dt = datetime.fromisoformat(anchor_iso)
+    return build_return_series(_port, days_back, bench_ticker, bench_name, anchor_date=anchor_dt)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -718,51 +745,160 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     # Current Regime Banner
     render_section_header("Current Market Regime", "10-day indicator window", icon="eye")
 
-    col_badge, col_factors = st.columns([1, 2])
+    # NOTE: the badge + factor scores are rendered as ONE self-contained HTML flex
+    # row (not st.columns), so vertical centring is under our control — Streamlit's
+    # column wrappers made the badge impossible to centre reliably. The flex row's
+    # `align-items:center` centres the badge card against the factor list, period.
 
-    with col_badge:
-        st.markdown(f"""
-        <div class="regime-badge" style="border-color: {color}; background: {color}18;">
-            <div class="regime-icon">{get_icon(icon_key, size=24, stroke_width=1.5)}</div>
-            <div class="regime-name" style="color: {color}; font-size: 1.4rem;">{regime_name.replace('_', ' ')}</div>
-            <div class="regime-sub">{mix_name}</div>
-            <div class="regime-score">Score: {score:+.2f}</div>
-            <div class="regime-conf">
-                <div class="conf-bar-bg">
-                    <div class="conf-bar-fill" style="width:{confidence*100:.0f}%; background:{color};"></div>
-                </div>
-                <span style="color:{color}; font-size:0.85rem; font-weight:700;">{confidence:.0%} confidence</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Fixed factor weights (regime detector is not calibrated); labelled so the
+    # percentages match what the composite actually used (see RegimeResult).
+    _fw = {
+        "momentum": 0.30, "trend": 0.25, "breadth": 0.15,
+        "velocity": 0.15, "extremes": 0.10, "volatility": 0.05, "correlation": 0.00,
+    }
+    factor_order = [
+        ("momentum", "Momentum", "strength"),
+        ("trend", "Trend", "quality"),
+        ("breadth", "Breadth", "quality"),
+        ("velocity", "Velocity", "acceleration"),
+        ("extremes", "Extremes", "type"),
+        ("volatility", "Volatility", "regime"),
+        ("correlation", "Correlation", "regime"),
+    ]
+    # Each factor score is a SIGNED value in [-2, +2] (bearish ↔ bullish), rendered
+    # as a CENTER-ANCHORED diverging bar: a zero line in the middle, the fill
+    # growing RIGHT (emerald) for a positive score or LEFT (rose) for a negative
+    # one, with magnitude = |score| / 2. A 0→100% fill would misread a signed value.
+    _rows = []
+    for fkey, fbase, label_key in factor_order:
+        fd = factors_raw.get(fkey, {})
+        fs = float(fd.get("score", 0.0))
+        fl = fd.get(label_key, "—")
+        _wpct = _fw.get(fkey)
+        fname = f"{fbase} ({_wpct*100:.0f}%)" if _wpct is not None else fbase
+        half = min(50.0, abs(fs) / 2.0 * 50.0)
+        if fs > 0.05:
+            val_color = "var(--emerald)"
+            fill = (f'<div style="position:absolute; left:50%; top:0; bottom:0; '
+                    f'width:{half}%; background:var(--emerald); border-radius:0 3px 3px 0;"></div>')
+        elif fs < -0.05:
+            val_color = "var(--rose)"
+            fill = (f'<div style="position:absolute; right:50%; top:0; bottom:0; '
+                    f'width:{half}%; background:var(--rose); border-radius:3px 0 0 3px;"></div>')
+        else:
+            val_color = "var(--ink-tertiary)"
+            fill = ""
+        _rows.append(
+            f'<div style="margin:0 0 12px 0;">'
+            f'<div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:4px;">'
+            f'<span style="color:var(--ink-primary); font-weight:600;">{fname}</span>'
+            f'<span style="color:var(--ink-tertiary);">{fl} '
+            f'<span style="color:{val_color}; font-weight:700;">({fs:+.1f})</span></span>'
+            f'</div>'
+            f'<div style="position:relative; height:8px; background:var(--bg-elevated); border-radius:3px; overflow:hidden;">'
+            f'{fill}'
+            f'<div style="position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--border-active); transform:translateX(-0.5px);"></div>'
+            f'</div>'
+            f'</div>'
+        )
+    _factors_html = "".join(_rows)
+    _badge_icon = get_icon(icon_key, size=40, stroke_width=1.5)
+    _fs_icon = get_icon("activity", size=16, stroke_width=1.8)
 
-    with col_factors:
-        st.markdown("**Factor Scores** (−2 bearish → +2 bullish):")
-        factor_order = [
-            ("momentum", "Momentum (30%)", "strength"),
-            ("trend", "Trend (25%)", "quality"),
-            ("breadth", "Breadth (15%)", "quality"),
-            ("velocity", "Velocity (15%)", "acceleration"),
-            ("extremes", "Extremes (10%)", "type"),
-            ("volatility", "Volatility (5%)", "regime"),
-        ]
-        for fkey, fname, label_key in factor_order:
-            fd = factors_raw.get(fkey, {})
-            fs = fd.get("score", 0.0)
-            fl = fd.get(label_key, "—")
-            pct = max(0, min(100, int((fs + 2.0) / 4.0 * 100.0)))
-            bar_color = "#10b981" if fs >= 0.5 else ("#ef4444" if fs <= -0.5 else "#f59e0b")
-            st.markdown(f"""
-            <div style="margin: 5px 0;">
-              <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:3px;">
-                <span style="color:#EAEAEA; font-weight:600;">{fname}</span>
-                <span style="color:#888;">{fl} <span style="color:{bar_color}; font-weight:700;">({fs:+.1f})</span></span>
-              </div>
-              <div style="height:6px; background:#2A2A2A; border-radius:3px;">
-                <div style="width:{pct}%; height:100%; background:{bar_color}; border-radius:3px;"></div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # ── ONE flex row: factor scores (left, flex:1.7) + regime badge (right, flex:1).
+    #    align-items:stretch makes both columns equal-height; the badge card is
+    #    height:100% so it runs FLUSH top-and-bottom with the factor list.
+    st.markdown(
+        f'<div style="display:flex; align-items:stretch; gap:24px; margin-top:8px;">'
+        # LEFT — factor scores (flex:1.7)
+        f'<div style="flex:1.7; min-width:0;">'
+        f'<div style="display:flex; align-items:center; gap:8px; margin:0 0 4px 0;">'
+        f'<span style="color:var(--cyan, #6CD3D7); display:inline-flex;">{_fs_icon}</span>'
+        f'<span style="font-family:var(--display); font-size:0.95rem; font-weight:700; '
+        f'text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-primary);">Factor Scores</span>'
+        f'</div>'
+        f'<div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); margin:0 0 12px 0;">'
+        f'Signed composite inputs · −2 bearish ↔ +2 bullish</div>'
+        f'<div style="display:flex; justify-content:space-between; font-family:var(--data); '
+        f'font-size:0.62rem; letter-spacing:0.08em; color:var(--ink-tertiary); '
+        f'text-transform:uppercase; margin:0 0 8px 0;">'
+        f'<span>−2 Bearish</span><span>0 Neutral</span><span>+2 Bullish</span></div>'
+        f'{_factors_html}'
+        f'</div>'
+        # RIGHT — regime badge card (flex:1), flush to the factor list height
+        f'<div style="flex:1; display:flex; min-width:0;">'
+        f'<div class="regime-badge" style="width:100%; height:100%; border-color:{color}66; '
+        f'background:linear-gradient(160deg, {color}12 0%, {color}05 45%, transparent 100%), var(--glass);">'
+        f'<div class="regime-icon">{_badge_icon}</div>'
+        f'<div class="regime-name" style="color:{color}; font-size:2.1rem;">{regime_name.replace("_", " ")}</div>'
+        f'<div class="regime-sub">{mix_name}</div>'
+        f'<div class="regime-score">Score: {score:+.2f}</div>'
+        f'<div class="regime-conf">'
+        f'<div class="conf-bar-bg"><div class="conf-bar-fill" style="width:{confidence*100:.0f}%; background:{color};"></div></div>'
+        f'<span style="color:{color}; font-size:1.05rem; font-weight:700;">{confidence:.0%} confidence</span>'
+        f'</div></div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Full-width METHOD card (Obsidian Quant fidelity) — mirrors the
+    #    Intelligence tab's method card: header + pill + lede + tile grid.
+    _rmode_lbl = "Intelligence" if st.session_state.get("intelligence_mode") else "Standard"
+    method_html = (
+        '<div class="intel-method-card">'
+            '<div class="intel-method-header">'
+                '<div class="intel-method-title">How the Regime Is Read</div>'
+                '<div class="intel-method-pill">'
+                f'7-factor composite · {_rmode_lbl} run'
+                '</div>'
+            '</div>'
+            '<div class="intel-method-lede">'
+                'The market regime is a <strong>weighted composite</strong> of seven measured '
+                'factors, each scored on a signed <code>[-2, +2]</code> scale (bearish ↔ bullish). '
+                'The weighted sum places the market on the regime hierarchy from '
+                '<strong>Strong Bull</strong> down to <strong>Crisis</strong>. The factor weights '
+                'are fixed (Momentum 30% · Trend 25% · Breadth/Velocity 15% · Extremes 10% · '
+                'Volatility 5%); the regime detector itself is not calibrated.'
+            '</div>'
+            '<div class="intel-method-grid">'
+
+                '<div class="intel-method-tile tile-learns">'
+                    '<div class="tile-label">Momentum &amp; Trend</div>'
+                    '<div class="tile-body">'
+                        'RSI trajectory, oscillator direction, price/MA alignment and the share of '
+                        'names above their 200-DMA — the primary directional drivers (largest weights).'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-how">'
+                    '<div class="tile-label">Breadth &amp; Velocity</div>'
+                    '<div class="tile-body">'
+                        'Cross-sectional participation and the first/second derivative of momentum '
+                        '(is the move accelerating or decaying) — confirmation and turning-point cues.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-obj">'
+                    '<div class="tile-label">Extremes &amp; Volatility</div>'
+                    '<div class="tile-body">'
+                        'Z-score crowding and the Bollinger band-width regime — stress and '
+                        'mean-reversion context that modulates the directional read.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-safety">'
+                    '<div class="tile-label">Reading the bars</div>'
+                    '<div class="tile-body">'
+                        'Each factor bar is <strong>centre-anchored</strong>: it grows right (green) '
+                        'when bullish, left (red) when bearish, from a zero line — the magnitude is '
+                        'how far the factor leans, not a simple fill.'
+                    '</div>'
+                '</div>'
+
+            '</div>'
+        '</div>'
+    )
+    st.markdown(method_html, unsafe_allow_html=True)
 
     # Regime History
     regime_series_to_use = regime_series
@@ -813,56 +949,539 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
 
 
 def _render_system_tab(training_window: List):
-    """Tab 3 — System information."""
-    render_section_header("System & Execution Details", "Configuration and metadata", icon="cpu")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        render_metric_card("Analysis Date", str(st.session_state.get("selected_date", "N/A")), "Portfolio date", "info")
-    with c2:
-        portfolio_val = st.session_state.get("portfolio")
-        num_positions = len(portfolio_val) if portfolio_val is not None and not portfolio_val.empty else 0
-        render_metric_card("Positions", str(num_positions), "Current holdings", "info")
-
-    _section_divider()
-
-    render_section_header("Configuration", "System settings", icon="settings")
-
+    """Tab — System configuration + methodology reference (Obsidian Quant)."""
+    # ── Configuration — the run's settings as a clean KV readout ───────────────
+    render_section_header("Configuration", "Run settings & data source", icon="settings", accent="cyan")
     details = {
         "Version": VERSION,
-        "Curation Method": "Conviction-Based (All 80+ Strategies)",
+        "Curation Method": "Conviction-based (4-signal blend)",
         "Weight Formula": "(conviction / total) × 100",
         "Min Position": f"{st.session_state.min_pos_pct*100:.1f}%",
         "Max Position": f"{st.session_state.max_pos_pct*100:.1f}%",
         "Data Source": "yfinance (NSE)",
         "Lookback Period": f"{len(training_window)} days",
     }
-
     render_kv_table(details)
 
     _section_divider()
 
-    render_section_header("Technical Information", "Conviction scoring and weighting", icon="target")
+    # ── Methodology — full-width method card (mirrors Intelligence/Regime) ─────
+    render_section_header("Methodology", "How a portfolio is curated", icon="target", accent="emerald")
+    method_html = (
+        '<div class="intel-method-card">'
+            '<div class="intel-method-header">'
+                '<div class="intel-method-title">Curation Pipeline</div>'
+                '<div class="intel-method-pill">'
+                'detect → score → select → weight'
+                '</div>'
+            '</div>'
+            '<div class="intel-method-lede">'
+                'Every symbol in the universe is scored 0–100 by a four-signal conviction blend, '
+                'read against the market regime, then the highest-conviction names are curated into '
+                'a bounded, dispersion-weighted book.'
+            '</div>'
+            '<div class="intel-method-grid">'
 
-    c1, c2 = st.columns(2)
+                '<div class="intel-method-tile tile-learns">'
+                    '<div class="tile-label">Signals</div>'
+                    '<div class="tile-body">'
+                        'RSI · Oscillator · Z-Score · MA-alignment, each in '
+                        '<code>[-2, +2]</code>. Blended by regime-calibrated weights, mapped to '
+                        '<code>(raw + 2) / 4 × 100</code>.'
+                    '</div>'
+                '</div>'
 
-    with c1:
-        render_metric_card(
-            "Conviction Scoring",
-            "0-100 Range",
-            "Signals: RSI (30%) · Oscillator (30%)<br>Z-Score (20%) · MA Alignment (20%)<br><br>Formula: (raw + 2) / 4 × 100",
-            "info",
-            icon="bar-chart"
+                '<div class="intel-method-tile tile-how">'
+                    '<div class="tile-label">Regime</div>'
+                    '<div class="tile-body">'
+                        'A seven-factor composite places the market on the Strong Bull → Crisis '
+                        'hierarchy and selects the conviction-weight passport used for scoring.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-obj">'
+                    '<div class="tile-label">Selection</div>'
+                    '<div class="tile-body">'
+                        'Top N by conviction. No hard threshold — all symbols are eligible.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-safety">'
+                    '<div class="tile-label">Weighting</div>'
+                    '<div class="tile-body">'
+                        'Style-aware dispersion (SIP / Swing) then '
+                        '<code>weight = (conviction / total) × 100</code>, bounded to '
+                        f'{st.session_state.min_pos_pct*100:.0f}%–{st.session_state.max_pos_pct*100:.0f}% per position.'
+                    '</div>'
+                '</div>'
+
+            '</div>'
+        '</div>'
+    )
+    st.markdown(method_html, unsafe_allow_html=True)
+
+
+def _sync_broker_json(json_data, quantity_map: Dict[str, int]) -> Tuple[list, int]:
+    """Map curated per-symbol units into a broker order-template JSON.
+
+    Walks each instrument in the template, and where its
+    ``instrument.tradingsymbol`` matches a curated holding, writes the holding's
+    unit count into ``params.quantity``. Returns the mutated JSON and the number
+    of instruments updated.
+    """
+    updated = 0
+    for item in json_data:
+        try:
+            symbol = item.get("instrument", {}).get("tradingsymbol")
+            if symbol and symbol in quantity_map and "params" in item:
+                item["params"]["quantity"] = int(quantity_map[symbol])
+                updated += 1
+        except Exception:
+            continue
+    return json_data, updated
+
+
+def _render_broker_sync_tab(portfolio: pd.DataFrame):
+    """Tab — Broker JSON Sync: write curated units into broker order templates.
+
+    Reads the LIVE curated portfolio (no CSV re-upload) and maps each holding's
+    unit count onto the matching instrument's ``params.quantity`` in every
+    uploaded broker template (e.g. Kite ETF.json), producing ready-to-import
+    order files. The natural final step of the flow: curate → sync → execute.
+    """
+    import json as _json
+
+    render_section_header(
+        "Broker JSON Sync",
+        "Write curated units into broker order templates · curate → sync → execute",
+        icon="download",
+        accent="cyan",
+    )
+
+    # Guard: nothing to sync until a portfolio has been curated.
+    if portfolio is None or portfolio.empty or "symbol" not in portfolio.columns or "units" not in portfolio.columns:
+        render_interpretation_card(
+            title="NO CURATED PORTFOLIO",
+            body=(
+                "Run an analysis first — the sync uses the live curated portfolio "
+                "directly, so there is nothing to map onto your broker templates yet."
+            ),
+            color="warning",
+        )
+        return
+
+    # Build the symbol → units map from the live portfolio (units ≥ 0, integer).
+    qty_map: Dict[str, int] = {
+        str(sym): int(u)
+        for sym, u in zip(portfolio["symbol"], portfolio["units"].fillna(0))
+    }
+    tradable = sum(1 for u in qty_map.values() if u > 0)
+
+    # ── Balanced two-column layout, mirroring the Intelligence tab exactly ─────
+    #    col1 = status card + template uploader
+    #    col2 = results table + totals line + per-file downloads
+    col1, col2 = st.columns([1, 1])
+
+    # Process uploaded templates once, up front, so both columns read the same
+    # deterministic result set (status card, results table, download buttons).
+    json_files = st.session_state.get("broker_sync_json_uploader")
+    results = []  # (fname, payload_or_None, count, error_or_None)
+    if json_files:
+        for j_file in json_files:
+            try:
+                j_file.seek(0)
+                content = _json.load(j_file)
+                updated_json, count = _sync_broker_json(content, qty_map)
+                results.append((j_file.name, _json.dumps(updated_json, indent=4), count, None))
+            except Exception as e:
+                results.append((j_file.name, None, 0, str(e)))
+    n_templates = len(results)
+    ok = sum(1 for _, p, _, _ in results if p is not None)
+    total_updated = sum(c for _, p, c, _ in results if p is not None)
+
+    with col1:
+        if n_templates == 0:
+            render_interpretation_card(
+                title="AWAITING TEMPLATES",
+                body=(
+                    f"Curated book holds <strong>{tradable}</strong> tradable holding(s). "
+                    "Upload one or more broker order-template JSONs (e.g. Kite "
+                    "<strong>ETF.json</strong>) to sync their quantities."
+                ),
+                color="info",
+            )
+        elif ok == 0:
+            render_interpretation_card(
+                title="NO FILES SYNCED",
+                body=(
+                    f"None of the <strong>{n_templates}</strong> uploaded template(s) could be "
+                    "processed. Check that each is a valid broker order JSON."
+                ),
+                color="danger",
+            )
+        else:
+            render_interpretation_card(
+                title="READY TO EXPORT",
+                body=(
+                    f"Synced <strong>{ok}/{n_templates}</strong> template(s) · "
+                    f"<strong>{total_updated}</strong> instrument(s) updated from "
+                    f"<strong>{tradable}</strong> tradable holding(s). "
+                    "Download the import-ready files on the right."
+                ),
+                color="success",
+            )
+
+        st.file_uploader(
+            "Upload broker JSON templates",
+            type=["json"],
+            accept_multiple_files=True,
+            help="Your original broker order files (e.g. ETF.json). Each instrument's "
+                 "quantity is set from the curated units for its trading symbol.",
+            key="broker_sync_json_uploader",
+            label_visibility="collapsed",
         )
 
-    with c2:
-        render_metric_card(
-            "Portfolio Weighting",
-            "(conviction / total) × 100",
-            "Bounds: Min 1% · Max 10%<br>Selection: Top 30 by conviction<br><br>No threshold: All symbols eligible",
-            "success",
-            icon="scale"
+    with col2:
+        if n_templates == 0:
+            st.markdown(
+                '<div class="intel-table-wrap"><table class="portfolio-table-2col">'
+                '<colgroup><col style="width:52%;"><col style="width:23%;">'
+                '<col style="width:25%;"></colgroup>'
+                '<thead><tr><th class="col-iw-factor">Template</th>'
+                '<th class="col-iw-long">Updated</th>'
+                '<th class="col-iw-short">Status</th></tr></thead>'
+                '<tbody><tr><td colspan="3" '
+                'style="text-align:center; color:var(--ink-tertiary); '
+                'font-family:var(--data); font-size:0.75rem; padding:var(--sp-6) var(--sp-3);">'
+                'No templates uploaded</td>'
+                '</tr></tbody></table></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            rows_html = []
+            for fname, payload, count, err in results:
+                if err is not None:
+                    rows_html.append(
+                        f'<tr>'
+                        f'<td class="iw-label">{html_module.escape(fname)}</td>'
+                        f'<td class="iw-long" style="color:var(--rose)">—</td>'
+                        f'<td class="iw-short" style="color:var(--rose)">ERROR</td>'
+                        f'</tr>'
+                    )
+                else:
+                    c_color = "var(--emerald)" if count > 0 else "var(--ink-secondary)"
+                    s_color = "var(--emerald)" if count > 0 else "var(--amber)"
+                    s_text = "SYNCED" if count > 0 else "NO MATCH"
+                    rows_html.append(
+                        f'<tr>'
+                        f'<td class="iw-label">{html_module.escape(fname)}</td>'
+                        f'<td class="iw-long" style="color:{c_color}">{count}</td>'
+                        f'<td class="iw-short" style="color:{s_color}">{s_text}</td>'
+                        f'</tr>'
+                    )
+            st.markdown(
+                f'''
+                <div class="intel-table-wrap">
+                    <table class="portfolio-table-2col">
+                        <colgroup>
+                            <col style="width:52%;">
+                            <col style="width:23%;">
+                            <col style="width:25%;">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th class="col-iw-factor">Template</th>
+                                <th class="col-iw-long">Updated</th>
+                                <th class="col-iw-short">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {"".join(rows_html)}
+                        </tbody>
+                    </table>
+                </div>
+                ''',
+                unsafe_allow_html=True,
+            )
+
+            for fname, payload, count, err in results:
+                if err is None:
+                    st.download_button(
+                        label=f"Download updated {fname}",
+                        data=payload,
+                        file_name=f"updated_{fname}",
+                        mime="application/json",
+                        width="stretch",
+                        key=f"broker_sync_dl_{fname}",
+                    )
+
+    # ── Full-width METHOD card (Obsidian Quant fidelity) — mirrors the
+    #    Intelligence tab's method card: header + pill + lede + tile grid.
+    method_html = (
+        '<div class="intel-method-card">'
+            '<div class="intel-method-header">'
+                '<div class="intel-method-title">How the Sync Works</div>'
+                '<div class="intel-method-pill">'
+                'symbol → units → params.quantity'
+                '</div>'
+            '</div>'
+            '<div class="intel-method-lede">'
+                'The Broker Sync closes the loop from a curated book to broker execution. '
+                'It reads the <strong>live curated portfolio</strong> directly — no CSV '
+                're-upload — and writes each holding\'s unit count into the matching '
+                'instrument of every broker order template you upload.'
+            '</div>'
+            '<div class="intel-method-grid">'
+
+                '<div class="intel-method-tile tile-learns">'
+                    '<div class="tile-label">Source</div>'
+                    '<div class="tile-body">'
+                        'The live curated portfolio in memory — its <code>symbol</code> and '
+                        '<code>units</code> columns, exactly as shown in the Portfolio tab. '
+                        'Nothing to export or re-import.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-how">'
+                    '<div class="tile-label">Mapping</div>'
+                    '<div class="tile-body">'
+                        'For each instrument in a template, if its '
+                        '<code>instrument.tradingsymbol</code> matches a curated holding, '
+                        'that holding\'s units are written to <code>params.quantity</code>.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-obj">'
+                    '<div class="tile-label">Templates</div>'
+                    '<div class="tile-body">'
+                        'Standard broker order JSONs (e.g. Kite <code>ETF.json</code>). '
+                        'Upload as many as you like; each is synced and offered as a '
+                        'separate <code>updated_*</code> download.'
+                    '</div>'
+                '</div>'
+
+                '<div class="intel-method-tile tile-safety">'
+                    '<div class="tile-label">Safety</div>'
+                    '<div class="tile-body">'
+                        'Non-destructive: instruments with no matching holding are left '
+                        '<strong>untouched</strong>, and the original files are never '
+                        'modified — you download fresh copies.'
+                    '</div>'
+                '</div>'
+
+            '</div>'
+        '</div>'
+    )
+    st.markdown(method_html, unsafe_allow_html=True)
+
+
+def _render_analytics_tab(portfolio: pd.DataFrame):
+    """Tab — Portfolio Analytics: track the curated book vs a universe-matched
+    benchmark (adapted from the SWING Analysis engine, re-themed to Obsidian Quant).
+
+    Anchored to the analysis date (metrics run anchor → today). Shows a normalized
+    portfolio-vs-benchmark chart plus risk-adjusted, risk, and benchmark-comparison
+    metric cards. Uses the LIVE curated portfolio (no upload); the yfinance fetch is
+    cached (see _analytics_series_cached).
+    """
+    from analytics import RISK_FREE_RATE, resolve_benchmark, compute_metrics
+    from charts import create_benchmark_comparison_chart
+
+    universe, selected_index, _regime, _mode = _intel_context()
+    bench_ticker, bench_name = resolve_benchmark(universe, selected_index)
+
+    # Guard: needs a curated portfolio with priced units.
+    if portfolio is None or portfolio.empty or "symbol" not in portfolio.columns or "units" not in portfolio.columns:
+        render_interpretation_card(
+            title="NO CURATED PORTFOLIO",
+            body=(
+                "Run an analysis first — analytics track the live curated portfolio's "
+                "performance against the benchmark, so there is nothing to measure yet."
+            ),
+            color="warning",
         )
+        return
+
+    # ── ANCHOR = the analysis date. Metrics run anchor → today; the window is
+    #    dictated by the anchor (no user timeframe picker). Handle edge cases. ──
+    _sel = st.session_state.get("selected_date")
+    anchor_date = _sel if isinstance(_sel, date) else (
+        _sel.date() if isinstance(_sel, datetime) else datetime.now().date()
+    )
+    today = datetime.now().date()
+
+    # Edge: anchor is today or in the future → no forward history to measure.
+    if anchor_date >= today:
+        render_interpretation_card(
+            title="ANCHORED TO TODAY",
+            body=(
+                f"The analysis date is <strong>{anchor_date.strftime('%d %b %Y')}</strong>, so there "
+                "is no forward performance history yet. Analytics measure the curated book from the "
+                "analysis date to the present — pick an earlier analysis date (with at least a few "
+                "trading days elapsed) to see metrics."
+            ),
+            color="info",
+        )
+        return
+
+    _elapsed_days = (today - anchor_date).days
+    # Fetch enough calendar days to cover the anchor window (+buffer for alignment);
+    # build_return_series then clips precisely to anchor → today.
+    days_back = _elapsed_days + 5
+    anchor_dt = datetime.combine(anchor_date, datetime.min.time())
+
+    # ── Fetch + compute (CACHED) ───────────────────────────────────────────────
+    #  The heavy yfinance fetch is behind _analytics_series_cached, keyed on the
+    #  (symbols, units, anchor, benchmark) tuple, so it runs at most ONCE per
+    #  unique window and every tab-switch / cosmetic rerun hits cache. Metrics
+    #  render immediately on opening the tab — a scoped spinner only shows during
+    #  the genuine first (cache-miss) fetch.
+    _symbols = tuple(str(s) for s in portfolio["symbol"].tolist())
+    _units = tuple(float(u or 0) for u in portfolio["units"].tolist())
+    with st.spinner(f"Loading performance history · {bench_name} benchmark…"):
+        port_value, port_returns, bench_returns, err, unpriced = _analytics_series_cached(
+            _symbols, _units, anchor_dt.isoformat(), days_back, bench_ticker, bench_name,
+        )
+
+    if err:
+        render_interpretation_card(
+            title="DATA UNAVAILABLE",
+            body=f"Could not build the performance series: {html_module.escape(err)}",
+            color="danger",
+        )
+        return
+
+    # Surface any held symbols that couldn't be priced/matched — the metrics below
+    # exclude them, so the reported performance is for the priced remainder only.
+    if unpriced:
+        _shown = ", ".join(html_module.escape(s) for s in unpriced[:12])
+        _more = f" (+{len(unpriced) - 12} more)" if len(unpriced) > 12 else ""
+        render_interpretation_card(
+            title="SOME HOLDINGS NOT PRICED",
+            body=(
+                f"<strong>{len(unpriced)}</strong> held symbol(s) could not be priced and are "
+                f"<strong>excluded</strong> from these metrics: {_shown}{_more}. "
+                "The performance below reflects only the priced holdings."
+            ),
+            color="warning",
+        )
+
+    # Edge: too few trading days since the anchor to compute meaningful metrics.
+    if len(port_returns) < 2:
+        render_interpretation_card(
+            title="NOT ENOUGH HISTORY YET",
+            body=(
+                f"Only <strong>{len(port_returns)}</strong> trading day(s) have elapsed since "
+                f"<strong>{anchor_date.strftime('%d %b %Y')}</strong>. Risk and benchmark metrics "
+                "need at least a few daily returns — check back after more trading days, or use an "
+                "earlier analysis date."
+            ),
+            color="warning",
+        )
+        return
+
+    m = compute_metrics(port_returns, bench_returns, RISK_FREE_RATE)
+
+    # ── Relative performance: header → anchor-window chip → normalized chart ────
+    render_section_header("Relative Performance", f"Portfolio vs {bench_name} · indexed to 100",
+                          icon="activity", accent="amber")
+    st.markdown(
+        f'<div style="display:flex; align-items:center; gap:10px; margin:0 0 10px 0; '
+        f'font-family:var(--data); font-size:0.72rem; letter-spacing:0.04em; color:var(--ink-tertiary);">'
+        f'<span style="display:inline-flex; align-items:center; gap:6px; padding:4px 12px; '
+        f'border:1px solid var(--border-active); border-radius:999px; background:rgba(212,168,83,0.06); '
+        f'color:var(--amber); text-transform:uppercase; font-weight:700;">'
+        f'Anchored · {anchor_date.strftime("%d %b %Y")} → Today</span>'
+        f'<span>{len(port_returns)} trading days · {_elapsed_days} calendar day(s) elapsed</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    _bench_series = None
+    if bench_returns is not None and len(bench_returns) > 0:
+        _bench_series = (1 + bench_returns).cumprod()
+    if CHARTS_AVAILABLE and len(port_value) > 0:
+        st.markdown('<div class="chart-container regime">', unsafe_allow_html=True)
+        fig = create_benchmark_comparison_chart(
+            port_value, _bench_series, bench_name, m.get("total_return", 0.0),
+        )
+        st.plotly_chart(fig, width="stretch", key="analytics_benchmark_chart")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Returns & Risk-Adjusted Performance ────────────────────────────────────
+    _section_divider()
+    render_section_header("Returns & Risk-Adjusted Performance", "Period, CAGR & efficiency ratios",
+                          icon="zap", accent="emerald")
+    r1 = st.columns(6)
+    with r1[0]:
+        v = m.get("total_return", 0)
+        render_metric_card("Period Return", f"{v:+.2f}%", f"CAGR: {m.get('cagr', 0):+.1f}%",
+                           "success" if v >= 0 else "danger")
+    with r1[1]:
+        a = m.get("alpha", 0)
+        render_metric_card("Alpha", f"{a:+.2f}%", "Excess return",
+                           "success" if a > 0 else "danger" if a < 0 else "neutral")
+    with r1[2]:
+        s = m.get("sharpe", 0)
+        render_metric_card("Sharpe", f"{s:.2f}", "Rf = 6.5%",
+                           "success" if s > 1 else "warning" if s > 0.5 else "danger")
+    with r1[3]:
+        so = m.get("sortino", 0)
+        render_metric_card("Sortino", f"{so:.2f}", "Downside risk",
+                           "success" if so > 1.5 else "warning" if so > 0.5 else "danger")
+    with r1[4]:
+        ca = m.get("calmar", 0)
+        render_metric_card("Calmar", f"{ca:.2f}", "Return / MaxDD",
+                           "success" if ca > 1 else "warning" if ca > 0.5 else "danger")
+    with r1[5]:
+        ir = m.get("info_ratio", 0)
+        render_metric_card("Info Ratio", f"{ir:.2f}", "Active return / TE",
+                           "success" if ir > 0.5 else "warning" if ir > 0 else "danger")
+
+    # ── Benchmark Comparison ───────────────────────────────────────────────────
+    section_gap()
+    render_section_header("Benchmark Comparison", f"vs {bench_name}", icon="compass", accent="cyan")
+    r3 = st.columns(6)
+    with r3[0]:
+        br = m.get("benchmark_return", 0)
+        render_metric_card("Benchmark", f"{br:+.1f}%", bench_name,
+                           "success" if br >= 0 else "danger")
+    with r3[1]:
+        ex = m.get("total_return", 0) - m.get("benchmark_return", 0)
+        render_metric_card("Excess Return", f"{ex:+.1f}%", "vs Benchmark",
+                           "success" if ex > 0 else "danger")
+    with r3[2]:
+        uc = m.get("up_capture", 100)
+        render_metric_card("Up Capture", f"{uc:.0f}%", "Bull market",
+                           "success" if uc > 100 else "warning")
+    with r3[3]:
+        dc = m.get("down_capture", 100)
+        render_metric_card("Down Capture", f"{dc:.0f}%", "Bear market",
+                           "success" if dc < 100 else "danger")
+    with r3[4]:
+        render_metric_card("Correlation", f"{m.get('correlation', 0):.2f}", "vs Benchmark", "info")
+    with r3[5]:
+        render_metric_card("R-Squared", f"{m.get('r_squared', 0):.2f}", "Fit quality", "info")
+
+    # ── Risk Metrics ───────────────────────────────────────────────────────────
+    section_gap()
+    render_section_header("Risk Metrics", "Volatility, drawdown & tail risk", icon="shield", accent="rose")
+    r2 = st.columns(6)
+    with r2[0]:
+        render_metric_card("Volatility", f"{m.get('volatility', 0):.1f}%", "Annualized", "warning")
+    with r2[1]:
+        mdd = m.get("max_drawdown", 0)
+        render_metric_card("Max Drawdown", f"{mdd:.1f}%", "Peak to trough",
+                           "danger" if mdd < -20 else "warning" if mdd < -10 else "success")
+    with r2[2]:
+        render_metric_card("VaR (95%)", f"{m.get('var_95', 0):.2f}%", "Daily at risk", "danger")
+    with r2[3]:
+        render_metric_card("CVaR (95%)", f"{m.get('cvar_95', 0):.2f}%", "Expected shortfall", "danger")
+    with r2[4]:
+        b = m.get("beta", 1)
+        render_metric_card("Beta", f"{b:.2f}", "Market sensitivity",
+                           "warning" if b > 1.2 else "info" if b < 0.8 else "neutral")
+    with r2[5]:
+        render_metric_card("Tracking Error", f"{m.get('tracking_error', 0):.1f}%", "vs Benchmark", "info")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1196,7 +1815,7 @@ def _render_results(display_capital: float):
     st.markdown('<div class="tab-bg portfolio"></div>', unsafe_allow_html=True)
 
     # Tabs
-    tabs = ["Portfolio", "Position Guide", "Regime", "Intelligence", "System"]
+    tabs = ["Portfolio", "Position Guide", "Analytics", "Regime", "Intelligence", "Broker Sync", "System"]
     t_objs = st.tabs(tabs)
 
     with t_objs[0]:
@@ -1206,12 +1825,18 @@ def _render_results(display_capital: float):
         _render_position_guide_tab(portfolio, current_df)
 
     with t_objs[2]:
-        _render_regime_tab(regime_d, st.session_state.get("regime_history_series", []), training_window)
+        _render_analytics_tab(portfolio)
 
     with t_objs[3]:
-        _render_intelligence_tab(regime_d)
+        _render_regime_tab(regime_d, st.session_state.get("regime_history_series", []), training_window)
 
     with t_objs[4]:
+        _render_intelligence_tab(regime_d)
+
+    with t_objs[5]:
+        _render_broker_sync_tab(portfolio)
+
+    with t_objs[6]:
         _render_system_tab(training_window)
 
     # Footer
@@ -1305,6 +1930,11 @@ def _run_analysis(
 
         st.session_state.regime_result_dict = regime_result
         st.session_state.suggested_mix = regime_result.get("mix_name", "Chop/Consolidate Mix")
+        # Keep the regime-computation markers in sync so the sidebar card's
+        # change-detection agrees with what the main flow just computed (otherwise
+        # the sidebar can think the card is fresh when it is a run behind).
+        st.session_state.regime_date = st.session_state.get("selected_date")
+        st.session_state.regime_symbols_key = symbols_key
         st.session_state.training_data_window = all_hist
 
         if len(all_hist) < 10:
@@ -1590,7 +2220,7 @@ def main():
         )
 
         # 1. Analysis Date
-        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Analysis Date</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Analysis Date</div>', unsafe_allow_html=True)
         selected_date = st.date_input(
             "Reference Date",
             value=datetime.now().date(),
@@ -1602,7 +2232,7 @@ def main():
         selected_date_obj = datetime.combine(selected_date, datetime.min.time())
 
         # 2. Portfolio Style
-        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Portfolio Style</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Portfolio Style</div>', unsafe_allow_html=True)
         investment_style = st.selectbox(
             "Investment Objective",
             options=["Swing Trading", "SIP Investment"],
@@ -1612,7 +2242,7 @@ def main():
         )
 
         # 3. Analysis Universe
-        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Analysis Universe</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Analysis Universe</div>', unsafe_allow_html=True)
         universe, selected_index = render_universe_selector()
         st.session_state.selected_universe = universe
         st.session_state.selected_index = selected_index
@@ -1621,14 +2251,16 @@ def main():
         symbols_key = f"UNIVERSE:{universe}|{selected_index}"
         st.session_state.symbols_key = symbols_key
 
-        st.markdown('<div style="margin-top: 0.8rem;"></div>', unsafe_allow_html=True)
-
         # 4. Regime Card
-        previous_date = st.session_state.get("regime_date", st.session_state.get("selected_date"))
-        previous_symbols_key = st.session_state.get("regime_symbols_key", "")
+        # NOTE: read the "last regime computation" markers, NOT selected_date as a
+        # fallback — selected_date was just overwritten above with the NEW date, so
+        # falling back to it would make date_changed always False and freeze the
+        # card. When no regime has been computed yet, treat it as needing update.
+        previous_date = st.session_state.get("regime_date")
+        previous_symbols_key = st.session_state.get("regime_symbols_key")
         date_changed = previous_date != selected_date
         universe_changed = previous_symbols_key != symbols_key
-        
+
         rd = st.session_state.get("regime_result_dict", {})
         regime_needs_update = not rd or date_changed or universe_changed
 
@@ -1647,7 +2279,7 @@ def main():
             score_sb = rd.get("composite_score", 0.0)
             st.markdown(f"""
             <div style="background:{color_sb}12; border:1px solid {color_sb}40; border-radius:10px;
-                        padding:12px; margin:0px 0 0px 0;">
+                        padding:12px; margin:var(--sp-6) 0 var(--sp-3) 0;">
                 <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
                 <div style="color:{color_sb}; font-size:1.25rem; font-weight:700; line-height:1.2; font-family:var(--display); display:flex; align-items:center; gap:8px;">
                     {get_icon(rd.get('icon', ''), size=20, stroke_width=1.8)} {regime_name_sb.replace('_', ' ')}
@@ -1660,7 +2292,7 @@ def main():
             """, unsafe_allow_html=True)
 
         # 5. Portfolio Parameters
-        st.markdown('<div class="sidebar-title" style="margin-bottom:0.4rem;">Portfolio Parameters</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Portfolio Parameters</div>', unsafe_allow_html=True)
         capital = st.number_input(
             "Capital (₹)",
             min_value=1000,
@@ -1683,8 +2315,6 @@ def main():
         st.session_state.min_pos_pct = 1.0 / 100
         st.session_state.max_pos_pct = 10.0 / 100
 
-        st.markdown('<div style="margin-top: 0.6rem;"></div>', unsafe_allow_html=True)
-
         # 6. Run Button
         run_clicked = st.button("Run Analysis", type="primary", use_container_width=True)
 
@@ -1706,8 +2336,8 @@ def main():
         # Mirrors Sanket's sidebar passport: profile state · trained-on label ·
         # regime · train/val IR · last-updated timestamp · import / export / reset.
         # Located below the Run button so it surfaces the freshly-saved passport
-        # when Phase 1.5 has just calibrated and reran.
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        # when Phase 1.5 has just calibrated and reran. Rendered as a standard
+        # titled section (no divider) so its gap matches every other section.
         st.markdown('<div class="sidebar-title">Model Passport</div>', unsafe_allow_html=True)
 
         st.session_state.intelligence_mode = st.toggle(

@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 import warnings
 import os
@@ -35,8 +36,11 @@ class LiquidityOscillator:
         df = data.copy()
         df['spread'] = (df['high'] + df['low']) / 2 - df['open']
         df['vol_ma'] = df['volume'].rolling(window=self.length).mean()
-        # Replace 0 with NaN to avoid division by zero, then fill with a small value
-        safe_vol_ma = df['vol_ma'].replace(0, pd.NA).fillna(1.0)
+        # Use np.nan (not pd.NA) for the safe-divide: pd.NA makes the column a
+        # nullable/object dtype, and a later float() on an NA cell raises
+        # "float() argument ... not 'NAType'" (the "Data fetch failed" crash on
+        # date change). np.nan keeps it float64 with identical missing-ness.
+        safe_vol_ma = df['vol_ma'].replace(0, np.nan).astype(float)
         df['vwap_spread'] = (df['spread'] * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
         close_shifted = df['close'].shift(self.impact_window)
         df['price_impact'] = ((df['close'] - close_shifted) * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
@@ -45,7 +49,7 @@ class LiquidityOscillator:
         df['lowest_value'] = df['source_value'].rolling(window=self.length).min()
         df['highest_value'] = df['source_value'].rolling(window=self.length).max()
         range_value = df['highest_value'] - df['lowest_value']
-        safe_range_value = range_value.replace(0, pd.NA).fillna(1.0)
+        safe_range_value = range_value.replace(0, np.nan)
         oscillator = 200 * (df['source_value'] - df['lowest_value']) / safe_range_value - 100
         return oscillator.rename('liquidity_oscillator')
 
@@ -69,7 +73,7 @@ def calculate_rsi(data: pd.DataFrame, period: int = 14) -> pd.Series:
     avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
 
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100.0 - (100.0 / (1.0 + rs))
     rsi = rsi.fillna(100.0)  # avg_loss == 0 means all gains → RSI = 100
     return rsi
@@ -110,7 +114,7 @@ def calculate_all_indicators(
             if len(osc.dropna()) >= 20:
                 osc_sma20 = osc.rolling(window=20).mean()
                 osc_std20 = osc.rolling(window=20).std()
-                safe_std20 = osc_std20.replace(0, pd.NA).fillna(1.0)
+                safe_std20 = osc_std20.replace(0, np.nan)
                 all_results_df[f'zscore {tf_name}'] = (osc - osc_sma20) / safe_std20
 
         rsi_series = calculate_rsi(df)
@@ -358,7 +362,9 @@ def generate_historical_data(
             final_df = pd.DataFrame(daily_results)
             for col in COLUMN_ORDER:
                 if col not in final_df.columns:
-                    final_df[col] = pd.NA
+                    # np.nan (not pd.NA) so a missing column stays float64 and a
+                    # downstream float() on it won't raise "not 'NAType'".
+                    final_df[col] = np.nan
             
             final_df = final_df[COLUMN_ORDER]
             pragati_data_list.append((snapshot_date, final_df))
