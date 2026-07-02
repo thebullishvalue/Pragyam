@@ -87,33 +87,6 @@
 }
 
 /* ================================================================
-   Light Theme Tokens
-   ================================================================ */
-[data-theme="light"] {
-    --bg-deep: #F0F2F5;
-    --bg-base: #FFFFFF;
-    --bg-elevated: #F8F9FA;
-    --bg-surface: #FFFFFF;
-    --glass: rgba(255, 255, 255, 0.7);
-    --glass-hover: rgba(255, 255, 255, 0.9);
-    --border: rgba(0, 0, 0, 0.08);
-    --border-active: rgba(180, 140, 60, 0.4);
-    --border-subtle: rgba(0, 0, 0, 0.04);
-
-    --ink-primary: #1A1A2E;
-    --ink-secondary: #4A5568;
-    --ink-tertiary: #718096;
-    --ink-inverse: #FFFFFF;
-
-    --amber-dim: rgba(180, 140, 60, 0.7);
-    --amber-glow: rgba(180, 140, 60, 0.15);
-    --cyan-glow: rgba(6, 150, 180, 0.15);
-    --emerald-glow: rgba(45, 180, 150, 0.15);
-    --rose-glow: rgba(200, 60, 70, 0.15);
-    --violet-glow: rgba(120, 80, 210, 0.15);
-}
-
-/* ================================================================
    Globals & App Overrides
    ================================================================ */
 * {
@@ -165,12 +138,6 @@ svg {
     z-index: 0;
 }
 
-[data-theme="light"] .stApp::before {
-    background:
-        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(180, 140, 60, 0.03) 0%, transparent 70%),
-        radial-gradient(ellipse 60% 80% at 80% 90%, rgba(0, 150, 200, 0.02) 0%, transparent 70%);
-}
-
 /* Subtle grid pattern overlay */
 .stApp::after {
     content: "";
@@ -183,13 +150,6 @@ svg {
     pointer-events: none;
     z-index: 0;
     opacity: 0.5;
-}
-
-[data-theme="light"] .stApp::after {
-    background-image:
-        linear-gradient(rgba(0, 0, 0, 0.02) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
-    opacity: 0.3;
 }
 
 [data-testid="stHeader"] {
@@ -2850,49 +2810,6 @@ footer {
 }
 
 /* ================================================================
-   Theme Toggle Button
-   ================================================================ */
-.theme-toggle {
-    position: fixed;
-    top: var(--sp-4);
-    right: var(--sp-4);
-    z-index: 1001;
-    background: var(--glass);
-    backdrop-filter: blur(8px);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: var(--sp-2) var(--sp-3);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    font-family: var(--data);
-    font-size: 0.65rem;
-    color: var(--ink-secondary);
-    transition: all 200ms ease;
-}
-
-.theme-toggle:hover {
-    border-color: var(--amber);
-    color: var(--amber);
-}
-
-.theme-toggle svg {
-    width: 14px;
-    height: 14px;
-}
-
-/* ================================================================
-   Export Button Row
-   ================================================================ */
-.export-btn-row {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--sp-3);
-    margin-top: var(--sp-4);
-}
-
-/* ================================================================
    Keyboard Shortcuts
    ================================================================ */
 .kbd-shortcuts {
@@ -3082,18 +2999,6 @@ footer {
 
 [data-testid="stDataFrame"] .dataframe-search input::placeholder {
     color: var(--ink-tertiary);
-}
-
-/* ================================================================
-   Light Theme Overrides
-   ================================================================ */
-[data-theme="light"] [data-testid="stSidebar"] {
-    background: rgba(240, 242, 245, 0.95) !important;
-}
-
-[data-theme="light"] .stMultiSelect>div>div {
-    background: rgba(255, 255, 255, 0.8) !important;
-    border-color: rgba(0, 0, 0, 0.12) !important;
 }
 
 /* ================================================================
@@ -3722,6 +3627,18 @@ div[data-multi-file-uploader] > div {
     margin-left: 0.25rem;
 }
 
+/* Marks a conviction signal row whose weight is structurally fixed (never
+   searched by the calibrator) rather than merely unchanged this run — see
+   the Strategy Endorsement (w_strat) row in the Active Weights table. */
+.iw-fixed {
+    font-size: 0.62rem;
+    font-weight: 400;
+    opacity: 0.55;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 0.3rem;
+}
+
 /* Intelligence — Σ row under the Active Weights table */
 .intel-sigma {
     text-align: right;
@@ -3916,28 +3833,6 @@ div[data-multi-file-uploader] > div {
     font-family: var(--data);
     font-size: 0.72rem;
     letter-spacing: 0.02em;
-}
-
-/* ================================================================
-    FOOTER
-    ================================================================ */
-
-.theme-toggle {
-    animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.theme-toggle:hover {
-    transform: scale(1.1);
-    box-shadow: 0 0 20px var(--amber-glow);
-}
-
-.theme-toggle svg {
-    transition: transform 0.3s ease;
-}
-
-.theme-toggle:hover svg {
-    transform: rotate(15deg);
 }
 
 /* ================================================================
@@ -4157,18 +4052,6 @@ div[data-multi-file-uploader] > div {
    FIXED-POSITION ELEMENTS — Prevent overlap on mobile
    ================================================================ */
 @media (max-width: 768px) {
-
-    /* Theme toggle — move below header */
-    .theme-toggle {
-        position: relative !important;
-        top: auto !important;
-        right: auto !important;
-        margin: var(--sp-2) auto;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        width: fit-content;
-    }
 
     /* Sidebar hint — hide on mobile (no sidebar overlap risk) */
     .sidebar-hint {

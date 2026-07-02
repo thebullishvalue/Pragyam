@@ -51,6 +51,7 @@ ICONS = {
     "circle": '<svg aria-label="Circle" role="img" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="10"/></svg>',
     "check-circle": '<svg aria-label="Check" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
     "scale":      '<svg aria-label="Weighting icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h18"/></svg>',
+    "settings":   '<svg aria-label="Settings icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 }
 
 
@@ -155,17 +156,6 @@ def render_header(title: str, tagline: str) -> None:
     )
 
 
-def render_info_box(title: str, content: str, color: str = "cyan") -> None:
-    """Render an info box."""
-    st.markdown(
-        f'<div class="info-box">'
-        f"<h4>{html_mod.escape(title)}</h4>"
-        f"<p>{html_mod.escape(content)}</p>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
 def render_system_card(
     title: str,
     description: str,
@@ -200,193 +190,6 @@ def render_system_card(
         </div>
         """,
         unsafe_allow_html=True,
-    )
-
-
-def render_warning_box(title: str, content: str) -> None:
-    """Render a themed alert/warning box."""
-    st.markdown(
-        f"""
-        <div class="warning-box">
-            <div class="icon"></div>
-            <div>
-                <div class="title">{html_mod.escape(title)}</div>
-                <div class="content">{html_mod.escape(content)}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_chart_skeleton(height: int = 280) -> None:
-    """Render a loading skeleton placeholder for charts.
-
-    Provides visual feedback while chart data is being computed.
-    Uses CSS shimmer animation for a polished loading experience.
-    """
-    st.markdown(
-        f'<div class="skeleton-chart" style="min-height:{height}px;">'
-        f'<div class="skeleton-line skeleton-pulse"></div>'
-        f'<div class="skeleton-block skeleton-pulse"></div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def render_collapsible_section(
-    title: str,
-    description: str = "",
-    icon: str = "chart",
-    accent: str = "",
-    default_open: bool = False,
-):
-    """Render a collapsible section header with chevron toggle.
-
-    Returns a context manager that yields content when expanded.
-    Uses Streamlit's container + checkbox pattern for state management.
-
-    Args:
-        title: Section title (rendered uppercase).
-        description: Optional one-line description below title.
-        icon: Key from ICONS dict.
-        accent: CSS color class — "", "cyan", "emerald", "violet", "rose".
-        default_open: Whether section starts expanded or collapsed.
-    """
-    svg = ICONS.get(icon, ICONS["chart"])
-    section_id = f"collapsible_{html_mod.escape(title.lower().replace(' ', '_'))}"
-    is_open = st.checkbox(
-        f"toggle_{section_id}",
-        value=default_open,
-        label_visibility="collapsed",
-        key=f"_{section_id}_state",
-    )
-
-    icon_class = f"icon {accent}" if accent else "icon"
-    hdr_class = f"section-hdr {accent}" if accent else "section-hdr"
-    desc_html = f'<div class="desc">{html_mod.escape(description)}</div>' if description else ""
-    open_class = "open" if is_open else ""
-
-    st.markdown(
-        f'<div class="collapsible-section {open_class}" id="{section_id}">'
-        f'<div class="collapsible-header" data-target="{section_id}">'
-        f'<span class="chevron">{ICONS["chevron-right"]}</span>'
-        f'<div class="{hdr_class}" style="margin:0;padding:0;border:none;flex:1;">'
-        f'<div class="{icon_class}">{svg}</div>'
-        f'<div class="text">'
-        f'<h3>{html_mod.escape(title)}</h3>'
-        f'{desc_html}'
-        f'</div>'
-        f'</div>'
-        f'</div>'
-        f'<div class="collapsible-body">'
-        f'<div class="collapsible-body-inner">',
-        unsafe_allow_html=True,
-    )
-
-    return is_open
-
-
-def render_collapsible_section_close() -> None:
-    """Close a collapsible section opened by render_collapsible_section."""
-    st.markdown(
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-
-
-def render_theme_toggle() -> None:
-    """Render a fixed-position theme toggle button (dark/light mode).
-
-    Uses JavaScript to toggle data-theme attribute on the html element.
-    Persists preference in localStorage.
-    """
-    import streamlit.components.v1 as components
-    components.html(
-        """
-        <div class="theme-toggle" id="theme-toggle" title="Toggle theme" onclick="toggleTheme()">
-            <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="5"/>
-                <line x1="12" y1="1" x2="12" y2="3"/>
-                <line x1="12" y1="21" x2="12" y2="23"/>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-                <line x1="1" y1="12" x2="3" y2="12"/>
-                <line x1="21" y1="12" x2="23" y2="12"/>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-            <svg id="theme-icon-moon" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-            <span id="theme-label">Light</span>
-        </div>
-        <script>
-        (function() {
-            var html = document.documentElement;
-            var saved = localStorage.getItem('pragyam-theme');
-            var theme = saved || 'dark';
-            html.setAttribute('data-theme', theme);
-            updateUI(theme);
-
-            window.toggleTheme = function() {
-                var current = html.getAttribute('data-theme');
-                var next = current === 'dark' ? 'light' : 'dark';
-                html.setAttribute('data-theme', next);
-                localStorage.setItem('pragyam-theme', next);
-                updateUI(next);
-            };
-
-            function updateUI(theme) {
-                var sun = document.getElementById('theme-icon-sun');
-                var moon = document.getElementById('theme-icon-moon');
-                var label = document.getElementById('theme-label');
-                if (theme === 'light') {
-                    if (sun) sun.style.display = 'none';
-                    if (moon) moon.style.display = 'block';
-                    if (label) label.textContent = 'Dark';
-                } else {
-                    if (sun) sun.style.display = 'block';
-                    if (moon) moon.style.display = 'none';
-                    if (label) label.textContent = 'Light';
-                }
-            }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-
-
-def render_export_button_row(
-    label: str = "Export",
-    icon: str = "download",
-    data: bytes = b"",
-    file_name: str = "export.csv",
-    mime: str = "text/csv",
-) -> None:
-    """Render a right-aligned export button with icon.
-
-    Args:
-        label: Button label text.
-        icon: Key from ICONS dict (defaults to "download").
-        data: Binary data to export.
-        file_name: Default download filename.
-        mime: MIME type for the download.
-    """
-    svg = ICONS.get(icon, ICONS["download"])
-    st.markdown(
-        f'<div class="export-btn-row">'
-        f'{svg}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-    st.download_button(
-        label=f"{svg}  {label}",
-        data=data,
-        file_name=file_name,
-        mime=mime,
-        key=f"export_{file_name}",
     )
 
 
