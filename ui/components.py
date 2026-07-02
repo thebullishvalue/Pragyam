@@ -1,7 +1,12 @@
 """
-Pragyam v7.0.5 — Reusable UI components: metric cards, signal badges, headers, section headers.
+PRAGYAM — UI Components
+══════════════════════════════════════════════════════════════════════════════
 
-UI — Obsidian Quant Terminal design language.
+Reusable UI primitives — metric cards, headers, section headers, system cards,
+interpretation cards, and key/value tables — in the Obsidian Quant Terminal
+design language.
+
+Author: @thebullishvalue
 """
 
 from __future__ import annotations
@@ -135,100 +140,6 @@ def render_metric_card(
         f"{sub_metric_html}"
         f"{tooltip_html}"
         f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def get_signal_badge(score: float, compact: bool = False) -> str:
-    """Return HTML string for a signal badge based on a score (-2 to 2)."""
-    if score >= 1.5:
-        color, bg, text = "#2DD4A8", "rgba(45, 212, 168, 0.15)", "Bullish+"
-    elif score >= 0.5:
-        color, bg, text = "#34D399", "rgba(52, 211, 153, 0.1)", "Bullish"
-    elif score <= -1.5:
-        color, bg, text = "#E8555A", "rgba(232, 85, 90, 0.15)", "Bearish+"
-    elif score <= -0.5:
-        color, bg, text = "#FB7185", "rgba(251, 113, 133, 0.1)", "Bearish"
-    else:
-        color, bg, text = "#8B7E6A", "rgba(139, 126, 106, 0.1)", "Neutral"
-    
-    if compact:
-        return f'<span style="color:{color}; font-family:\'Space Grotesk\', sans-serif; font-weight:700;">{score:+.0f}</span>'
-    
-    return f'<span style="color:{color}; background:{bg}; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; border:1px solid {color}33;">{text}</span>'
-
-
-def render_conviction_signal(
-    symbol: str,
-    conviction: float,
-    rsi: str = "—",
-    osc: str = "—",
-    zscore: str = "—",
-    ma: str = "—",
-) -> None:
-    """Render a conviction signal row for position guide.
-
-    Args:
-        symbol: Stock symbol.
-        conviction: Conviction score (0-100).
-        rsi: RSI value formatted.
-        osc: Oscillator value formatted.
-        zscore: Z-score value formatted.
-        ma: Moving average alignment formatted.
-    """
-    if conviction >= 65:
-        signal_class = "buy"
-        signal_text = "Strong Buy"
-        icon_html = get_icon("check-circle", size=14, stroke_width=2.2)
-        conviction_bar_width = min(100, conviction)
-        conviction_bar_color = "var(--emerald)"
-    elif conviction >= 50:
-        signal_class = "buy"
-        signal_text = "Buy"
-        icon_html = get_icon("circle", size=11)
-        conviction_bar_width = min(100, conviction)
-        conviction_bar_color = "var(--emerald-bright)"
-    elif conviction >= 35:
-        signal_class = "hold"
-        signal_text = "Hold"
-        icon_html = get_icon("circle", size=11)
-        conviction_bar_width = min(100, conviction)
-        conviction_bar_color = "var(--amber)"
-    else:
-        signal_class = "sell"
-        signal_text = "Caution"
-        icon_html = get_icon("alert-triangle", size=13, stroke_width=1.8)
-        conviction_bar_width = min(100, conviction)
-        conviction_bar_color = "var(--rose)"
-
-    st.markdown(
-        f"""
-        <div class="signal-row" style="display:flex; align-items:center; gap:0.75rem; padding:0.75rem 0; border-bottom:1px solid var(--border-subtle); position:relative; overflow:hidden;">
-            <div style="position:absolute; left:0; top:0; bottom:0; width:{conviction_bar_width} * 0.3%; background: linear-gradient(90deg, {conviction_bar_color}08, {conviction_bar_color}03); pointer-events:none;"></div>
-            <div style="flex:1; font-family:var(--data); font-weight:600; color:var(--ink-primary); position:relative; z-index:1;">{html_mod.escape(symbol)}</div>
-            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
-                <span style="color:var(--ink-secondary); font-weight:500;">RSI</span> {rsi}
-            </div>
-            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
-                <span style="color:var(--ink-secondary); font-weight:500;">Osc</span> {osc}
-            </div>
-            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
-                <span style="color:var(--ink-secondary); font-weight:500;">Z</span> {zscore}
-            </div>
-            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
-                <span style="color:var(--ink-secondary); font-weight:500;">MA</span> {ma}
-            </div>
-            <div style="position:relative; z-index:1;">
-                <div style="width:60px; height:4px; background:var(--bg-elevated); border-radius:2px; overflow:hidden;">
-                    <div style="width:{conviction_bar_width}%; height:100%; background:{conviction_bar_color}; border-radius:2px; transition:width 0.6s cubic-bezier(0.16, 1, 0.3, 1);"></div>
-                </div>
-            </div>
-            <div style="font-family:var(--data); font-size:0.75rem; font-weight:700; color:var(--ink-primary); min-width:40px; text-align:right; position:relative; z-index:1;">{conviction}</div>
-            <div class="signal-pill {signal_class}" style="display:inline-flex; align-items:center; gap:0.4rem; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.72rem; font-weight:600; position:relative; z-index:1;">
-                {icon_html} {signal_text}
-            </div>
-        </div>
-        """,
         unsafe_allow_html=True,
     )
 

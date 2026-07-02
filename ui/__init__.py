@@ -1,1 +1,9 @@
-"""Pragyam v7.0.5 — UI layer: Obsidian Quant Terminal design language."""
+"""
+PRAGYAM — UI Package
+══════════════════════════════════════════════════════════════════════════════
+
+The UI layer — Obsidian Quant Terminal design language. Exposes theme injection
+(``theme``) and reusable primitives (``components``).
+
+Author: @thebullishvalue
+"""

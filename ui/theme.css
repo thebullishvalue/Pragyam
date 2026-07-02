@@ -1523,7 +1523,10 @@ footer {
     position: relative;
     overflow: hidden;
     transition: all 300ms ease;
-    min-height: 285px;
+    /* Natural content height. The badge lives in a self-contained HTML flex row
+       (see _render_regime_tab) whose `align-items:center` handles vertical
+       centring against the factor list — no Streamlit column wrappers involved. */
+    min-height: 300px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -1535,8 +1538,10 @@ footer {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
+/* Content scaled up + roomier rhythm so it fills the taller (372px) card
+   proportionately instead of floating in empty space. */
 .regime-icon {
-    margin-bottom: var(--sp-2);
+    margin-bottom: var(--sp-5);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -1544,47 +1549,64 @@ footer {
 
 .regime-name {
     font-family: var(--display);
-    font-size: 1.2rem;
+    font-size: 2.1rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    margin-bottom: var(--sp-2);
+    margin-bottom: var(--sp-4);
 }
 
 .regime-sub {
     font-family: var(--data);
-    font-size: 0.7rem;
+    font-size: 0.9rem;
     color: var(--ink-secondary);
-    margin-bottom: var(--sp-3);
+    margin-bottom: var(--sp-6);
 }
 
 .regime-score {
     font-family: var(--data);
-    font-size: 0.9rem;
+    font-size: 1.2rem;
     font-weight: 600;
     color: var(--ink-primary);
-    margin-bottom: var(--sp-3);
+    margin-bottom: var(--sp-6);
 }
 
 .regime-conf {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--sp-2);
+    gap: var(--sp-3);
+    width: 100%;
 }
 
 .conf-bar-bg {
     width: 100%;
-    height: 6px;
+    max-width: 210px;
+    height: 10px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 3px;
+    border-radius: 5px;
     overflow: hidden;
 }
 
 .conf-bar-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: 5px;
     transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Factor-score list — one deterministic block (all 8 rows in a single markdown)
+   so its height is stable and sits level with the regime badge card. Centred
+   vertically to match the badge's centred content. */
+.regime-factors {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 320px;
+    padding: var(--sp-1) 0;
+}
+
+.regime-factors > div:last-child {
+    margin-bottom: 0 !important;
 }
 
 /* ================================================================
@@ -1786,6 +1808,23 @@ footer {
     border: none;
 }
 
+/* Vertical-rhythm fix: a section header carries a large top margin (sp-10) so it
+   stands off preceding content. But when it DIRECTLY follows a .section-divider
+   (which already adds sp-6 of space + its line), the two stack into an uneven
+   double gap. When the divider's element-container is immediately followed by the
+   header's container, collapse the header's top margin so the divider provides
+   the single, consistent break. Covers both Streamlit element-container testids. */
+[data-testid="stElementContainer"]:has(> .section-divider)
+    + [data-testid="stElementContainer"] .section-hdr,
+[data-testid="element-container"]:has(> .section-divider)
+    + [data-testid="element-container"] .section-hdr,
+[data-testid="stElementContainer"]:has(> .section-divider)
+    + [data-testid="stElementContainer"] .sidebar-title,
+[data-testid="element-container"]:has(> .section-divider)
+    + [data-testid="element-container"] .sidebar-title {
+    margin-top: var(--sp-2) !important;
+}
+
 /* ================================================================
    Inputs & Sidebar
    ================================================================ */
@@ -1796,6 +1835,52 @@ footer {
     border-right: 1px solid var(--border);
 }
 
+/* Uniform sidebar rhythm — ONE source of truth for inter-section spacing.
+   Streamlit's own inter-element gap + each widget's bottom margin + a title's
+   top AND bottom margins all compose unpredictably, giving 3 different visible
+   gaps. Fix: ZERO the block gap, and drive ALL section spacing from a single
+   `.sidebar-section-top { margin-top: sp-6 }` applied to the FIRST element of
+   each section (title or the regime card). Nothing else adds vertical space
+   between sections, so every gap is identical. */
+/* Uniform sidebar rhythm. Streamlit's block gap is the ONLY thing that stacks
+   between every pair of adjacent elements — so it, plus each section's sp-6 top
+   margin, are the two spacing sources. Set the block gap to a small INTRA-section
+   value (sp-2, for widgets within a section), and let each section's first
+   element add sp-6 on top so SECTION gaps are uniformly sp-2 + sp-6.
+   Crucially, widgets themselves carry no extra margin here (Streamlit widget
+   bottom margins are neutralized below), so nothing else distorts the gaps. */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: var(--sp-2) !important;
+}
+
+/* Neutralize the intrinsic bottom margin Streamlit puts on specific widget
+   wrappers (date/select/number/slider), which is what made the gaps ABOVE the
+   next section differ by widget type. Now the only vertical spacing is the block
+   gap (uniform) + the section top margin (uniform). */
+[data-testid="stSidebar"] .stDateInput,
+[data-testid="stSidebar"] .stSelectbox,
+[data-testid="stSidebar"] .stNumberInput,
+[data-testid="stSidebar"] .stSlider,
+[data-testid="stSidebar"] .stTextInput {
+    margin-bottom: 0 !important;
+}
+
+/* The single section-spacing token. Applied to each section's first element. */
+.sidebar-section-top {
+    margin-top: var(--sp-6) !important;
+}
+
+/* The sidebar's primary action (Run Analysis) isn't a titled section, so on its
+   own it would sit at just the block gap (too tight after the slider). Give it
+   the same top margin as a .sidebar-title so its gap == the standard section gap
+   (block sp-2 + sp-5). Targets every primary-button test-id variant across
+   Streamlit versions (kind attr / baseButton- / stBaseButton-). */
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[data-testid="baseButton-primary"],
+[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-primary"] {
+    margin-top: var(--sp-6) !important;
+}
+
 .sidebar-title {
     font-family: var(--display);
     font-size: 0.68rem;
@@ -1803,6 +1888,8 @@ footer {
     color: var(--ink-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.12em;
+    /* Section top = sp-6 (the single spacing token); bottom = sp-3 to the widget
+       below it (intra-section). Block gap is 0, so this is the whole gap. */
     margin: var(--sp-6) 0 var(--sp-3) 0;
 }
 
@@ -4255,101 +4342,111 @@ div[data-multi-file-uploader] > div {
 /* ================================================================
    FILE UPLOADER ENHANCEMENTS — Obsidian Quant
    ================================================================ */
+/* ================================================================
+   FILE UPLOADER — light-touch theming (Obsidian Quant)
+
+   Philosophy: RE-SKIN ONLY (colour / border / typography). We do NOT
+   override the dropzone's flex layout, padding, or icon sizing — the
+   native Streamlit layout is compact and correct, and forcing our own
+   flexbox previously blew the box up, doubled the button label, and
+   enlarged the delete icon. Selectors target both the legacy
+   (stFileUploadDropzone) and current (stFileUploaderDropzone) test-ids.
+   ================================================================ */
 [data-testid="stFileUploader"] {
     background: transparent !important;
     padding: 0 !important;
 }
 
-[data-testid="stFileUploadDropzone"] {
+/* Dropzone shell — colour + border only, native layout preserved. */
+[data-testid="stFileUploadDropzone"],
+[data-testid="stFileUploaderDropzone"] {
     background: var(--glass) !important;
     border: 1px dashed var(--border) !important;
     border-radius: var(--r-md) !important;
-    backdrop-filter: blur(12px) !important;
-    transition: all 400ms cubic-bezier(0.16, 1, 0.3, 1) !important;
-    padding: var(--sp-8) var(--sp-6) !important;
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: var(--sp-4) !important;
+    transition: border-color 300ms ease, background 300ms ease, box-shadow 300ms ease !important;
 }
 
-[data-testid="stFileUploadDropzone"]:hover {
+[data-testid="stFileUploadDropzone"]:hover,
+[data-testid="stFileUploaderDropzone"]:hover {
     border-color: var(--amber-dim) !important;
     background: var(--glass-hover) !important;
-    box-shadow: 0 0 30px var(--amber-glow);
-    transform: translateY(-1px);
+    box-shadow: 0 0 24px var(--amber-glow) !important;
 }
 
-/* Drag & Drop Label */
-[data-testid="stFileUploadDropzone"] .st-emotion-cache-1ae8k9d,
-[data-testid="stFileUploadDropzone"] span {
+/* Instruction text — the "Drag and drop file here" block ONLY, so we don't
+   also re-typeset the Browse button (that caused the duplicated label). */
+[data-testid="stFileUploaderDropzoneInstructions"] span {
     font-family: var(--display) !important;
     color: var(--ink-primary) !important;
-    font-weight: 700 !important;
-    font-size: 0.78rem !important;
-    letter-spacing: 0.02em !important;
-    text-transform: uppercase !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
 }
 
-/* Limit & Type Metadata */
-[data-testid="stFileUploadDropzone"] .st-emotion-cache-v065sh,
-[data-testid="stFileUploadDropzone"] small {
+[data-testid="stFileUploaderDropzoneInstructions"] small {
     font-family: var(--data) !important;
     color: var(--ink-tertiary) !important;
-    font-size: 0.58rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.06em !important;
-    margin-top: -0.15rem !important;
-    opacity: 0.7;
+    letter-spacing: 0.04em !important;
+    opacity: 0.75 !important;
 }
 
-/* "Browse files" Button Overhaul */
-[data-testid="stFileUploadDropzone"] button {
+/* Upload icon in the instruction block — tint only, native size kept. */
+[data-testid="stFileUploaderDropzoneInstructions"] svg {
+    color: var(--amber-dim) !important;
+}
+
+/* "Browse files" button — re-skin in-place; do NOT restyle its text-transform
+   (native label stays "Browse files"; forcing uppercase across spans doubled it). */
+[data-testid="stFileUploadDropzone"] button,
+[data-testid="stFileUploaderDropzone"] button {
     background: rgba(212, 168, 83, 0.06) !important;
     border: 1px solid rgba(212, 168, 83, 0.25) !important;
     color: var(--amber) !important;
     font-family: var(--data) !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.12em !important;
-    font-size: 0.68rem !important;
     font-weight: 600 !important;
-    padding: 0.4rem 1.2rem !important;
     border-radius: var(--r-sm) !important;
-    transition: all 300ms ease !important;
-    margin-top: var(--sp-2) !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+    transition: all 250ms ease !important;
 }
 
-[data-testid="stFileUploadDropzone"] button:hover {
+[data-testid="stFileUploadDropzone"] button:hover,
+[data-testid="stFileUploaderDropzone"] button:hover {
     background: rgba(212, 168, 83, 0.12) !important;
     border-color: var(--amber) !important;
-    box-shadow: 0 0 15px var(--amber-glow) !important;
     color: var(--amber-bright) !important;
-    transform: scale(1.02);
+    box-shadow: 0 0 12px var(--amber-glow) !important;
 }
 
-/* Upload Icon Styling */
-[data-testid="stFileUploadDropzone"] svg {
-    color: var(--amber-dim) !important;
-    width: 24px !important;
-    height: 24px !important;
-    margin-bottom: var(--sp-2) !important;
-    filter: drop-shadow(0 0 8px var(--amber-glow));
+/* Uploaded-file chip — tint the container and filename; native size/layout kept.
+   (1.5x dropped the FileName/FileData test-ids; style via the stable list item.) */
+[data-testid="stFileUploader"] li {
+    background: rgba(45, 212, 168, 0.04) !important;
+    border: 1px solid rgba(45, 212, 168, 0.14) !important;
+    border-radius: var(--r-sm) !important;
+    list-style: none !important;
 }
 
-/* Success State: File List Item */
 [data-testid="stFileUploaderFileName"] {
     font-family: var(--data) !important;
     color: var(--emerald-bright) !important;
-    font-size: 0.75rem !important;
 }
 
-[data-testid="stFileUploaderFileData"] {
-    background: rgba(45, 212, 168, 0.05) !important;
-    border: 1px solid rgba(45, 212, 168, 0.15) !important;
-    border-radius: var(--r-sm) !important;
-    padding: var(--sp-2) var(--sp-4) !important;
+/* Delete (×) button on a chip — keep it SMALL and subtle; the native icon was
+   being enlarged by an over-broad svg rule before. Constrain it explicitly. */
+[data-testid="stFileUploader"] li button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: var(--ink-tertiary) !important;
+    padding: 0.15rem !important;
+}
+
+[data-testid="stFileUploader"] li button:hover {
+    color: var(--rose) !important;
+    background: transparent !important;
+}
+
+[data-testid="stFileUploader"] li button svg {
+    width: 14px !important;
+    height: 14px !important;
 }
 /* Custom Tables (Obsidian Quant Style - Matched to Portfolio Table) */
 .kv-table-container {

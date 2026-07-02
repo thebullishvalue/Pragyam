@@ -1,14 +1,15 @@
 """
-Pragyam v7.0.5 — Shared CSS, chart theming, and color constants for the UI layer.
+PRAGYAM — UI Theme (CSS, Chart Theming & Color Constants)
+══════════════════════════════════════════════════════════════════════════════
 
-UI — "Obsidian Quant" Institutional Research Terminal design language.
-
-Aesthetic: "Obsidian Quant" — Institutional Research Terminal
-Precision-instrument design language for quantitative finance.
+The "Obsidian Quant" Institutional Research Terminal design language — a
+precision-instrument aesthetic for quantitative finance.
 - Display/UI:  Syne (geometric, authoritative, distinctive)
 - Body/Data:   JetBrains Mono (refined monospace, tabular precision)
 - Palette:     Obsidian (#0A0E17 -> #050810), Amber Gold (#D4A853)
 - Surfaces:    Frameless glass panels with thin border strokes.
+
+Author: @thebullishvalue
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "8.0.0"
+VERSION = "8.1.0"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -138,11 +139,20 @@ def inject_css() -> None:
     Injects on every render — Streamlit deduplicates identical <style> blocks.
     """
     if CSS_PATH.exists():
-        css = CSS_PATH.read_text()
+        # Force UTF-8: theme.css contains non-ASCII bytes that the Windows
+        # default codec (cp1252) cannot decode (UnicodeDecodeError on 0x8d).
+        css = CSS_PATH.read_text(encoding="utf-8")
     else:
         css = "/* theme.css not found */"
 
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    # Cache-bust: tag the <style> with the file's mtime so an edited theme.css is
+    # never byte-identical to the previously-injected block (Streamlit dedupes
+    # identical <style> blocks, which otherwise serves stale CSS after an edit).
+    try:
+        _stamp = int(CSS_PATH.stat().st_mtime)
+    except Exception:
+        _stamp = 0
+    st.markdown(f"<style data-css-v='{_stamp}'>\n/* v{_stamp} */\n{css}</style>", unsafe_allow_html=True)
 
 
 def progress_bar(slot, pct: int, label: str, sub: str = "") -> None:
