@@ -1,6 +1,7 @@
 """
-PRAGYAM Universe Selection Module
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRAGYAM — Universe Selection
+══════════════════════════════════════════════════════════════════════════════
+
 Dynamic universe definitions and fetching functions for portfolio analysis.
 
 Supports:
@@ -11,7 +12,7 @@ Supports:
 - Currency (24 pairs)
 - Crypto (21 digital assets)
 
-Adapted from Nirnay and Sanket systems.
+Author: @thebullishvalue
 """
 
 import streamlit as st
@@ -272,7 +273,21 @@ def get_fno_stock_list() -> Tuple[Optional[List[str]], str]:
     try:
         url = f"{BASE_URL}ind_nifty500list.csv"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, verify=False, timeout=10)
+        # TLS verification ON by default; only relax on a genuine SSL failure
+        # (see AUDIT_DIRECTIVES.md B2 — this endpoint feeds symbols that later
+        # flow into real broker orders via Broker Sync).
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+        except requests.exceptions.SSLError:
+            import warnings as _warnings
+            try:
+                from logger_config import console
+                console.warning("NSE archives TLS verification failed for F&O fallback — retrying unverified")
+            except Exception:
+                pass
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")
+                response = requests.get(url, headers=headers, verify=False, timeout=10)
         if response.status_code == 200:
             csv_file = io.StringIO(response.text)
             stock_df = pd.read_csv(csv_file)
@@ -328,14 +343,14 @@ def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], 
                 return symbols_ns, f"⚠ niftyindices.com unavailable → Loaded {len(symbols_ns)} NIFTY 100 constituents from Wikipedia (NIFTY 50 + Next 50)"
             return None, "Wikipedia fallback failed for NIFTY 100"
 
-        # NIFTY 200 — use NIFTY 500 Wikipedia page (first 200 by order)
+        # NIFTY 200: NO Wikipedia fallback. The NIFTY 500 Wikipedia
+        # constituent table is not ordered by market cap or index weight
+        # (typically alphabetical), so slicing its first 200 rows produces a
+        # systematically wrong universe (an A-M alphabetical tilt), not an
+        # approximation of the real NIFTY 200 — silently fabricating an index
+        # is worse than an honest failure (see AUDIT_DIRECTIVES.md B3).
         if index == "NIFTY 200":
-            symbols = _parse_wiki_table(INDIA_INDEX_WIKI_MAP["NIFTY 500"], min_count=100)
-            if symbols:
-                symbols_200 = symbols[:200]
-                symbols_ns = [s + ".NS" for s in symbols_200]
-                return symbols_ns, f"⚠ niftyindices.com unavailable → Loaded {len(symbols_ns)} NIFTY 200 constituents from Wikipedia (top 200 of NIFTY 500)"
-            return None, "Wikipedia fallback failed for NIFTY 200"
+            return None, "No reliable Wikipedia fallback for NIFTY 200 (constituent order is not market-cap-ranked) — retry later or select NIFTY 100"
 
         # Direct Wikipedia lookup for NIFTY 50, NIFTY NEXT 50, NIFTY 500
         wiki_url = INDIA_INDEX_WIKI_MAP.get(index)
@@ -355,13 +370,32 @@ def _fetch_india_index_from_wikipedia(index: str) -> Tuple[Optional[List[str]], 
 
 
 def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
-    """Fetch index constituents with three-source fallback chain."""
+    """Fetch India index constituents with three-source fallback chain.
+
+    Non-cached wrapper so transient failures aren't pinned for the cache TTL
+    — only successful fetches are memoised (mirrors get_us_index_stock_list).
+    Previously this whole function was uncached, so it fired 2-4 NSE HTTP
+    requests (each with 10-15s timeouts) on EVERY sidebar rerun — including
+    the "show current universe info" block that calls resolve_universe on
+    every widget interaction, not just on Run Analysis (see
+    AUDIT_DIRECTIVES.md B1).
+    """
     if index in US_INDEX_LIST:
         return get_us_index_stock_list(index)
 
     if index == "F&O Stocks":
         return get_fno_stock_list()
 
+    try:
+        return _get_india_index_stock_list_cached(index)
+    except Exception as e:
+        return None, f"Error fetching {index}: {e}"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_india_index_stock_list_cached(index: str) -> Tuple[Optional[List[str]], str]:
+    """Inner cached fetcher. Raises on failure so Streamlit does not memoise
+    the failure — st.cache_data only caches successful return values."""
     import urllib.parse
 
     nse_headers = {
@@ -403,8 +437,26 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
                 'Cache-Control': 'max-age=0',
             }
             session = requests.Session()
-            session.get("https://archives.nseindia.com", headers=arch_headers, verify=False, timeout=10)
-            response = session.get(url, headers=arch_headers, verify=False, timeout=15)
+            # TLS verification ON by default (was verify=False unconditionally
+            # — disabling certificate validation exposes the machine that
+            # later places real orders via Broker Sync to MITM tampering of
+            # the fetched constituent list; see AUDIT_DIRECTIVES.md B2). Only
+            # relax it as a last-resort retry on a genuine SSL failure, and
+            # say so loudly.
+            try:
+                session.get("https://archives.nseindia.com", headers=arch_headers, timeout=10)
+                response = session.get(url, headers=arch_headers, timeout=15)
+            except requests.exceptions.SSLError:
+                import warnings as _warnings
+                try:
+                    from logger_config import console
+                    console.warning(f"NSE archives TLS verification failed for {index} — retrying unverified")
+                except Exception:
+                    pass
+                with _warnings.catch_warnings():
+                    _warnings.simplefilter("ignore")
+                    session.get("https://archives.nseindia.com", headers=arch_headers, verify=False, timeout=10)
+                    response = session.get(url, headers=arch_headers, verify=False, timeout=15)
             response.raise_for_status()
             stock_df = pd.read_csv(io.StringIO(response.text))
             symbol_col = next((c for c in stock_df.columns if c.strip().lower() in ('symbol', 'ticker', 'code')), None)
@@ -427,7 +479,7 @@ def get_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
     elif wiki_msg:
         fallback_note = f" | {wiki_msg}"
 
-    return None, f"Error: all sources failed for {index}{fallback_note}"
+    raise RuntimeError(f"all sources failed for {index}{fallback_note}")
 
 
 def get_us_index_stock_list(index: str) -> Tuple[Optional[List[str]], str]:
@@ -593,6 +645,19 @@ def render_universe_selector() -> Tuple[str, Optional[str]]:
         help="Choose the universe of securities to analyze",
         label_visibility="visible"
     )
+
+    if universe == "Currency":
+        # FX pairs report zero/NaN volume on Yahoo Finance, so every
+        # volume-dependent conviction signal (Oscillator, Z-Score, Value
+        # Area) is structurally unavailable for this universe — conviction
+        # scoring falls back to RSI + MA-alignment only (renormalized; see
+        # regime.compute_conviction_signals and AUDIT_DIRECTIVES.md A14).
+        st.warning(
+            "Currency pairs report no volume on Yahoo Finance, so the Oscillator, "
+            "Z-Score, and Value Area conviction signals are unavailable here — scoring "
+            "falls back to RSI + MA-alignment only.",
+            icon="⚠️",
+        )
 
     selected_index = None
 

@@ -1,3 +1,20 @@
+"""
+PRAGYAM — Quantitative Strategy Library
+══════════════════════════════════════════════════════════════════════════════
+
+Defines the ``BaseStrategy`` abstract base and 95 concrete strategy engines
+spanning momentum, mean-reversion, breakout, statistical, and pattern families.
+
+Each strategy implements ``generate_portfolio(df, sip_amount)`` and returns a set
+of candidate holdings from the indicator snapshot. In the live pipeline
+(``app.py``) all strategies are run and their candidates aggregated into the pool
+that the conviction layer (``regime.compute_conviction_signals``) then scores and
+``portfolio.compute_conviction_based_weights`` curates. ``discover_strategies``
+enumerates the available engines.
+
+Author: @thebullishvalue
+"""
+
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod

@@ -4,21 +4,24 @@ PRAGYAM — Market Regime Intelligence
 
 Institutional-grade market regime detection with multi-factor composite scoring.
 
-7-Factor Composite Scoring Architecture:
-  1. Momentum    (30%) — RSI trajectory + oscillator direction
-  2. Trend       (25%) — Price/MA alignment + pct stocks above 200DMA
-  3. Breadth     (15%) — Cross-sectional RSI/oscillator distribution
-  4. Velocity    (15%) — dRSI/dt (first derivative) + d²RSI/dt² (acceleration)
-  5. Extremes    (10%) — Z-score distribution: oversold / overbought crowding
+8-Factor Composite Scoring Architecture — blended with FIXED weights (see
+FACTOR_WEIGHTS). The regime detector is NOT calibrated; only the conviction blend
+learns weights. This is the legacy hardcoded-weighting design, extended with the
+volume-profile `acceptance` factor.
+  1. Momentum    (28%) — RSI trajectory + oscillator direction
+  2. Trend       (23%) — Price/MA alignment + pct stocks above 200DMA
+  3. Breadth     (14%) — Cross-sectional RSI/oscillator distribution
+  4. Velocity    (14%) — dRSI/dt (first derivative) + d²RSI/dt² (acceleration)
+  5. Extremes     (9%) — Z-score distribution: oversold / overbought crowding
   6. Volatility   (5%) — Bollinger Band Width regime (squeeze → panic)
-  7. Correlation  (0%) — Herding proxy (diagnostic only, not scored)
+  7. Correlation  (0%) — Herding proxy (diagnostic only)
+  8. Acceptance   (7%) — Volume-profile value distribution (discount vs premium)
 
 Regime Hierarchy (composite score, descending):
   STRONG_BULL (≥1.50) → BULL (≥1.00) → WEAK_BULL (≥0.50)
   → CHOP (≥0.10) → WEAK_BEAR (≥−0.10) → BEAR (≥−0.50) → CRISIS (<−0.50)
 
 Author: @thebullishvalue
-Version: 2.0.0
 """
 
 from __future__ import annotations
@@ -73,6 +76,15 @@ REGIME_MIX_MAP: Dict[str, str] = {
 # Score range per factor: [-2, +2]
 FACTOR_SCORE_RANGE = (-2.0, 2.0)
 
+# Fixed 8-factor composite weights. The regime detector uses these directly — it
+# is NOT calibrated (unlike the conviction blend). This mirrors the legacy
+# hardcoded-weighting design, extended with the volume-profile `acceptance`
+# factor at a small fixed weight. Correlation stays a 0-weight diagnostic.
+FACTOR_WEIGHTS: Dict[str, float] = {
+    "momentum": 0.28, "trend": 0.23, "breadth": 0.14, "velocity": 0.14,
+    "extremes": 0.09, "volatility": 0.05, "correlation": 0.00, "acceptance": 0.07,
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA CLASSES
@@ -80,7 +92,7 @@ FACTOR_SCORE_RANGE = (-2.0, 2.0)
 
 @dataclass
 class FactorScores:
-    """Breakdown of all 7 regime detection factors."""
+    """Breakdown of all 8 regime detection factors."""
     momentum:    Dict[str, Any] = field(default_factory=dict)
     trend:       Dict[str, Any] = field(default_factory=dict)
     breadth:     Dict[str, Any] = field(default_factory=dict)
@@ -88,40 +100,43 @@ class FactorScores:
     extremes:    Dict[str, Any] = field(default_factory=dict)
     correlation: Dict[str, Any] = field(default_factory=dict)
     velocity:    Dict[str, Any] = field(default_factory=dict)
+    # Acceptance: cross-sectional volume-profile read — how much of the universe
+    # is trading at a DISCOUNT to its accepted value (vap). Contributes to the
+    # composite at a FIXED weight (see FACTOR_WEIGHTS) like every other factor —
+    # the regime detector is NOT calibrated (only the conviction blend is).
+    acceptance:  Dict[str, Any] = field(default_factory=dict)
 
-    _WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
-        "momentum": 0.30, "trend": 0.25, "breadth": 0.15,
-        "volatility": 0.05, "extremes": 0.10, "correlation": 0.00, "velocity": 0.15,
-    }, repr=False)
+    def _active_weights(self) -> Dict[str, float]:
+        return FACTOR_WEIGHTS
 
     def composite_score(self) -> float:
-        weights = {"momentum": 0.30, "trend": 0.25, "breadth": 0.15,
-                   "volatility": 0.05, "extremes": 0.10, "correlation": 0.00, "velocity": 0.15}
+        weights = self._active_weights()
         total = 0.0
         for name, w in weights.items():
-            factor_dict = getattr(self, name)
+            factor_dict = getattr(self, name, {})
             total += factor_dict.get("score", 0.0) * w
         return round(total, 3)
 
     def to_display_list(self) -> List[Tuple[str, float, str, float]]:
         """Return [(factor_name, score, label, weight)] for UI rendering."""
-        weights = {"Momentum": 0.30, "Trend": 0.25, "Breadth": 0.15,
-                   "Velocity": 0.15, "Extremes": 0.10, "Volatility": 0.05}
+        weights = self._active_weights()
         mapping = {
-            "Momentum": (self.momentum, "strength"),
-            "Trend":    (self.trend, "quality"),
-            "Breadth":  (self.breadth, "quality"),
-            "Velocity": (self.velocity, "acceleration"),
-            "Extremes": (self.extremes, "type"),
-            "Volatility": (self.volatility, "regime"),
+            "Momentum":    (self.momentum, "strength", "momentum"),
+            "Trend":       (self.trend, "quality", "trend"),
+            "Breadth":     (self.breadth, "quality", "breadth"),
+            "Velocity":    (self.velocity, "acceleration", "velocity"),
+            "Extremes":    (self.extremes, "type", "extremes"),
+            "Volatility":  (self.volatility, "regime", "volatility"),
+            "Acceptance":  (self.acceptance, "state", "acceptance"),
+            "Correlation": (self.correlation, "regime", "correlation"),
         }
         result = []
-        for fname, (fdict, label_key) in mapping.items():
+        for fname, (fdict, label_key, wkey) in mapping.items():
             result.append((
                 fname,
                 float(fdict.get("score", 0.0)),
                 str(fdict.get(label_key, "—")),
-                weights.get(fname, 0.0),
+                float(weights.get(wkey, 0.0)),
             ))
         return result
 
@@ -167,6 +182,7 @@ class RegimeResult:
                 "extremes":    self.factors.extremes,
                 "correlation": self.factors.correlation,
                 "velocity":    self.factors.velocity,
+                "acceptance":  self.factors.acceptance,
             },
         }
 
@@ -181,6 +197,7 @@ class RegimeResult:
             extremes=d["factors"]["extremes"],
             correlation=d["factors"]["correlation"],
             velocity=d["factors"]["velocity"],
+            acceptance=d["factors"].get("acceptance", {}),
         )
         return cls(
             date=datetime.fromisoformat(d["date"]),
@@ -201,7 +218,7 @@ class MarketRegimeDetector:
     """
     Institutional-grade market regime detector.
 
-    Uses a 7-factor composite score. Each factor contributes a signal score
+    Uses an 8-factor composite score. Each factor contributes a signal score
     in the range [−2, +2]; the composite is the weighted sum of all factors.
 
     Reference architecture:
@@ -209,6 +226,10 @@ class MarketRegimeDetector:
     - Breadth:           Zweig Breadth Thrust (1986)
     - Velocity:          Hamilton (1989) regime-switching; first/second derivatives
     - Volatility:        Bollinger (1983) Band Width
+    - Acceptance:        Steidlmayer Market Profile (value area / point of control)
+
+    The eight factor weights are FIXED (regime.FACTOR_WEIGHTS) — the detector is
+    not calibrated.
     """
 
     _THRESHOLDS: List[Tuple[str, float, float]] = [
@@ -232,6 +253,9 @@ class MarketRegimeDetector:
         """
         Detect market regime from a list of (date, DataFrame) historical snapshots.
 
+        The 8 factors are blended with FIXED weights (FACTOR_WEIGHTS) — the regime
+        detector is not calibrated (only the conviction blend is).
+
         Args:
             historical_data: Chronologically ordered list of (date, indicator_df) tuples.
                              Minimum 5 entries; 10 recommended for meaningful classification.
@@ -244,7 +268,8 @@ class MarketRegimeDetector:
             date = analysis_date or datetime.now()
             return RegimeResult(
                 date=date, regime="UNKNOWN", mix_name="Chop/Consolidate Mix",
-                confidence=0.30, composite_score=0.0, factors=FactorScores(),
+                confidence=0.30, composite_score=0.0,
+                factors=FactorScores(),
                 explanation="Insufficient data (< 5 periods) for regime classification.",
             )
 
@@ -260,6 +285,7 @@ class MarketRegimeDetector:
             extremes=self._extremes(latest_df),
             correlation=self._correlation(latest_df),
             velocity=self._velocity(window),
+            acceptance=self._acceptance(latest_df),
         )
 
         score = factors.composite_score()
@@ -349,6 +375,20 @@ class MarketRegimeDetector:
         }
 
     def _volatility(self, window: list) -> Dict[str, Any]:
+        """Bollinger Band Width regime, classified by PERCENTILE within the
+        trailing window rather than absolute magnitude.
+
+        Raw BBW is scale- and asset-class-dependent: typical FX BBW is
+        ~0.01-0.03 while crypto routinely runs ~0.2-0.6, so a fixed
+        0.08/0.12/0.15 cutoff reads FX as permanently "SQUEEZE" and crypto as
+        permanently "ELEVATED"/"PANIC" regardless of what's actually
+        happening (see AUDIT_DIRECTIVES.md A13). Ranking the current reading
+        against its own trailing distribution makes the classification
+        relative to each asset class's own normal range instead. The
+        window here is only ever up to 10 snapshots (see detect()), so this
+        is a short-horizon percentile, not a long-run one — still strictly
+        better than a hardcoded absolute threshold for non-equity universes.
+        """
         bbw = [
             ((4.0 * df["dev20 latest"]) / (df["ma20 latest"] + 1e-6)).mean()
             for _, df in window
@@ -356,15 +396,19 @@ class MarketRegimeDetector:
         cur_bbw = bbw[-1]
         trend = np.polyfit(range(len(bbw)), bbw, 1)[0]
 
-        if cur_bbw < 0.08 and trend < 0:   regime, score = "SQUEEZE", 0.5
-        elif cur_bbw > 0.15 and trend > 0:  regime, score = "PANIC", -1.0
-        elif cur_bbw > 0.12:                regime, score = "ELEVATED", -0.5
-        else:                               regime, score = "NORMAL", 0.0
+        bbw_arr = np.asarray(bbw, dtype=float)
+        pct = float((bbw_arr <= cur_bbw).mean()) if len(bbw_arr) > 1 else 0.5
+
+        if pct <= 0.2 and trend < 0:   regime, score = "SQUEEZE", 0.5
+        elif pct >= 0.9 and trend > 0:  regime, score = "PANIC", -1.0
+        elif pct >= 0.75:               regime, score = "ELEVATED", -0.5
+        else:                           regime, score = "NORMAL", 0.0
 
         return {
             "regime": regime, "score": score,
             "current_bbw": round(cur_bbw, 4),
             "vol_trend": round(trend, 5),
+            "bbw_percentile": round(pct, 3),
         }
 
     def _extremes(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -402,6 +446,36 @@ class MarketRegimeDetector:
         return {
             "regime": regime, "score": score,
             "correlation_score": round(raw, 3),
+        }
+
+    def _acceptance(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Cross-sectional volume-profile acceptance (vap distribution).
+
+        Reads where the universe sits relative to its accepted value: a market
+        where many names trade at a DISCOUNT to value (vap > 0) is primed for
+        mean reversion; one where most sit at a PREMIUM (vap < 0) is extended.
+        Scored on [-2, +2] like the other factors, and contributes to the
+        composite at its FIXED weight in FACTOR_WEIGHTS. Degrades to NEUTRAL when
+        the volume-profile column is absent (e.g. legacy snapshots)."""
+        if "vap latest" not in df.columns:
+            return {"state": "UNKNOWN", "score": 0.0, "discount_pct": 0.0, "premium_pct": 0.0}
+        vap = pd.to_numeric(df["vap latest"], errors="coerce").dropna()
+        if vap.empty:
+            return {"state": "UNKNOWN", "score": 0.0, "discount_pct": 0.0, "premium_pct": 0.0}
+
+        discount = float((vap > 1.0).mean())   # below value area = mean-rev room
+        premium  = float((vap < -1.0).mean())  # above value area = extended
+
+        if discount > 0.50:    state, score = "DEEP_DISCOUNT", 1.5
+        elif discount > 0.30:  state, score = "DISCOUNT", 0.75
+        elif premium > 0.50:   state, score = "RICH", -1.5
+        elif premium > 0.30:   state, score = "PREMIUM", -0.75
+        else:                  state, score = "FAIR_VALUE", 0.0
+
+        return {
+            "state": state, "score": score,
+            "discount_pct": round(discount, 3),
+            "premium_pct": round(premium, 3),
         }
 
     def _velocity(self, window: list) -> Dict[str, Any]:
@@ -534,14 +608,15 @@ def compute_conviction_signals(
     """
     Compute signal-based conviction scores for each portfolio holding.
 
-    Reads the live indicator snapshot (current_df) and produces four signals
+    Reads the live indicator snapshot (current_df) and produces six signals
     plus a composite conviction score (0–100) per position.
 
-    The four signals (RSI, OSC, Z-Score, MA-alignment) each lie in [-2, +2].
-    The composite is a weighted average; in Standard mode the weights are the
-    canonical 0.30 / 0.30 / 0.20 / 0.20, in Intelligence mode they come from
-    the per-(universe, index, regime) passport (also on the simplex). Either
-    way the raw score stays in [-2, +2] and is mapped linearly to [0, 100].
+    The six signals (RSI, OSC, Z-Score, MA-alignment, VAP/value-area position,
+    and Strategy-Endorsement) each lie in [-2, +2]. The composite is a weighted
+    average; in Standard mode the weights are the even fallback
+    0.1667 x6, and in Intelligence mode they come from the per-(universe,
+    index, regime) passport on the 6-simplex. Either way the raw score stays
+    in [-2, +2] and maps linearly to [0, 100].
     """
     if portfolio.empty or current_df.empty:
         return portfolio.copy()
@@ -556,15 +631,30 @@ def compute_conviction_signals(
     if "symbol" in lookup_df.columns:
         lookup_df = lookup_df.set_index("symbol")
 
+    # Cross-sectional percentile rank of strategy-endorsement votes (how many
+    # of the 95 strategies picked this symbol among their own top-quartile
+    # holdings — see app.py Phase 2). Rank-based rather than raw vote count so
+    # the signal is comparable across universes of very different strategy
+    # hit-rates; mapped to [-2, +2] like every other signal (rank 0 -> -2,
+    # rank 1 -> +2, no votes anywhere -> neutral 0 for every symbol).
+    strat_pct = None
+    if "strat_votes" in lookup_df.columns:
+        votes = pd.to_numeric(lookup_df["strat_votes"], errors="coerce").fillna(0)
+        if votes.max() > 0:
+            strat_pct = votes.rank(pct=True, method="average")
+
     rows = []
     for _, port_row in result.iterrows():
         sym = port_row["symbol"]
         sig: Dict[str, Any] = {
             "symbol": sym,
             "rsi_signal": 0, "osc_signal": 0,
-            "zscore_signal": 0, "ma_signal": 0,
+            "zscore_signal": 0, "ma_signal": 0, "vap_signal": 0, "strat_signal": 0,
             "rsi_value": None, "osc_value": None,
             "zscore_value": None, "ma_count": None,
+            "vap_value": None, "va_pos": None,
+            "strat_votes": None,
+            "signals_available": 0,
             "conviction_score": 50,
         }
 
@@ -573,6 +663,13 @@ def compute_conviction_signals(
             continue
 
         d = lookup_df.loc[sym]
+        # Which of the six weight keys had real data for this symbol (as
+        # opposed to a signal that defaulted to neutral 0 because the input
+        # was missing/NaN — e.g. FX/some futures report zero volume, so
+        # osc_signal/vap_signal are always 0-by-default for every symbol in
+        # that universe, not because the market said "neutral"). Used to
+        # renormalize the weight sum below (see AUDIT_DIRECTIVES.md A14).
+        available_keys: List[str] = []
 
         # ── RSI ──────────────────────────────────────────────────────────────
         rsi = d.get("rsi latest")
@@ -583,6 +680,7 @@ def compute_conviction_signals(
             elif rsi > 52:      sig["rsi_signal"] = 1
             elif rsi < 40:      sig["rsi_signal"] = -2
             elif rsi < 48:      sig["rsi_signal"] = -1
+            available_keys.append("w_rsi")
 
         # ── Oscillator ───────────────────────────────────────────────────────
         osc  = d.get("osc latest")
@@ -594,6 +692,7 @@ def compute_conviction_signals(
             elif osc > ema9:              sig["osc_signal"] = 1
             elif osc < ema9 and osc < 0:  sig["osc_signal"] = -2
             else:                         sig["osc_signal"] = -1
+            available_keys.append("w_osc")
 
         # ── Z-Score ──────────────────────────────────────────────────────────
         zscore = d.get("zscore latest")
@@ -604,6 +703,7 @@ def compute_conviction_signals(
             elif zscore < -1.0:   sig["zscore_signal"] = 1
             elif zscore > 2.0:    sig["zscore_signal"] = -2
             elif zscore > 1.0:    sig["zscore_signal"] = -1
+            available_keys.append("w_z")
 
         # ── MA Alignment ─────────────────────────────────────────────────────
         price = d.get("price")
@@ -616,13 +716,65 @@ def compute_conviction_signals(
             count = sum([price > ma20, price > ma90, price > ma200, ma20 > ma90, ma90 > ma200])
             sig["ma_count"] = count
             sig["ma_signal"] = round((count - 2.5) * (4.0 / 5.0), 1)
+            available_keys.append("w_ma")
+
+        # ── Value-Area Position (volume profile) ─────────────────────────────
+        #  vap > 0 → discount to accepted value (long), vap < 0 → premium (sell).
+        #  Bands mirror the z-score thresholds; signal lives in [-2, +2].
+        vap = d.get("vap latest")
+        if vap is not None and not pd.isna(vap):
+            vap = float(vap)
+            sig["vap_value"] = round(vap, 2)
+            if vap > 2.0:        sig["vap_signal"] = 2
+            elif vap > 1.0:      sig["vap_signal"] = 1
+            elif vap < -2.0:     sig["vap_signal"] = -2
+            elif vap < -1.0:     sig["vap_signal"] = -1
+            available_keys.append("w_vap")
+        # va_pos: where price sits inside the value area ([-1,+1]); used by the
+        # portfolio selection layer for structural hold/rotate decisions.
+        va_pos = d.get("va_pos latest")
+        if va_pos is not None and not pd.isna(va_pos):
+            sig["va_pos"] = round(float(va_pos), 3)
+
+        # ── Strategy Endorsement ───────────────────────────────────────────────
+        #  Cross-sectional percentile rank of how many of the 95 strategies
+        #  picked this symbol among their own top-quartile holdings, mapped
+        #  linearly onto [-2, +2] (rank 0 -> -2, rank 1 -> +2). Gives the
+        #  95-strategy layer real influence on conviction instead of being a
+        #  no-op union of near-every candidate (see AUDIT_DIRECTIVES.md A4).
+        strat_votes = d.get("strat_votes")
+        if strat_votes is not None and not pd.isna(strat_votes):
+            sig["strat_votes"] = int(strat_votes)
+            if strat_pct is not None and sym in strat_pct.index:
+                pct = float(strat_pct.loc[sym])
+                sig["strat_signal"] = round(pct * 4.0 - 2.0, 2)
+                available_keys.append("w_strat")
+
+        sig["signals_available"] = len(available_keys)
 
         # ── Composite Conviction (0–100) ─────────────────────────────────────
+        # Renormalize the active weights over only the AVAILABLE signals, so a
+        # universe where volume-dependent signals are structurally absent
+        # (FX/some futures report zero volume on Yahoo -> osc_signal and
+        # vap_signal are 0-by-default for every symbol, not because the
+        # market said "neutral") doesn't have its conviction range silently
+        # compressed toward 50 — the two live signals (RSI, MA) still span
+        # the full [-2,+2] raw range instead of being diluted by two
+        # structurally-dead weight slots (see AUDIT_DIRECTIVES.md A14).
+        avail_weight_sum = sum(w.get(k, 0.0) for k in available_keys)
+        if avail_weight_sum > 1e-9:
+            w_eff = {k: (w.get(k, 0.0) / avail_weight_sum if k in available_keys else 0.0)
+                     for k in DEFAULT_WEIGHTS}
+        else:
+            w_eff = w
+
         raw = (
-            sig["rsi_signal"]    * w["w_rsi"] +
-            sig["osc_signal"]    * w["w_osc"] +
-            sig["zscore_signal"] * w["w_z"]   +
-            sig["ma_signal"]     * w["w_ma"]
+            sig["rsi_signal"]    * w_eff.get("w_rsi", 0.0) +
+            sig["osc_signal"]    * w_eff.get("w_osc", 0.0) +
+            sig["zscore_signal"] * w_eff.get("w_z", 0.0)   +
+            sig["ma_signal"]     * w_eff.get("w_ma", 0.0)  +
+            sig["vap_signal"]    * w_eff.get("w_vap", 0.0) +
+            sig["strat_signal"]  * w_eff.get("w_strat", 0.0)
         )
         sig["conviction_score"] = round(max(0.0, min(100.0, (raw + 2.0) / 4.0 * 100.0)))
         rows.append(sig)

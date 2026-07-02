@@ -1,29 +1,34 @@
 """
-PRAGYAM (प्रज्ञम) — Portfolio Intelligence  |  A @thebullishvalue Product
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Conviction-based portfolio curation with 80+ quantitative strategies.
+PRAGYAM — Portfolio Intelligence (Streamlit App)
+══════════════════════════════════════════════════════════════════════════════
+
+Conviction-based portfolio curation with 95 quantitative strategies.
 
 Architecture:
-  regime.py         → MarketRegimeDetector, compute_conviction_signals
-  portfolio.py      → compute_conviction_based_weights()
-  backdata.py       → generate_historical_data()
+  regime.py         → MarketRegimeDetector (fixed 8-factor), compute_conviction_signals
+  portfolio.py      → compute_conviction_based_weights() (value-area tie-break)
+  backdata.py       → generate_historical_data(), compute_volume_profile()
   intelligence.py   → conviction-weight calibration (passports)
   analytics.py      → portfolio-vs-benchmark performance metrics (Analytics tab)
   charts.py         → Plotly chart builders
-  strategies.py     → 80+ BaseStrategy implementations
+  strategies.py     → 95 BaseStrategy implementations
 
-Conviction blend: 4 signals — RSI · Oscillator · Z-Score · MA-alignment. Weights
-are regime-calibrated in Intelligence mode (4-simplex), the canonical
-0.30 / 0.30 / 0.20 / 0.20 fallback otherwise.
+Conviction blend: 6 signals — RSI · Oscillator · Z-Score · MA-alignment · Value
+Area (VAP, from the volume profile) · Strategy Endorsement (cross-sectional
+rank of 95-strategy top-quartile votes). Five of the six weights are
+regime-calibrated in Intelligence mode (5-simplex over RSI/OSC/Z/MA/VAP,
+scaled to fill the remaining mass); Strategy Endorsement stays fixed since it
+has no historical values to calibrate against. Even default fallback (1/6 x6)
+otherwise.
 
-Pipeline (2 phases):
-  Phase 1: Data fetching + regime detection
-  Phase 2: Conviction-based portfolio curation (ALL strategies)
+Pipeline:
+  Phase 1:   Data fetching + regime detection (fixed 8-factor weights)
+  Phase 1.5: Conviction-weight calibration (Intelligence mode)
+  Phase 2:   Conviction-based portfolio curation
 
 Result tabs: Portfolio · Position Guide · Analytics (curated book vs benchmark) ·
 Regime · Intelligence · Broker Sync (curated units → broker JSONs) · System.
 
-Version: 8.1.0
 Author: @thebullishvalue
 """
 
@@ -52,15 +57,8 @@ from ui.components import (
     render_header,
     render_section_header,
     render_metric_card,
-    render_info_box,
     render_system_card,
     section_gap,
-    render_warning_box,
-    render_chart_skeleton,
-    render_collapsible_section,
-    render_collapsible_section_close,
-    render_theme_toggle,
-    render_export_button_row,
     render_interpretation_card,
     render_kv_table,
     get_icon,
@@ -113,7 +111,7 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v8.1.0"
+VERSION = "v10.0.0"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -121,14 +119,15 @@ st.set_page_config(
     page_title="PRAGYAM | Portfolio Intelligence",
     page_icon="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0Q0QTg1MyIgc3Ryb2tlLXdpZHRoPSIyIi8+PHBhdGggZD0iTTggMTRsMy01IDIgMyAzLTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0Q0QTg1MyIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    # Start EXPANDED: the landing page explicitly instructs "Configure via
+    # the Sidebar", so a first-time visitor should see the sidebar controls
+    # immediately rather than discover they're collapsed (see
+    # AUDIT_DIRECTIVES.md C5.5).
+    initial_sidebar_state="expanded",
 )
 
 # Load Obsidian Quant Terminal CSS
 inject_css()
-
-# Render theme toggle (dark/light mode)
-render_theme_toggle()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -146,9 +145,17 @@ def _init_session_state():
         "regime_history_series": None,
         "min_pos_pct": 0.01,
         "max_pos_pct": 0.10,
+        # Effective bounds actually applied by the last curation run (may
+        # differ from the nominal min/max_pos_pct above when num_positions
+        # made them infeasible — see portfolio.compute_conviction_based_weights).
+        "min_pos_pct_eff": 0.01,
+        "max_pos_pct_eff": 0.10,
         "intelligence_mode": True,  # Use calibrated weights when a passport exists; falls back to defaults otherwise.
         "selected_universe": None,
         "selected_index": None,
+        # Frozen (universe, index, regime, mode, anchor_date) the CURRENT
+        # portfolio was curated under — see _intel_context()'s docstring.
+        "run_context": None,
         # Last intelligence outcome from Phase 1.5 — read by sidebar/result UI.
         # Shape: {"status": "reused"|"calibrated"|"skipped"|"failed", "reason": str,
         #         "universe": str, "index": Optional[str], "regime": str,
@@ -162,11 +169,25 @@ def _init_session_state():
 
 
 def _intel_context() -> Tuple[str, Optional[str], str, str]:
-    """(universe, selected_index, regime_name, mode) read from session state.
+    """(universe, selected_index, regime_name, mode) for scoring/display.
 
-    Used by every site that constructs a passport or asks for active weights,
-    so the four conviction weights are always sourced from the right key.
+    Once a portfolio has been curated, returns the FROZEN context that
+    portfolio was actually curated under (st.session_state.run_context) —
+    not live sidebar state. Without this, changing the sidebar's universe or
+    date after a run (which immediately recomputes the sidebar regime card
+    and mutates selected_universe/selected_index) would re-score the OLD
+    curated portfolio under the NEW scope's passport, and the Analytics tab
+    would resolve the NEW universe's benchmark against the OLD book — the
+    displayed conviction/weights could no longer reconcile with what was
+    actually curated (see AUDIT_DIRECTIVES.md A12). Falls back to live
+    sidebar state only when no run has completed yet (pre-run / landing page).
     """
+    run_ctx = st.session_state.get("run_context")
+    if run_ctx is not None and st.session_state.get("portfolio") is not None:
+        return (
+            run_ctx["universe"], run_ctx["selected_index"],
+            run_ctx["regime_name"], run_ctx["mode"],
+        )
     rd = st.session_state.get("regime_result_dict", {}) or {}
     universe = st.session_state.get("selected_universe") or "default"
     selected_index = st.session_state.get("selected_index")
@@ -281,7 +302,7 @@ def _analytics_series_cached(
     Keyed on the exact (symbols, units, anchor, benchmark) tuple so the yfinance
     fetch runs ONCE per unique window and every subsequent render/tab-switch hits
     cache — no repeated downloads. Returns (port_value, port_returns,
-    bench_returns, err). Compute stays in analytics.py; caching lives here (the
+    bench_returns, err, unpriced). Compute stays in analytics.py; caching lives here (the
     Streamlit boundary), mirroring _load_historical_data / _detect_regime_cached.
     """
     from analytics import build_return_series
@@ -324,6 +345,30 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         universe=universe, selected_index=selected_index,
         regime_name=regime_name, mode=mode,
     )
+
+    # Volume-dependent-signal coverage warning: FX pairs and some futures
+    # report zero/NaN volume on Yahoo, so osc_signal/vap_signal/zscore_signal
+    # are structurally absent for those symbols (compute_conviction_signals
+    # renormalizes weights over whatever signals ARE available, so scores
+    # still span the full range — see AUDIT_DIRECTIVES.md A14 — but the
+    # conviction read is based on fewer independent signals, which is worth
+    # surfacing explicitly rather than presenting with the same confidence
+    # as a fully-covered universe).
+    if "signals_available" in portfolio_with_signals.columns and len(portfolio_with_signals) > 0:
+        _low_coverage = (portfolio_with_signals["signals_available"] <= 3).mean()
+        if _low_coverage > 0.5:
+            render_interpretation_card(
+                title="LIMITED SIGNAL COVERAGE",
+                body=(
+                    f"<strong>{_low_coverage:.0%}</strong> of this book's holdings have 3 or fewer of "
+                    "the six conviction signals available — likely because this universe reports zero "
+                    "or missing volume (common for FX pairs and some futures), so the "
+                    "volume-dependent signals (Oscillator, Z-Score, Value Area) are structurally "
+                    "absent. Conviction weights are renormalized over the available signals, but the "
+                    "read relies on fewer independent inputs than a fully-covered universe."
+                ),
+                color="warning",
+            )
 
     # Portfolio table — Custom HTML with inline CSS via st_html
     table_rows = []
@@ -433,7 +478,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     _section_divider()
     render_section_header(
         "Conviction Signals",
-        "Real-time indicator alignment — RSI · Oscillator · Z-Score · MA Alignment",
+        "Real-time indicator alignment — RSI · Oscillator · Z-Score · MA Alignment · Value Area · Strategy",
         icon="activity",
         accent="cyan",
     )
@@ -443,11 +488,13 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         fig_conv = create_conviction_heatmap(portfolio_with_signals)
         st.plotly_chart(fig_conv, width='stretch', key="tab1_conviction_heatmap")
         st.markdown('</div>', unsafe_allow_html=True)
+        _blend_desc = "regime-calibrated weights" if mode == "Intelligence" else "even default weights (Intelligence Mode is off)"
         st.caption(
-            "Green = bullish · Red = bearish · RSI (30%) · Oscillator (30%) · Z-Score (20%) · MA (20%)"
+            "Green = bullish · Red = bearish · Six signals — RSI · Oscillator · Z-Score · "
+            f"MA Alignment · Value Area · Strategy Endorsement · blended by {_blend_desc}"
         )
     elif not portfolio_with_signals.empty:
-        conv_cols = [c for c in ["symbol", "rsi_value", "osc_value", "zscore_value", "ma_count", "conviction_score"]
+        conv_cols = [c for c in ["symbol", "rsi_value", "osc_value", "zscore_value", "ma_count", "vap_value", "conviction_score"]
                      if c in portfolio_with_signals.columns]
         st.dataframe(portfolio_with_signals[conv_cols], width='stretch')
     else:
@@ -466,7 +513,7 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         data=buf.getvalue(),
         file_name=f"pragyam_portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
-        width='stretch',
+        use_container_width=True,
         key="tab1_csv_download",
     )
 
@@ -577,6 +624,8 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             f'<td class="col-osc numeric">{row["osc_signal"]:+.1f}</td>'
             f'<td class="col-z numeric">{row["zscore_signal"]:+.2f}</td>'
             f'<td class="col-ma numeric">{row["ma_signal"]:+.1f}</td>'
+            f'<td class="col-vap numeric">{row.get("vap_signal", 0):+.1f}</td>'
+            f'<td class="col-strat numeric">{row.get("strat_signal", 0):+.1f}</td>'
             f'<td class="col-weight numeric">{row["weightage_pct"]:.2f}%</td>'
             f'</tr>'
         )
@@ -598,15 +647,17 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
             table-layout: fixed;
             width: 100%;
         }}
-        .col-symbol {{ width: 15%; }}
-        .col-price {{ width: 12%; }}
-        .col-signal {{ width: 18%; }}
-        .col-conviction {{ width: 10%; }}
-        .col-rsi {{ width: 10%; }}
-        .col-osc {{ width: 10%; }}
-        .col-z {{ width: 10%; }}
-        .col-ma {{ width: 10%; }}
-        .col-weight {{ width: 15%; }}
+        .col-symbol {{ width: 13%; }}
+        .col-price {{ width: 10%; }}
+        .col-signal {{ width: 14%; }}
+        .col-conviction {{ width: 8%; }}
+        .col-rsi {{ width: 7%; }}
+        .col-osc {{ width: 7%; }}
+        .col-z {{ width: 7%; }}
+        .col-ma {{ width: 7%; }}
+        .col-vap {{ width: 7%; }}
+        .col-strat {{ width: 7%; }}
+        .col-weight {{ width: 10%; }}
         .portfolio-table {{
             width: 100%;
             border-radius: 10px;
@@ -706,6 +757,8 @@ def _render_position_guide_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame
                     <th class="col-osc numeric">Osc</th>
                     <th class="col-z numeric">Z</th>
                     <th class="col-ma numeric">MA</th>
+                    <th class="col-vap numeric">VAP</th>
+                    <th class="col-strat numeric">Strat</th>
                     <th class="col-weight numeric">Weight</th>
                 </tr>
             </thead>
@@ -750,12 +803,13 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     # column wrappers made the badge impossible to centre reliably. The flex row's
     # `align-items:center` centres the badge card against the factor list, period.
 
-    # Fixed factor weights (regime detector is not calibrated); labelled so the
-    # percentages match what the composite actually used (see RegimeResult).
-    _fw = {
-        "momentum": 0.30, "trend": 0.25, "breadth": 0.15,
-        "velocity": 0.15, "extremes": 0.10, "volatility": 0.05, "correlation": 0.00,
-    }
+    # The regime detector uses FIXED factor weights (not calibrated); display them
+    # so the percentages match what the composite actually used.
+    try:
+        from regime import FACTOR_WEIGHTS
+        _fw = FACTOR_WEIGHTS
+    except Exception:
+        _fw = {}
     factor_order = [
         ("momentum", "Momentum", "strength"),
         ("trend", "Trend", "quality"),
@@ -763,6 +817,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
         ("velocity", "Velocity", "acceleration"),
         ("extremes", "Extremes", "type"),
         ("volatility", "Volatility", "regime"),
+        ("acceptance", "Acceptance", "state"),
         ("correlation", "Correlation", "regime"),
     ]
     # Each factor score is a SIGNED value in [-2, +2] (bearish ↔ bullish), rendered
@@ -805,7 +860,7 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
     _badge_icon = get_icon(icon_key, size=40, stroke_width=1.5)
     _fs_icon = get_icon("activity", size=16, stroke_width=1.8)
 
-    # ── ONE flex row: factor scores (left, flex:1.7) + regime badge (right, flex:1).
+    # ── ONE flex row: factor scores (left, flex:2) + regime badge (right, flex:1).
     #    align-items:stretch makes both columns equal-height; the badge card is
     #    height:100% so it runs FLUSH top-and-bottom with the factor list.
     st.markdown(
@@ -843,22 +898,22 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
 
     # ── Full-width METHOD card (Obsidian Quant fidelity) — mirrors the
     #    Intelligence tab's method card: header + pill + lede + tile grid.
-    _rmode_lbl = "Intelligence" if st.session_state.get("intelligence_mode") else "Standard"
     method_html = (
         '<div class="intel-method-card">'
             '<div class="intel-method-header">'
                 '<div class="intel-method-title">How the Regime Is Read</div>'
                 '<div class="intel-method-pill">'
-                f'7-factor composite · {_rmode_lbl} run'
+                '8-factor composite · fixed weights'
                 '</div>'
             '</div>'
             '<div class="intel-method-lede">'
-                'The market regime is a <strong>weighted composite</strong> of seven measured '
+                'The market regime is a <strong>weighted composite</strong> of eight measured '
                 'factors, each scored on a signed <code>[-2, +2]</code> scale (bearish ↔ bullish). '
                 'The weighted sum places the market on the regime hierarchy from '
-                '<strong>Strong Bull</strong> down to <strong>Crisis</strong>. The factor weights '
-                'are fixed (Momentum 30% · Trend 25% · Breadth/Velocity 15% · Extremes 10% · '
-                'Volatility 5%); the regime detector itself is not calibrated.'
+                '<strong>Strong Bull</strong> down to <strong>Crisis</strong>. The eight factor '
+                'weights are <strong>fixed</strong> (regime.FACTOR_WEIGHTS) regardless of mode — '
+                'the regime detector is not calibrated. Only the six-signal '
+                '<strong>conviction blend</strong> is regime-calibrated in Intelligence mode.'
             '</div>'
             '<div class="intel-method-grid">'
 
@@ -879,10 +934,10 @@ def _render_regime_tab(regime_result: Dict, regime_series: List, training_data: 
                 '</div>'
 
                 '<div class="intel-method-tile tile-obj">'
-                    '<div class="tile-label">Extremes &amp; Volatility</div>'
+                    '<div class="tile-label">Extremes, Volatility &amp; Acceptance</div>'
                     '<div class="tile-body">'
-                        'Z-score crowding and the Bollinger band-width regime — stress and '
-                        'mean-reversion context that modulates the directional read.'
+                        'Z-score crowding, Bollinger band-width regime, and the volume-profile '
+                        'value distribution (discount vs premium) — stress and mean-reversion context.'
                     '</div>'
                 '</div>'
 
@@ -952,16 +1007,27 @@ def _render_system_tab(training_window: List):
     """Tab — System configuration + methodology reference (Obsidian Quant)."""
     # ── Configuration — the run's settings as a clean KV readout ───────────────
     render_section_header("Configuration", "Run settings & data source", icon="settings", accent="cyan")
+    _min_eff = st.session_state.get("min_pos_pct_eff", st.session_state.min_pos_pct)
+    _max_eff = st.session_state.get("max_pos_pct_eff", st.session_state.max_pos_pct)
+    _min_relaxed = abs(_min_eff - st.session_state.min_pos_pct) > 1e-9
+    _max_relaxed = abs(_max_eff - st.session_state.max_pos_pct) > 1e-9
     details = {
         "Version": VERSION,
-        "Curation Method": "Conviction-based (4-signal blend)",
+        "Curation Method": "Conviction-based (6-signal blend)",
         "Weight Formula": "(conviction / total) × 100",
-        "Min Position": f"{st.session_state.min_pos_pct*100:.1f}%",
-        "Max Position": f"{st.session_state.max_pos_pct*100:.1f}%",
+        "Min Position": f"{_min_eff*100:.1f}%" + (" (relaxed)" if _min_relaxed else ""),
+        "Max Position": f"{_max_eff*100:.1f}%" + (" (relaxed)" if _max_relaxed else ""),
         "Data Source": "yfinance (NSE)",
         "Lookback Period": f"{len(training_window)} days",
     }
     render_kv_table(details)
+    if _min_relaxed or _max_relaxed:
+        st.caption(
+            f"Bounds relaxed from the nominal {st.session_state.min_pos_pct*100:.0f}%–"
+            f"{st.session_state.max_pos_pct*100:.0f}% because the selected position count "
+            "made them mathematically infeasible (too few/many positions to satisfy both "
+            "the cap and 100% allocation)."
+        )
 
     _section_divider()
 
@@ -976,7 +1042,7 @@ def _render_system_tab(training_window: List):
                 '</div>'
             '</div>'
             '<div class="intel-method-lede">'
-                'Every symbol in the universe is scored 0–100 by a four-signal conviction blend, '
+                'Every symbol in the universe is scored 0–100 by a six-signal conviction blend, '
                 'read against the market regime, then the highest-conviction names are curated into '
                 'a bounded, dispersion-weighted book.'
             '</div>'
@@ -985,8 +1051,9 @@ def _render_system_tab(training_window: List):
                 '<div class="intel-method-tile tile-learns">'
                     '<div class="tile-label">Signals</div>'
                     '<div class="tile-body">'
-                        'RSI · Oscillator · Z-Score · MA-alignment, each in '
-                        '<code>[-2, +2]</code>. Blended by regime-calibrated weights, mapped to '
+                        'RSI · Oscillator · Z-Score · MA-alignment · Value Area (VAP) · Strategy '
+                        'Endorsement (95-strategy vote rank), each in <code>[-2, +2]</code>. Blended by '
+                        'regime-calibrated weights (Strategy Endorsement fixed), mapped to '
                         '<code>(raw + 2) / 4 × 100</code>.'
                     '</div>'
                 '</div>'
@@ -994,7 +1061,7 @@ def _render_system_tab(training_window: List):
                 '<div class="intel-method-tile tile-how">'
                     '<div class="tile-label">Regime</div>'
                     '<div class="tile-body">'
-                        'A seven-factor composite places the market on the Strong Bull → Crisis '
+                        'An eight-factor composite places the market on the Strong Bull → Crisis '
                         'hierarchy and selects the conviction-weight passport used for scoring.'
                     '</div>'
                 '</div>'
@@ -1002,16 +1069,17 @@ def _render_system_tab(training_window: List):
                 '<div class="intel-method-tile tile-obj">'
                     '<div class="tile-label">Selection</div>'
                     '<div class="tile-body">'
-                        'Top N by conviction. No hard threshold — all symbols are eligible.'
+                        'Top N by conviction, ties broken by value-area position (a discount to '
+                        'accepted value is preferred). No hard threshold — all symbols are eligible.'
                     '</div>'
                 '</div>'
 
                 '<div class="intel-method-tile tile-safety">'
                     '<div class="tile-label">Weighting</div>'
                     '<div class="tile-body">'
-                        'Style-aware dispersion (SIP / Swing) then '
-                        '<code>weight = (conviction / total) × 100</code>, bounded to '
-                        f'{st.session_state.min_pos_pct*100:.0f}%–{st.session_state.max_pos_pct*100:.0f}% per position.'
+                        'Style-aware power-law dispersion (conviction ** gamma; SIP / Swing) then '
+                        '<code>weight = (adjusted / total) × 100</code>, bounded to '
+                        f'{_min_eff*100:.0f}%–{_max_eff*100:.0f}% per position.'
                     '</div>'
                 '</div>'
 
@@ -1021,24 +1089,34 @@ def _render_system_tab(training_window: List):
     st.markdown(method_html, unsafe_allow_html=True)
 
 
-def _sync_broker_json(json_data, quantity_map: Dict[str, int]) -> Tuple[list, int]:
+def _sync_broker_json(json_data, quantity_map: Dict[str, int]) -> Tuple[list, int, int]:
     """Map curated per-symbol units into a broker order-template JSON.
 
     Walks each instrument in the template, and where its
-    ``instrument.tradingsymbol`` matches a curated holding, writes the holding's
-    unit count into ``params.quantity``. Returns the mutated JSON and the number
-    of instruments updated.
+    ``instrument.tradingsymbol`` matches a curated holding WITH units > 0,
+    writes the holding's unit count into ``params.quantity``. A match with
+    units == 0 is left untouched rather than zeroing out the template's
+    existing quantity — the method card promises non-matching instruments
+    are "untouched", and a matched-but-zero-conviction holding silently
+    zeroing a possibly-intentional manual quantity was a third, undocumented
+    case (see AUDIT_DIRECTIVES.md B8). Returns (mutated JSON, instruments
+    updated, instruments matched-but-skipped-for-zero-units).
     """
     updated = 0
+    skipped_zero = 0
     for item in json_data:
         try:
             symbol = item.get("instrument", {}).get("tradingsymbol")
             if symbol and symbol in quantity_map and "params" in item:
-                item["params"]["quantity"] = int(quantity_map[symbol])
-                updated += 1
+                qty = int(quantity_map[symbol])
+                if qty > 0:
+                    item["params"]["quantity"] = qty
+                    updated += 1
+                else:
+                    skipped_zero += 1
         except Exception:
             continue
-    return json_data, updated
+    return json_data, updated, skipped_zero
 
 
 def _render_broker_sync_tab(portfolio: pd.DataFrame):
@@ -1085,19 +1163,20 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
     # Process uploaded templates once, up front, so both columns read the same
     # deterministic result set (status card, results table, download buttons).
     json_files = st.session_state.get("broker_sync_json_uploader")
-    results = []  # (fname, payload_or_None, count, error_or_None)
+    results = []  # (fname, payload_or_None, updated_count, skipped_zero_count, error_or_None)
     if json_files:
         for j_file in json_files:
             try:
                 j_file.seek(0)
                 content = _json.load(j_file)
-                updated_json, count = _sync_broker_json(content, qty_map)
-                results.append((j_file.name, _json.dumps(updated_json, indent=4), count, None))
+                updated_json, count, skipped_zero = _sync_broker_json(content, qty_map)
+                results.append((j_file.name, _json.dumps(updated_json, indent=4), count, skipped_zero, None))
             except Exception as e:
-                results.append((j_file.name, None, 0, str(e)))
+                results.append((j_file.name, None, 0, 0, str(e)))
     n_templates = len(results)
-    ok = sum(1 for _, p, _, _ in results if p is not None)
-    total_updated = sum(c for _, p, c, _ in results if p is not None)
+    ok = sum(1 for _, p, _, _, _ in results if p is not None)
+    total_updated = sum(c for _, p, c, _, _ in results if p is not None)
+    total_skipped_zero = sum(s for _, p, _, s, _ in results if p is not None)
 
     with col1:
         if n_templates == 0:
@@ -1120,12 +1199,17 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
                 color="danger",
             )
         else:
+            _skip_note = (
+                f" <strong>{total_skipped_zero}</strong> matched instrument(s) left untouched "
+                "(curated at 0 units)."
+                if total_skipped_zero > 0 else ""
+            )
             render_interpretation_card(
                 title="READY TO EXPORT",
                 body=(
                     f"Synced <strong>{ok}/{n_templates}</strong> template(s) · "
                     f"<strong>{total_updated}</strong> instrument(s) updated from "
-                    f"<strong>{tradable}</strong> tradable holding(s). "
+                    f"<strong>{tradable}</strong> tradable holding(s).{_skip_note} "
                     "Download the import-ready files on the right."
                 ),
                 color="success",
@@ -1159,7 +1243,7 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
             )
         else:
             rows_html = []
-            for fname, payload, count, err in results:
+            for fname, payload, count, skipped_zero, err in results:
                 if err is not None:
                     rows_html.append(
                         f'<tr>'
@@ -1171,7 +1255,15 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
                 else:
                     c_color = "var(--emerald)" if count > 0 else "var(--ink-secondary)"
                     s_color = "var(--emerald)" if count > 0 else "var(--amber)"
-                    s_text = "SYNCED" if count > 0 else "NO MATCH"
+                    # Distinguish "matched nothing at all" from "matched, but
+                    # every match was a 0-unit holding left untouched" — the
+                    # old NO MATCH label conflated both (see AUDIT_DIRECTIVES.md B8).
+                    if count > 0:
+                        s_text = "SYNCED"
+                    elif skipped_zero > 0:
+                        s_text = f"SKIPPED ({skipped_zero} @ 0 units)"
+                    else:
+                        s_text = "NO MATCH"
                     rows_html.append(
                         f'<tr>'
                         f'<td class="iw-label">{html_module.escape(fname)}</td>'
@@ -1204,14 +1296,14 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
                 unsafe_allow_html=True,
             )
 
-            for fname, payload, count, err in results:
+            for fname, payload, count, skipped_zero, err in results:
                 if err is None:
                     st.download_button(
                         label=f"Download updated {fname}",
                         data=payload,
                         file_name=f"updated_{fname}",
                         mime="application/json",
-                        width="stretch",
+                        use_container_width=True,
                         key=f"broker_sync_dl_{fname}",
                     )
 
@@ -1263,9 +1355,10 @@ def _render_broker_sync_tab(portfolio: pd.DataFrame):
                 '<div class="intel-method-tile tile-safety">'
                     '<div class="tile-label">Safety</div>'
                     '<div class="tile-body">'
-                        'Non-destructive: instruments with no matching holding are left '
-                        '<strong>untouched</strong>, and the original files are never '
-                        'modified — you download fresh copies.'
+                        'Non-destructive: instruments with no matching holding, or matching a '
+                        'holding curated at <strong>0 units</strong>, are left '
+                        '<strong>untouched</strong> rather than zeroed out — and the original '
+                        'files are never modified, you download fresh copies.'
                     '</div>'
                 '</div>'
 
@@ -1284,11 +1377,12 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     metric cards. Uses the LIVE curated portfolio (no upload); the yfinance fetch is
     cached (see _analytics_series_cached).
     """
-    from analytics import RISK_FREE_RATE, resolve_benchmark, compute_metrics
+    from analytics import resolve_benchmark, resolve_risk_free_rate, compute_metrics
     from charts import create_benchmark_comparison_chart
 
     universe, selected_index, _regime, _mode = _intel_context()
     bench_ticker, bench_name = resolve_benchmark(universe, selected_index)
+    RISK_FREE_RATE = resolve_risk_free_rate(bench_ticker)
 
     # Guard: needs a curated portfolio with priced units.
     if portfolio is None or portfolio.empty or "symbol" not in portfolio.columns or "units" not in portfolio.columns:
@@ -1302,9 +1396,14 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         )
         return
 
-    # ── ANCHOR = the analysis date. Metrics run anchor → today; the window is
-    #    dictated by the anchor (no user timeframe picker). Handle edge cases. ──
-    _sel = st.session_state.get("selected_date")
+    # ── ANCHOR = the analysis date THIS PORTFOLIO was curated under (frozen in
+    #    run_context — see _intel_context's docstring), NOT the live sidebar
+    #    date picker. Browsing the sidebar to a different date after a run must
+    #    not silently re-anchor the already-curated book's performance window.
+    #    Metrics run anchor -> today; the window is dictated by the anchor (no
+    #    user timeframe picker). Handle edge cases. ──
+    _run_ctx = st.session_state.get("run_context") or {}
+    _sel = _run_ctx.get("anchor_date") or st.session_state.get("selected_date")
     anchor_date = _sel if isinstance(_sel, date) else (
         _sel.date() if isinstance(_sel, datetime) else datetime.now().date()
     )
@@ -1408,34 +1507,51 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Returns & Risk-Adjusted Performance ────────────────────────────────────
+    # CAGR/Alpha/Calmar are all functions of an annualized return — annualizing
+    # a sub-quarter window (< 60 trading days) linearly extrapolates a few
+    # days of noise into a full year and is statistically indefensible (CFA
+    # Institute GIPS guidance advises against annualizing periods under a
+    # year). analytics.compute_metrics flags this via cagr_meaningful; hide
+    # those specific cards rather than print a number that reads as precise
+    # but isn't (see AUDIT_DIRECTIVES.md A18).
+    _cagr_ok = m.get("cagr_meaningful", True)
     _section_divider()
-    render_section_header("Returns & Risk-Adjusted Performance", "Period, CAGR & efficiency ratios",
-                          icon="zap", accent="emerald")
-    r1 = st.columns(6)
-    with r1[0]:
-        v = m.get("total_return", 0)
-        render_metric_card("Period Return", f"{v:+.2f}%", f"CAGR: {m.get('cagr', 0):+.1f}%",
-                           "success" if v >= 0 else "danger")
-    with r1[1]:
+    render_section_header(
+        "Returns & Risk-Adjusted Performance",
+        "Period, CAGR & efficiency ratios" if _cagr_ok else "Period return & efficiency ratios (CAGR hidden — window too short to annualize)",
+        icon="zap", accent="emerald",
+    )
+
+    v = m.get("total_return", 0)
+    _period_sub = f"CAGR: {m.get('cagr', 0):+.1f}%" if _cagr_ok else f"{len(port_returns)} trading days"
+    s = m.get("sharpe", 0)
+    so = m.get("sortino", 0)
+    ir = m.get("info_ratio", 0)
+
+    # (label, value, subtext, color) for each card that's always shown, in
+    # order; CAGR-dependent cards (Alpha, Calmar) are spliced in only when
+    # cagr_ok, so the column count and card set change together instead of
+    # via error-prone manual index arithmetic.
+    cards = [("Period Return", f"{v:+.2f}%", _period_sub, "success" if v >= 0 else "danger")]
+    if _cagr_ok:
         a = m.get("alpha", 0)
-        render_metric_card("Alpha", f"{a:+.2f}%", "Excess return",
-                           "success" if a > 0 else "danger" if a < 0 else "neutral")
-    with r1[2]:
-        s = m.get("sharpe", 0)
-        render_metric_card("Sharpe", f"{s:.2f}", "Rf = 6.5%",
-                           "success" if s > 1 else "warning" if s > 0.5 else "danger")
-    with r1[3]:
-        so = m.get("sortino", 0)
-        render_metric_card("Sortino", f"{so:.2f}", "Downside risk",
-                           "success" if so > 1.5 else "warning" if so > 0.5 else "danger")
-    with r1[4]:
+        cards.append(("Alpha", f"{a:+.2f}%", "Excess return",
+                      "success" if a > 0 else "danger" if a < 0 else "neutral"))
+    cards.append(("Sharpe", f"{s:.2f}", f"Rf = {RISK_FREE_RATE*100:.1f}%",
+                  "success" if s > 1 else "warning" if s > 0.5 else "danger"))
+    cards.append(("Sortino", f"{so:.2f}", "Downside risk",
+                  "success" if so > 1.5 else "warning" if so > 0.5 else "danger"))
+    if _cagr_ok:
         ca = m.get("calmar", 0)
-        render_metric_card("Calmar", f"{ca:.2f}", "Return / MaxDD",
-                           "success" if ca > 1 else "warning" if ca > 0.5 else "danger")
-    with r1[5]:
-        ir = m.get("info_ratio", 0)
-        render_metric_card("Info Ratio", f"{ir:.2f}", "Active return / TE",
-                           "success" if ir > 0.5 else "warning" if ir > 0 else "danger")
+        cards.append(("Calmar", f"{ca:.2f}", "Return / MaxDD",
+                      "success" if ca > 1 else "warning" if ca > 0.5 else "danger"))
+    cards.append(("Info Ratio", f"{ir:.2f}", "Active return / TE",
+                  "success" if ir > 0.5 else "warning" if ir > 0 else "danger"))
+
+    r1 = st.columns(len(cards))
+    for col, (label, value, sub, color) in zip(r1, cards):
+        with col:
+            render_metric_card(label, value, sub, color)
 
     # ── Benchmark Comparison ───────────────────────────────────────────────────
     section_gap()
@@ -1505,10 +1621,10 @@ def _render_landing_page():
     with col1:
         render_system_card(
             title="PORTFOLIO",
-            description="Conviction-based portfolio curation with composite scoring across four technical indicators.",
+            description="Conviction-based portfolio curation with composite scoring across six technical signals.",
             specs=[
-                ("Signals", "RSI (30%) + Osc (30%) + Z (20%) + MA (20%)"),
-                ("Selection", "Top 30 by conviction score"),
+                ("Signals", "RSI + Osc + Z + MA + VAP + Strat"),
+                ("Selection", "Top N by conviction · value-area tie-break"),
                 ("Weighting", "(conviction / total) × 100"),
                 ("Dispersion", "SIP + Swing modes")
             ],
@@ -1519,10 +1635,10 @@ def _render_landing_page():
     with col2:
         render_system_card(
             title="REGIME",
-            description="Seven-factor market regime detection with composite scoring for adaptive positioning.",
+            description="Eight-factor market regime detection with fixed composite weights for consistent, reproducible classification.",
             specs=[
-                ("Regimes", "Strong Bull · Bull · Neutral · Bear"),
-                ("Factors", "Momentum · Trend · Breadth · Velocity"),
+                ("Regimes", "Strong Bull · Bull · Weak Bull · Chop · Weak Bear · Bear · Crisis"),
+                ("Factors", "Momentum · Trend · Breadth · Acceptance"),
                 ("Output", "Confidence score + mix classification"),
                 ("History", "30-day rolling window")
             ],
@@ -1536,7 +1652,7 @@ def _render_landing_page():
             description="Parallel quantitative engines scanning for momentum, reversal, breakout, and pattern signals.",
             specs=[
                 ("Categories", "Momentum + Reversal + Breakout"),
-                ("Universe", "Nifty 500 + F&O symbols"),
+                ("Universe", "Any selected asset class"),
                 ("Style", "SIP + Swing trading dispersion"),
                 ("Strategies", "95 parallel engines")
             ],
@@ -1560,10 +1676,12 @@ def _render_landing_page():
 
 
 def _render_intelligence_tab(regime_d: Dict):
-    """Tab — per-(universe, index, regime) conviction-weight calibration (4-dim, simplex)."""
+    """Tab — per-(universe, index, regime) conviction-weight calibration (5-of-6-signal
+    simplex; the sixth, Strategy Endorsement, is fixed — see intelligence.calibrate).
+    The regime detector itself is NOT calibrated (fixed 8-factor weights)."""
     from intelligence import (
         IntelligencePassport, DEFAULT_WEIGHTS, DEFAULT_HORIZON,
-        build_harvest, calibrate,
+        build_harvest, calibrate, regime_labels_from_series,
     )
 
     universe = st.session_state.get("selected_universe") or "default"
@@ -1606,7 +1724,7 @@ def _render_intelligence_tab(regime_d: Dict):
                         f"Scope: <strong>{passport.label}</strong><br>"
                         f"Reason: <strong>{html_module.escape(reason or 'Unknown')}</strong><br>"
                         f"Conviction scoring is using Pragyam's default weights "
-                        f"(RSI 0.30 · OSC 0.30 · Z 0.20 · MA 0.20)."
+                        f"(RSI · OSC · Z · MA · VAP · Strategy, each 0.167 (1/6))."
                     ),
                     color="warning",
                 )
@@ -1615,7 +1733,7 @@ def _render_intelligence_tab(regime_d: Dict):
                     title="NOT CALIBRATED",
                     body=(
                         f"No passport for <strong>{passport.label}</strong> yet. Conviction scoring "
-                        f"uses Pragyam's default weights (RSI 0.30 · OSC 0.30 · Z 0.20 · MA 0.20). "
+                        f"uses Pragyam's default weights (RSI · OSC · Z · MA · VAP · Strategy, each 0.167 (1/6)). "
                         f"Run a calibration to learn weights for this scope."
                     ),
                     color="warning",
@@ -1625,14 +1743,37 @@ def _render_intelligence_tab(regime_d: Dict):
         with k1:
             if st.button("Calibrate", type="primary", use_container_width=True, key="btn_calibrate"):
                 hist_window = st.session_state.get("training_data_window", [])
-                if not hist_window or len(hist_window) <= DEFAULT_HORIZON + 5:
+                if regime_name == "UNKNOWN":
+                    # A passport keyed "UNKNOWN" (regime detection failed or
+                    # ran on too little history) is a meaningless scope — it
+                    # can never be looked up again under a real regime label,
+                    # so calibrating it just burns 100 Optuna trials on a
+                    # passport nothing will ever read (see
+                    # AUDIT_DIRECTIVES.md D2).
+                    st.error(
+                        "Cannot calibrate: the current regime is UNKNOWN (detection failed or "
+                        "there's too little history). A passport keyed to UNKNOWN would never be "
+                        "reused under a real regime label. Pick a date/universe with a valid "
+                        "regime reading first."
+                    )
+                elif not hist_window or len(hist_window) <= DEFAULT_HORIZON + 5:
                     st.error(
                         f"Need at least {DEFAULT_HORIZON + 5} days of history for a {DEFAULT_HORIZON}-day horizon. "
                         "Run an analysis with a longer lookback first."
                     )
                 else:
                     with st.spinner(f"Calibrating {passport.label} ({DEFAULT_HORIZON}-day horizon, 100 trials)..."):
-                        harvest = build_harvest(hist_window, horizon=DEFAULT_HORIZON)
+                        # Reuse the regime series computed during the last Run
+                        # Analysis when it covers this exact window; otherwise
+                        # compute it fresh so this manual calibration is also
+                        # regime-conditioned (see AUDIT_DIRECTIVES.md A2).
+                        _cached_series = st.session_state.get("regime_history_series")
+                        if _cached_series:
+                            regime_labels = regime_labels_from_series(_cached_series, len(hist_window), window_size=10)
+                        else:
+                            from intelligence import regime_labels_for_window
+                            regime_labels = regime_labels_for_window(hist_window, window_size=10)
+                        harvest = build_harvest(hist_window, horizon=DEFAULT_HORIZON, regime_labels=regime_labels)
                         if harvest.empty:
                             st.error("Harvest produced no usable rows. Indicator coverage may be too sparse.")
                         else:
@@ -1640,15 +1781,12 @@ def _render_intelligence_tab(regime_d: Dict):
                                 universe, selected_index, regime_name,
                                 harvest, n_trials=100, horizon=DEFAULT_HORIZON,
                             )
-                            if result is None:
-                                st.error(
-                                    "Calibration could not produce a usable validation IR. "
-                                    "Try a longer lookback or a regime with more historical coverage."
-                                )
+                            if not result.get("success"):
+                                st.error(result.get("reason", "Calibration failed for an unknown reason."))
                             else:
                                 st.success(
                                     f"Calibrated {passport.label} · Train IR {result['train_ir']:+.3f} · "
-                                    f"Val IR {result['val_ir']:+.3f}"
+                                    f"Val IR {result['val_ir']:+.3f} (beat default {result['default_val_ir']:+.3f})"
                                 )
                                 st.rerun()
         with k2:
@@ -1663,16 +1801,23 @@ def _render_intelligence_tab(regime_d: Dict):
 
         weights = passport.get_weights()
         rows_html = []
-        labels = [("RSI", "w_rsi"), ("Oscillator", "w_osc"), ("Z-Score", "w_z"), ("MA Alignment", "w_ma")]
+        labels = [("RSI", "w_rsi"), ("Oscillator", "w_osc"), ("Z-Score", "w_z"),
+                  ("MA Alignment", "w_ma"), ("Value Area", "w_vap"),
+                  ("Strategy Endorsement", "w_strat")]
         for label, key in labels:
             v = weights.get(key, DEFAULT_WEIGHTS[key])
             d = DEFAULT_WEIGHTS[key]
             delta = v - d
             color = "var(--emerald)" if delta > 0.005 else ("var(--rose)" if delta < -0.005 else "var(--ink-secondary)")
             arrow = "▲" if delta > 0.005 else ("▼" if delta < -0.005 else "—")
+            # w_strat is never searched by the calibrator (no historical values
+            # to evaluate — see intelligence._signals_from_row's docstring), so
+            # it always sits at its default with a flat delta; label that so
+            # it doesn't read as "the calibrator chose not to move this".
+            label_disp = f"{label} <span class=\"iw-fixed\">(fixed)</span>" if key == "w_strat" else html_module.escape(label)
             rows_html.append(
                 f'<tr>'
-                f'<td class="iw-label">{html_module.escape(label)}</td>'
+                f'<td class="iw-label">{label_disp}</td>'
                 f'<td class="iw-long" style="color:{color}">{v:.3f} '
                 f'<span class="iw-delta">{arrow} {abs(delta):.3f}</span></td>'
                 f'<td class="iw-short" style="color:var(--ink-secondary)">{d:.3f}</td>'
@@ -1721,22 +1866,30 @@ def _render_intelligence_tab(regime_d: Dict):
                 '</div>'
             '</div>'
             '<div class="intel-method-lede">'
-                'The four conviction-signal weights (RSI · Oscillator · Z-Score · MA-alignment) are '
-                '<strong>learned per (universe, index, regime)</strong> from historical '
-                'signal-to-forward-return evidence — instead of the hard-coded 0.30 / 0.30 / 0.20 / 0.20 '
-                'used in Standard mode. Different regimes reward different signals: bull markets favour '
-                'momentum (RSI / MA), choppy markets favour mean-reversion (Z-Score). Intelligence Mode '
-                'discovers the right mix automatically and stores it as a passport on disk.'
+                'Five of the six conviction-signal weights (RSI · Oscillator · Z-Score · MA-alignment · '
+                'Value Area) are <strong>learned per (universe, index, regime)</strong> from historical '
+                'signal-to-forward-return evidence — instead of the even 1/6 x6 fallback used in Standard '
+                'mode. The sixth, Strategy Endorsement, stays fixed (see the tile below) since it has no '
+                'historical values to evaluate. Different regimes reward different signals: bull markets '
+                'favour momentum (RSI / MA), choppy markets favour mean-reversion (Z-Score / Value Area). '
+                'The right conviction mix is discovered automatically and stored as a passport on disk — '
+                'but only when it demonstrably beats doing nothing (see Safety rails). '
+                '(The market-regime detector itself uses fixed 8-factor weights and is not calibrated.)'
             '</div>'
             '<div class="intel-method-grid">'
 
                 '<div class="intel-method-tile tile-learns">'
                     '<div class="tile-label">What it learns</div>'
                     '<div class="tile-body">'
-                        'Four weights on the 4-simplex: '
-                        '<code>w_rsi + w_osc + w_z + w_ma = 1</code>, each ≥ 0. '
-                        'Parameterised via softmax over four unconstrained scalars, so the optimizer '
-                        'sees a smooth, full-support landscape with no boundary degeneracies.'
+                        'Conviction: five weights on the 5-simplex '
+                        '<code>w_rsi + w_osc + w_z + w_ma + w_vap = (1 - w_strat)</code>, each ≥ 0, via '
+                        'softmax over five unconstrained scalars — a smooth, full-support landscape with '
+                        'no boundary degeneracies. <strong>w_strat</strong> (Strategy Endorsement — the '
+                        'cross-sectional rank of how many of the 95 strategies picked a symbol) is held '
+                        'FIXED: it only exists for the live day a run executes on, so there is no '
+                        'historical value to evaluate an IC against without re-running all 95 strategies '
+                        'on every historical day. (The regime detector uses fixed factor weights and is '
+                        'not calibrated.)'
                     '</div>'
                 '</div>'
 
@@ -1744,28 +1897,36 @@ def _render_intelligence_tab(regime_d: Dict):
                     '<div class="tile-label">How</div>'
                     '<div class="tile-body">'
                         'Bayesian search via <strong>Optuna Tree-structured Parzen Estimator (TPE)</strong> '
-                        'with a fixed seed for reproducibility. 100 trials per calibration — typically '
-                        '&lt;10 s on a 100-day, ~50-symbol panel thanks to vectorised IC evaluation.'
+                        'with a fixed seed for reproducibility, over dates restricted to this passport\'s '
+                        'own regime family (Bull / Chop / Bear Mix) — a BEAR passport never learns from '
+                        'BULL dates. 100 trials per calibration.'
                     '</div>'
                 '</div>'
 
                 '<div class="intel-method-tile tile-obj">'
                     '<div class="tile-label">Objective</div>'
                     '<div class="tile-body">'
-                        '<strong>Information Ratio</strong> = <code>mean(IC) / std(IC)</code>, '
-                        'where IC is the per-date Spearman rank correlation between the weighted '
-                        f'conviction score and <strong>{DEFAULT_HORIZON}-day forward returns</strong>. '
-                        'Maximises ranked predictive power per unit of cross-date volatility.'
+                        '<strong>Information Ratio</strong> = <code>mean(IC) / std(IC)</code>, the '
+                        'per-date Spearman correlation between the weighted conviction score and '
+                        f'<strong>{DEFAULT_HORIZON}-day forward returns</strong>, computed on '
+                        '<strong>non-overlapping</strong> dates only (adjacent overlapping windows share '
+                        f'{DEFAULT_HORIZON}-1 of their {DEFAULT_HORIZON} forward-return days, which '
+                        'inflates a naive IR).'
                     '</div>'
                 '</div>'
 
                 '<div class="intel-method-tile tile-safety">'
                     '<div class="tile-label">Safety rails</div>'
                     '<div class="tile-body">'
-                        '<strong>70 / 30 chronological train-val split.</strong> A passport is saved only '
-                        'when the held-out val IR is measurable. Calibration falls back to defaults — '
-                        'and the Intelligence tab states the reason — when history is too short or the '
-                        'harvest is too sparse.'
+                        '<strong>50/50 embargoed train-val split</strong> (the last horizon train dates are '
+                        'dropped so no label window overlaps validation). A passport is saved only when '
+                        'the learned weights beat the default baseline by a '
+                        '<strong>statistically significant margin</strong> — a paired significance test on '
+                        'validation-date IC differences, not a raw IR comparison — and the deployed weights '
+                        'are <strong>shrunk toward the default</strong> in proportion to how strongly that '
+                        'edge is corroborated out-of-sample. Falls back to defaults, with the specific '
+                        'reason stated, when history is too short, the regime hasn\'t occurred often enough, '
+                        'or the edge isn\'t significant.'
                     '</div>'
                 '</div>'
 
@@ -1841,15 +2002,7 @@ def _render_results(display_capital: float):
 
     # Footer
     _section_divider()
-    ist = timezone(timedelta(hours=5, minutes=30))
-    now_ist = datetime.now(ist)
-    st.markdown(f"""
-    <div class="app-footer">
-        <div class="content">
-            © {now_ist.year} <strong>Pragyam</strong> &nbsp;·&nbsp; @thebullishvalue &nbsp;·&nbsp; v{VERSION} &nbsp;·&nbsp; {now_ist.strftime("%Y-%m-%d %H:%M:%S IST")}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    _render_footer()
 
 
 def _run_analysis(
@@ -1922,8 +2075,9 @@ def _run_analysis(
 
         progress_bar(progress_container, 15, "Data loaded", f"{len(all_hist)} days · {len(symbols_list)} symbols")
 
-        # Regime detection
-        progress_bar(progress_container, 20, "Detecting market regime", "7-factor composite scoring")
+        # Regime detection — pass intelligence context so the 8 factor weights are
+        # the learned ones (Intelligence mode) or the shared defaults (Standard).
+        progress_bar(progress_container, 20, "Detecting market regime", "8-factor composite scoring")
         regime_result = _detect_regime_cached(selected_date, symbols_key)
         regime_name = regime_result.get("regime", "UNKNOWN")
         confidence = regime_result.get("confidence", 0.0)
@@ -1951,6 +2105,20 @@ def _run_analysis(
 
         progress_bar(progress_container, 25, "Phase 1 complete", "Data acquisition ready")
 
+        # Regime history series — computed ONCE here (moved up from its old
+        # position after Phase 2) so Phase 1.5 can condition calibration on
+        # the regime actually in effect at each historical date (see
+        # AUDIT_DIRECTIVES.md A2: a passport keyed "BEAR" was previously
+        # estimated on the ENTIRE trailing window regardless of regime, since
+        # the regime series wasn't available until after calibration ran).
+        # Cached in session_state so the Regime tab's chart reuses this exact
+        # computation instead of recomputing it.
+        try:
+            _regime_series_for_harvest = get_regime_history_series(all_hist, window_size=10, step=1)
+        except Exception:
+            _regime_series_for_harvest = []
+        st.session_state.regime_history_series = _regime_series_for_harvest
+
         # PHASE 1.5: Intelligence — calibrate weights for the (universe, index, regime)
         # tuple on first encounter; reuse the saved passport on subsequent runs.
         # Calibration outcome is mirrored to st.session_state.last_intel_outcome
@@ -1958,6 +2126,7 @@ def _run_analysis(
         if st.session_state.get("intelligence_mode"):
             from intelligence import (
                 IntelligencePassport, build_harvest, calibrate, DEFAULT_HORIZON,
+                regime_labels_from_series,
             )
             _universe = st.session_state.get("selected_universe") or "default"
             _selected_index = st.session_state.get("selected_index")
@@ -1984,6 +2153,21 @@ def _run_analysis(
                     f"{_passport.label} · Val IR {_m['val_ir']:+.3f} · "
                     f"calibrated {_passport.last_calibrated}",
                 )
+            elif regime_name == "UNKNOWN":
+                # A passport keyed "UNKNOWN" is a meaningless scope — it can
+                # never be looked up again under a real regime label once
+                # detection succeeds, so calibrating it would just burn 100
+                # Optuna trials on a passport nothing will ever read (see
+                # AUDIT_DIRECTIVES.md D2).
+                _outcome.update({
+                    "status": "skipped",
+                    "reason": "Regime is UNKNOWN (detection failed or insufficient history) — "
+                              "a passport keyed to UNKNOWN would never be reused.",
+                })
+                progress_bar(
+                    progress_container, 25, "Intelligence skipped",
+                    "Regime UNKNOWN — using default weights",
+                )
             elif len(all_hist) <= DEFAULT_HORIZON + 5:
                 _outcome.update({
                     "status": "skipped",
@@ -1999,7 +2183,14 @@ def _run_analysis(
                     f"Building signal-return panel · {_passport.label} · "
                     f"{DEFAULT_HORIZON}-day horizon",
                 )
-                _harvest = build_harvest(all_hist, horizon=DEFAULT_HORIZON)
+                # Tag each harvested date with the regime family in effect at
+                # that date, so calibrate() conditions on regime (A2) rather
+                # than learning one unconditional weight set for the whole
+                # lookback and labeling it with whatever regime is current now.
+                _regime_labels = regime_labels_from_series(
+                    _regime_series_for_harvest, len(all_hist), window_size=10
+                )
+                _harvest = build_harvest(all_hist, horizon=DEFAULT_HORIZON, regime_labels=_regime_labels)
                 if _harvest.empty:
                     _outcome.update({
                         "status": "skipped",
@@ -2034,19 +2225,20 @@ def _run_analysis(
                         _harvest, n_trials=100,
                         horizon=DEFAULT_HORIZON, progress_callback=_intel_cb,
                     )
-                    if _result is None:
+                    if not _result.get("success"):
+                        _reason = _result.get("reason", "Calibration failed for an unknown reason.")
                         _outcome.update({
                             "status": "failed",
-                            "reason": "Validation IR not measurable on the held-out split.",
+                            "reason": _reason,
                         })
                         progress_bar(
                             progress_container, 28, "Intelligence skipped",
-                            "Validation IR not measurable · using default weights",
+                            f"{_reason} · using default weights",
                         )
                     else:
                         _outcome.update({
                             "status": "calibrated",
-                            "reason": "Optimized 100 trials with measurable validation IR.",
+                            "reason": _result.get("reason", "Optimized weights beat the default baseline out-of-sample."),
                             "train_ir": _result["train_ir"],
                             "val_ir":   _result["val_ir"],
                             "n_train_dates": _result["n_train_dates"],
@@ -2085,8 +2277,22 @@ def _run_analysis(
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty strategies")
                 st.stop()
 
-            # Aggregate holdings
+            # Aggregate holdings + strategy endorsement votes.
+            #
+            # Every strategy's _allocate_portfolio (strategies.py) returns ALL
+            # input rows (weights merely clipped to [1%,10%], never filtered),
+            # so the union of "candidates" across 95 strategies was previously
+            # ~= the whole data-valid universe: the strategy layer contributed
+            # zero selectivity to the final book (see AUDIT_DIRECTIVES.md A4).
+            # To make the layer real, each strategy's TOP QUARTILE by its own
+            # weightage_pct is treated as that strategy's actual "conviction
+            # pick" — an endorsement — rather than every row it returns.
+            # strat_votes (how many of the 95 strategies picked a symbol in
+            # their own top quartile) becomes a sixth conviction signal
+            # (see regime.compute_conviction_signals / intelligence.py).
             aggregated_holdings = {}
+            strat_votes: Dict[str, int] = {}
+            failed_strategies = 0
             progress_bar(progress_container, 35, "Aggregating holdings", f"Processing {len(strategies_to_run)} strategies")
 
             for name, strategy in strategies_to_run.items():
@@ -2094,23 +2300,48 @@ def _run_analysis(
                     port = strategy.generate_portfolio(st.session_state.current_df, capital)
                     if port.empty:
                         continue
+                    # Top quartile by this strategy's own weighting (min 1 pick
+                    # so a tiny candidate set still casts a vote).
+                    n_pick = max(1, len(port) // 4)
+                    top_picks = port.nlargest(n_pick, "weightage_pct")
+                    top_syms = set(top_picks["symbol"])
                     for _, row in port.iterrows():
                         symbol = row["symbol"]
                         price = row["price"]
                         if symbol not in aggregated_holdings:
                             aggregated_holdings[symbol] = {"price": price, "weight": 1.0}
-                except Exception:
-                    pass
+                    for sym in top_syms:
+                        strat_votes[sym] = strat_votes.get(sym, 0) + 1
+                except Exception as e:
+                    failed_strategies += 1
+                    try:
+                        log.warning(f"Strategy '{name}' failed: {type(e).__name__}: {e}")
+                    except Exception:
+                        pass
+
+            if failed_strategies:
+                metrics.add_warning(f"{failed_strategies}/{len(strategies_to_run)} strategies failed to generate a portfolio")
 
             if not aggregated_holdings:
                 st.error("No holdings generated.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty holdings")
                 st.stop()
 
+            # Attach vote counts to current_df so compute_conviction_signals can
+            # read them like any other cross-sectional indicator column. This is
+            # the SAME current_df object read by the result tabs on re-render
+            # (st.session_state.current_df), so strat_signal stays consistent
+            # across the whole session for this run, not just this call.
+            st.session_state.current_df = st.session_state.current_df.copy()
+            st.session_state.current_df["strat_votes"] = (
+                st.session_state.current_df["symbol"].map(strat_votes).fillna(0).astype(int)
+            )
+
             progress_bar(progress_container, 50, "Computing conviction", f"{len(aggregated_holdings)} candidates")
 
             # Conviction-based weighting with style-aware dispersion
-            # SIP: +125% boost / -50% penalty | Swing: +225% boost / -75% penalty
+            # SIP: conviction**2.5 | Swing: conviction**4.5 (continuous power-law
+            # concentration — see portfolio.py module docstring)
             # Single source of truth for the intelligence context — mirrors what
             # regime.compute_conviction_signals will read internally, so the curated
             # weights and the displayed conviction column can never drift.
@@ -2135,6 +2366,33 @@ def _run_analysis(
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty portfolio")
                 st.stop()
 
+            # Effective bounds may differ from the nominal 1%/10% when
+            # num_positions makes them infeasible (e.g. 5 positions can't all
+            # sit under a 10% cap) — see portfolio.compute_conviction_based_weights.
+            # Surface what was ACTUALLY applied for the System tab / any UI that
+            # states the bounds, instead of always printing the nominal request.
+            st.session_state.min_pos_pct_eff = st.session_state.portfolio.attrs.get(
+                "min_pos_pct_eff", st.session_state.min_pos_pct
+            )
+            st.session_state.max_pos_pct_eff = st.session_state.portfolio.attrs.get(
+                "max_pos_pct_eff", st.session_state.max_pos_pct
+            )
+
+            # Freeze the scope this portfolio was curated under. Result tabs
+            # (_intel_context) read this instead of live sidebar state, so
+            # browsing the sidebar after a run (which recomputes the regime
+            # card and mutates selected_universe/index) can never re-score an
+            # already-curated portfolio under a different scope's passport, or
+            # resolve the Analytics benchmark against the wrong universe (see
+            # AUDIT_DIRECTIVES.md A12).
+            st.session_state.run_context = {
+                "universe": _u,
+                "selected_index": _idx,
+                "regime_name": regime_name,
+                "mode": _mode,
+                "anchor_date": selected_date_display,
+            }
+
             progress_bar(progress_container, 85, "Portfolio curated", f"{len(st.session_state.portfolio)} positions")
 
             # End conviction_curation phase tracking
@@ -2145,11 +2403,9 @@ def _run_analysis(
             metrics.strategies_count = len(strategies_to_run)
             metrics.portfolios_generated = len(st.session_state.portfolio)
 
-            # Pre-compute regime history
-            try:
-                st.session_state.regime_history_series = get_regime_history_series(all_hist, window_size=10, step=1)
-            except Exception:
-                st.session_state.regime_history_series = []
+            # Regime history was already computed and cached before Phase 1.5
+            # (st.session_state.regime_history_series) so it could condition
+            # the calibration harvest on regime — no need to recompute it here.
 
             metrics.end_phase("total_execution", success=True)
             progress_bar(progress_container, 100, "Analysis complete", f"Portfolio: {len(st.session_state.portfolio)} positions ready")
@@ -2171,12 +2427,13 @@ def _run_analysis(
                 "Status": "SUCCESS",
             })
             metrics.print_summary(log)
-            
-            # Clear progress container after short delay
-            import time
-            time.sleep(1.5)
+
+            # Clear the progress card immediately — the toast below plus the
+            # rendered result page are feedback enough; a blocking sleep here
+            # just makes every single run 1.5s slower for no functional
+            # benefit (see AUDIT_DIRECTIVES.md B7).
             progress_container.empty()
-            
+
             st.toast("Analysis Complete!")
 
         except Exception as e:
@@ -2200,6 +2457,12 @@ def _render_footer() -> None:
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+# _render_footer (defined above) is the single source of truth for the app
+# footer — the result-page footer previously duplicated the same markup
+# inline with a slightly different timestamp construction (see
+# AUDIT_DIRECTIVES.md C5.2); _render_results calls _render_footer() instead.
 
 
 def main():
@@ -2264,15 +2527,34 @@ def main():
         rd = st.session_state.get("regime_result_dict", {})
         regime_needs_update = not rd or date_changed or universe_changed
 
-        if regime_needs_update:
-            with st.spinner("Detecting regime..."):
-                rd = _detect_regime_cached(selected_date_obj, symbols_key)
-                st.session_state.regime_result_dict = rd
-                st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
-                st.session_state.regime_date = selected_date
-                st.session_state.regime_symbols_key = symbols_key
-        
-        if rd and isinstance(rd, dict):
+        # Lazy regime card: auto-compute WITHOUT a spinner/blocking fetch only
+        # when this exact (date, universe) combo is the one the last
+        # completed Run Analysis used — that combo is guaranteed already in
+        # Streamlit's cache (@st.cache_data(ttl=3600) on _load_historical_data
+        # / _detect_regime_cached), so the call below resolves instantly. Any
+        # OTHER combo (the user browsing to a new date/universe without
+        # having run it yet) is a probable cache MISS: auto-computing there
+        # used to trigger a full synchronous yfinance multi-symbol download
+        # inside the sidebar's render path — 10-30s of a frozen sidebar just
+        # for looking around (see AUDIT_DIRECTIVES.md C4). Show a dimmed
+        # "stale" card with an explicit refresh button instead.
+        _last_run_ctx = st.session_state.get("run_context")
+        _likely_cached = (
+            _last_run_ctx is not None
+            and _last_run_ctx.get("anchor_date") == selected_date
+            and _last_run_ctx.get("universe") == universe
+            and _last_run_ctx.get("selected_index") == selected_index
+        )
+
+        if regime_needs_update and _likely_cached:
+            rd = _detect_regime_cached(selected_date_obj, symbols_key)
+            st.session_state.regime_result_dict = rd
+            st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
+            st.session_state.regime_date = selected_date
+            st.session_state.regime_symbols_key = symbols_key
+            regime_needs_update = False
+
+        if rd and isinstance(rd, dict) and not regime_needs_update:
             regime_name_sb = rd.get("regime", "UNKNOWN")
             color_sb = rd.get("color", "#888888")
             conf_sb = rd.get("confidence", 0.0)
@@ -2290,6 +2572,26 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
+        elif regime_needs_update:
+            st.markdown("""
+            <div style="background:rgba(148,163,184,0.06); border:1px solid rgba(148,163,184,0.18);
+                        border-radius:10px; padding:12px; margin:var(--sp-6) 0 var(--sp-3) 0;">
+                <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase;
+                            letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
+                <div style="color:var(--ink-tertiary); font-size:0.8rem; font-family:var(--data);">
+                    Not computed for this date/universe yet — click Refresh, or it will compute
+                    automatically when you Run Analysis.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("↻ Refresh regime", use_container_width=True, key="sidebar_regime_refresh"):
+                with st.spinner("Detecting regime…"):
+                    rd = _detect_regime_cached(selected_date_obj, symbols_key)
+                    st.session_state.regime_result_dict = rd
+                    st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
+                    st.session_state.regime_date = selected_date
+                    st.session_state.regime_symbols_key = symbols_key
+                st.rerun()
 
         # 5. Portfolio Parameters
         st.markdown('<div class="sidebar-title">Portfolio Parameters</div>', unsafe_allow_html=True)
@@ -2343,8 +2645,11 @@ def main():
         st.session_state.intelligence_mode = st.toggle(
             "Intelligence Mode",
             value=bool(st.session_state.get("intelligence_mode", True)),
-            help="Use per-(universe, index, regime) calibrated conviction weights. "
-                 "When OFF, Pragyam uses the canonical 0.30 / 0.30 / 0.20 / 0.20 weights.",
+            help="Use calibrated conviction weights learned from forward returns — five of "
+                 "the six conviction signals per (universe, index, regime); Strategy "
+                 "Endorsement stays fixed (no historical values to calibrate against). "
+                 "When OFF, Pragyam uses the even 1/6 x6 conviction weights. (The regime "
+                 "detector always uses fixed factor weights — it is not calibrated.)",
             key="passport_intel_toggle",
         )
 
@@ -2432,17 +2737,52 @@ def main():
                     payload = _json.load(uploaded)
                     if not isinstance(payload, dict):
                         raise ValueError("file is not a JSON object")
-                    weights = payload.get("weights", payload)
-                    if not all(k in weights for k in DEFAULT_WEIGHTS):
-                        raise ValueError("missing one of w_rsi / w_osc / w_z / w_ma")
+
+                    # Reject defaults-shape exports outright: the sidebar's own
+                    # Export button writes is_calibrated=False + zero IRs when
+                    # no real passport exists for the scope (see the Export
+                    # Profile section below) — re-importing that file must not
+                    # silently mark the scope "Calibrated" with meaningless
+                    # IR=0.000 (see AUDIT_DIRECTIVES.md A16).
+                    if payload.get("is_calibrated") is False:
+                        raise ValueError(
+                            "this file contains default (uncalibrated) weights, exported when no "
+                            "passport existed for its scope — nothing to import"
+                        )
+
+                    weights_raw = payload.get("weights", payload)
+                    if not all(k in weights_raw for k in DEFAULT_WEIGHTS):
+                        raise ValueError("missing one of " + " / ".join(DEFAULT_WEIGHTS.keys()))
+
+                    # Numeric + simplex validation: a malformed/adversarial
+                    # file (e.g. {"w_rsi": 37, ...}) previously imported with
+                    # only a key-presence check, silently corrupting live
+                    # conviction scoring for this scope.
+                    weights_num: Dict[str, float] = {}
+                    for k in DEFAULT_WEIGHTS:
+                        try:
+                            v = float(weights_raw[k])
+                        except (TypeError, ValueError):
+                            raise ValueError(f"{k} is not a number")
+                        if not (0.0 <= v <= 1.0):
+                            raise ValueError(f"{k}={v} is outside the valid [0, 1] range")
+                        weights_num[k] = v
+                    total = sum(weights_num.values())
+                    if abs(total - 1.0) > 0.02:
+                        raise ValueError(f"weights sum to {total:.4f}, expected ~1.0 (a simplex)")
+                    # Renormalize to exactly 1.0 (absorb float/rounding drift
+                    # from the source file rather than rejecting on it).
+                    weights_num = {k: v / total for k, v in weights_num.items()}
+
                     _pp_passport.save(
-                        weights={k: float(weights[k]) for k in DEFAULT_WEIGHTS},
+                        weights=weights_num,
                         train_ir=float(payload.get("train_ir", 0.0)),
                         val_ir  =float(payload.get("val_ir",   0.0)),
                         n_train_dates=int(payload.get("n_train_dates", 0)),
                         n_val_dates  =int(payload.get("n_val_dates",   0)),
                         n_trials=int(payload.get("n_trials", 0)),
                         horizon =int(payload.get("horizon", 10)),
+                        is_calibrated=True,
                     )
                     st.toast("Profile imported.", icon="✅")
                     st.rerun()

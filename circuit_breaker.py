@@ -12,7 +12,6 @@ Features:
 - Retry with exponential backoff
 
 Author: @thebullishvalue
-Version: 5.0.2
 """
 
 import time

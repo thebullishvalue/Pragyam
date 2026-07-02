@@ -1,12 +1,11 @@
 """
-PRAGYAM - Direct Console Output System
+PRAGYAM — Direct Console Output System
 ══════════════════════════════════════════════════════════════════════════════
 
 Bypasses Python logging entirely - writes directly to stdout.
 This is the ONLY way to get clean output in Streamlit.
 
 Author: @thebullishvalue
-Version: 4.2.0
 """
 
 import sys

@@ -12,7 +12,6 @@ Features:
 - Execution summary generation
 
 Author: @thebullishvalue
-Version: 5.0.2
 """
 
 import time
@@ -247,12 +246,33 @@ class ExecutionMetrics:
         console.line()
 
 
-# Global metrics instance
+# Module-level fallback instance — used only when Streamlit's session state
+# is unavailable (e.g. backdata.py's standalone CLI/script entry point,
+# imports at module load time before a session exists). Under Streamlit,
+# get_metrics() below returns a PER-SESSION tracker instead: Streamlit serves
+# all connected users from one process, so a single shared module-level
+# instance let two concurrent users interleave each other's phase timings,
+# error lists, and run IDs (see AUDIT_DIRECTIVES.md B5).
 metrics = ExecutionMetrics()
 
 
 def get_metrics() -> ExecutionMetrics:
-    """Get the global metrics instance."""
+    """Get the execution metrics tracker for the current context.
+
+    Under Streamlit, returns a tracker scoped to st.session_state so
+    concurrent users/sessions never share or interleave metrics. Falls back
+    to the module-level singleton when no Streamlit runtime is active (CLI
+    usage, e.g. backdata.py run as a script).
+    """
+    try:
+        import streamlit as st
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx() is not None:
+            if "_pragyam_metrics" not in st.session_state:
+                st.session_state["_pragyam_metrics"] = ExecutionMetrics()
+            return st.session_state["_pragyam_metrics"]
+    except Exception:
+        pass
     return metrics
 
 

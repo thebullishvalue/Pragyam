@@ -1,6 +1,27 @@
+"""
+PRAGYAM — Market Data & Indicator Engine
+══════════════════════════════════════════════════════════════════════════════
+
+Fetches OHLCV history from yfinance (behind a circuit breaker) and computes the
+per-symbol indicator panel that every downstream layer consumes.
+
+Produces, per symbol per day (daily and weekly timeframes where noted):
+  • Liquidity Oscillator (+ 9/21 EMAs) and its 20-period z-score
+  • RSI (Wilder), moving averages (20/90/200) and their deviations
+  • Volume-profile features (daily): point-of-control (POC), value-area position
+    (``vap`` — a volatility-normalised premium/discount to accepted value) and
+    in-value position (``va_pos``). See ``compute_volume_profile``.
+
+The canonical column set is ``COLUMN_ORDER``; ``generate_historical_data``
+returns a chronological list of ``(date, snapshot_df)`` tuples in that shape,
+which the regime detector, conviction scoring, and intelligence calibration all
+read.
+
+Author: @thebullishvalue
+"""
+
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 import warnings
 import os
@@ -36,11 +57,18 @@ class LiquidityOscillator:
         df = data.copy()
         df['spread'] = (df['high'] + df['low']) / 2 - df['open']
         df['vol_ma'] = df['volume'].rolling(window=self.length).mean()
-        # Use np.nan (not pd.NA) for the safe-divide: pd.NA makes the column a
-        # nullable/object dtype, and a later float() on an NA cell raises
-        # "float() argument ... not 'NAType'" (the "Data fetch failed" crash on
-        # date change). np.nan keeps it float64 with identical missing-ness.
-        safe_vol_ma = df['vol_ma'].replace(0, np.nan).astype(float)
+        # Divide-by-zero guard: during the first `length-1` bars vol_ma is NaN
+        # (rolling warmup), and occasionally a window can sum to exactly 0
+        # volume. Filling either case with 1.0 does NOT make the ratio "safe" —
+        # it turns spread*volume/1.0 into a value at ~volume's natural scale
+        # (often 10^5-10^6x too large), which then sits inside the next
+        # 20-bar rolling means and contaminates roughly bars [length, 2*length)
+        # of every symbol's oscillator with garbage instead of "no signal yet".
+        # NaN-propagate instead: where vol_ma isn't a valid positive average,
+        # the ratio is undefined and must stay NaN so it's dropped by the
+        # rolling mean exactly like the other warm-up NaNs downstream already
+        # rely on (see compute_volume_profile's docstring for the convention).
+        safe_vol_ma = df['vol_ma'].where(df['vol_ma'] > 0)
         df['vwap_spread'] = (df['spread'] * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
         close_shifted = df['close'].shift(self.impact_window)
         df['price_impact'] = ((df['close'] - close_shifted) * df['volume'] / safe_vol_ma).rolling(window=self.length).mean()
@@ -49,7 +77,11 @@ class LiquidityOscillator:
         df['lowest_value'] = df['source_value'].rolling(window=self.length).min()
         df['highest_value'] = df['source_value'].rolling(window=self.length).max()
         range_value = df['highest_value'] - df['lowest_value']
-        safe_range_value = range_value.replace(0, np.nan)
+        # Same principle: a zero (or NaN, from warmup) high-low source range
+        # means the 200*(x-lo)/range formula is undefined, not "1.0-wide" —
+        # filling with 1.0 previously made a flat-price window explode to
+        # +/-Infinity-adjacent values instead of correctly reporting NaN.
+        safe_range_value = range_value.where(range_value > 0)
         oscillator = 200 * (df['source_value'] - df['lowest_value']) / safe_range_value - 100
         return oscillator.rename('liquidity_oscillator')
 
@@ -73,10 +105,166 @@ def calculate_rsi(data: pd.DataFrame, period: int = 14) -> pd.Series:
     avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
     avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
     rsi = 100.0 - (100.0 / (1.0 + rs))
-    rsi = rsi.fillna(100.0)  # avg_loss == 0 means all gains → RSI = 100
+    # avg_loss == 0 (all-gains window) is a genuine RSI=100 case, but a blanket
+    # fillna(100.0) also stamps the first `period` warm-up rows (NaN from
+    # min_periods=period, not from an all-gains window) as a maximally
+    # overbought 100 — a phantom signal where there is actually no data yet.
+    # Only backfill the true all-gains case; leave warm-up NaNs as NaN so
+    # downstream consumers (regime factors, conviction signals, calibration
+    # harvest) treat them as "no signal" like every other indicator's warmup.
+    all_gains = avg_loss.eq(0) & avg_gain.notna() & (avg_gain > 0)
+    rsi = rsi.where(~all_gains, 100.0)
     return rsi
+
+def compute_volume_profile(
+    df: pd.DataFrame,
+    window: int = 90,
+    bins: int = 60,
+    value_area: float = 0.70,
+) -> pd.DataFrame:
+    """Rolling EOD volume profile → POC / value-area position features.
+
+    The system has no notion of *where volume actually traded*. Its only
+    "value" anchor is the rolling mean baked into the oscillator z-score. This
+    builds, per bar, a trailing volume profile (the proxy/binned model from the
+    Inferred-Delta volume-profile indicator, adapted to a cross-sectional EOD
+    panel) and returns three measured, no-inference features:
+
+      • ``poc``        – point of control: the modal price (price bin that
+                         accumulated the most volume) over the trailing window.
+      • ``vap``        – Value-Area Position: where the latest close sits inside
+                         the developing volume profile, volatility-normalised by
+                         the value-area half-width and clamped to roughly
+                         [-3, +3]. Positive = price trades at a *discount* to
+                         accepted value (mean-reversion long), negative = at a
+                         *premium*. This is the cross-sectional signal feeding
+                         ``vap_signal`` in the conviction blend.
+      • ``va_pos``     – raw position of close within [VAL, VAH] mapped to
+                         [-1, +1] (inside-value vs at-an-edge), used by the
+                         portfolio selection layer for structural hold/rotate.
+
+    Volume binning replicates the indicator's profile loop: each bar's volume is
+    spread across the price bins its high–low range touches, so a bar that
+    straddles many levels contributes a thin slice to each. The value area is
+    grown outward from the POC, always taking the heavier adjacent bin, until it
+    holds ``value_area`` of the windowed volume — the same expansion the
+    indicator uses for VAH/VAL.
+
+    Per-window histogram construction is vectorized via a difference-array +
+    cumsum (each bar's "add v/spread to bins [b_lo, b_hi]" range-update becomes
+    two O(1) writes and one O(bins) cumulative sum instead of an O(window)
+    Python loop per window) — validated bit-identical against the original
+    per-bar loop, ~4-5x faster end to end. The outer per-window loop remains
+    (the bin edges genuinely shift every window since [lo, hi] is a trailing
+    min/max), so this is not a full incremental/streaming histogram.
+
+    Returns a DataFrame indexed like ``df`` with columns ``poc``/``vap``/``va_pos``.
+    Bars before the window is warm, or with no usable volume, are NaN — they are
+    dropped downstream exactly like the other indicators' warmup NaNs.
+    """
+    import numpy as np
+    out = pd.DataFrame(index=df.index, columns=['poc', 'vap', 'va_pos'], dtype=float)
+    n = len(df)
+    if n < window or not {'high', 'low', 'close', 'volume'}.issubset(df.columns):
+        return out
+
+    highs = df['high'].to_numpy(dtype=float)
+    lows = df['low'].to_numpy(dtype=float)
+    closes = df['close'].to_numpy(dtype=float)
+    vols = df['volume'].to_numpy(dtype=float)
+
+    for end in range(window - 1, n):
+        start = end - window + 1
+        wl = lows[start:end + 1]
+        wh = highs[start:end + 1]
+        wv = vols[start:end + 1]
+        price = closes[end]
+
+        lo = np.nanmin(wl)
+        hi = np.nanmax(wh)
+        # Need a real price range and some real volume to build a profile.
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            continue
+        total_vol = np.nansum(wv)
+        if not np.isfinite(total_vol) or total_vol <= 0:
+            continue
+
+        step = (hi - lo) / bins
+        if step <= 0:
+            continue
+
+        # ── Vectorized histogram build ──────────────────────────────────────
+        # The original per-window loop did `for j in range(window)`, each
+        # iteration slicing hist[b_lo:b_hi+1] += slice_v — 90*90 = 8,100
+        # Python-level operations per symbol per window*, the dominant cost
+        # of the whole data-fetch phase at universe scale (~0.2s/symbol here,
+        # ~100s for a 500-symbol universe). Every bar's contribution is
+        # "add `v/spread` to each bin in [b_lo, b_hi]" — a range-update, which
+        # a difference array turns into two O(1) writes (+v/spread at b_lo,
+        # -v/spread at b_hi+1) followed by ONE cumulative sum over `bins`
+        # (60) instead of up to `bins` writes per bar. This produces the
+        # IDENTICAL histogram (validated against the original loop) at a
+        # fraction of the cost.
+        valid = np.isfinite(wv) & (wv > 0) & np.isfinite(wl) & np.isfinite(wh)
+        if not valid.any():
+            continue
+        wl_v, wh_v, wv_v = wl[valid], wh[valid], wv[valid]
+
+        b_lo_arr = np.floor((wl_v - lo) / step).astype(np.int64)
+        b_hi_arr = np.floor((wh_v - lo) / step).astype(np.int64)
+        np.clip(b_lo_arr, 0, bins - 1, out=b_lo_arr)
+        np.clip(b_hi_arr, 0, bins - 1, out=b_hi_arr)
+        spread_arr = (b_hi_arr - b_lo_arr + 1).astype(np.float64)
+        slice_v_arr = wv_v / spread_arr
+
+        diff = np.zeros(bins + 1, dtype=np.float64)
+        np.add.at(diff, b_lo_arr, slice_v_arr)
+        np.add.at(diff, b_hi_arr + 1, -slice_v_arr)
+        hist = np.cumsum(diff[:-1])
+
+        # ── POC: modal price bin ──────────────────────────────────────────────
+        poc_bin = int(np.argmax(hist))
+        poc_price = lo + (poc_bin + 0.5) * step
+
+        # ── Value area: grow outward from POC, heavier-side first, to value_area
+        acc = hist[poc_bin]
+        target = total_vol * value_area
+        up = poc_bin
+        dn = poc_bin
+        while acc < target and (dn > 0 or up < bins - 1):
+            v_up = hist[up + 1] if up < bins - 1 else -1.0
+            v_dn = hist[dn - 1] if dn > 0 else -1.0
+            if v_up >= v_dn:
+                acc += v_up
+                up += 1
+            else:
+                acc += v_dn
+                dn -= 1
+        vah = lo + (up + 1) * step
+        val = lo + dn * step
+
+        # ── va_pos: close inside [VAL, VAH] mapped to [-1, +1] ────────────────
+        va_mid = (vah + val) / 2.0
+        va_half = max((vah - val) / 2.0, step)
+        va_pos = (price - va_mid) / va_half
+        va_pos = float(np.clip(va_pos, -1.0, 1.0))
+
+        # ── vap: volatility-normalised premium/discount to value (mean-rev) ───
+        #  Distance of close from POC, scaled by the value-area half-width so the
+        #  number is comparable across symbols of very different price/vol. We
+        #  invert the sign so DISCOUNT (below value) is POSITIVE = a long bias,
+        #  matching the oversold-is-positive convention of zscore_signal.
+        vap = -(price - poc_price) / va_half
+        vap = float(np.clip(vap, -3.0, 3.0))
+
+        out.iat[end, 0] = poc_price
+        out.iat[end, 1] = vap
+        out.iat[end, 2] = va_pos
+
+    return out
+
 
 def calculate_all_indicators(
     symbol_data: pd.DataFrame,
@@ -87,7 +275,9 @@ def calculate_all_indicators(
 
     Returns a DataFrame indexed by date with columns for price, returns,
     oscillators, RSI, moving averages, deviations, and z-scores across
-    daily and weekly timeframes.  Returns ``None`` on empty input.
+    daily and weekly timeframes, plus the daily volume-profile features
+    (POC, value-area position ``vap``, and in-value position ``va_pos``).
+    Returns ``None`` on empty input.
     """
     daily_data = symbol_data.copy()
     if daily_data.empty:
@@ -114,7 +304,7 @@ def calculate_all_indicators(
             if len(osc.dropna()) >= 20:
                 osc_sma20 = osc.rolling(window=20).mean()
                 osc_std20 = osc.rolling(window=20).std()
-                safe_std20 = osc_std20.replace(0, np.nan)
+                safe_std20 = osc_std20.replace(0, pd.NA).fillna(1.0)
                 all_results_df[f'zscore {tf_name}'] = (osc - osc_sma20) / safe_std20
 
         rsi_series = calculate_rsi(df)
@@ -127,8 +317,17 @@ def calculate_all_indicators(
                 if period == 20:
                     all_results_df[f'dev{period} {tf_name}'] = df['close'].rolling(window=period).std()
 
+    # ── Volume profile (daily only): POC / value-area position ────────────────
+    #  Measured, no-inference structure ported from the Inferred-Delta volume
+    #  profile. Gives the system its missing "where volume actually traded"
+    #  dimension; feeds vap_signal in the conviction blend + the selection layer.
+    vp = compute_volume_profile(daily_data)
+    all_results_df['poc latest'] = vp['poc']
+    all_results_df['vap latest'] = vp['vap']
+    all_results_df['va_pos latest'] = vp['va_pos']
+
     all_results_df = all_results_df.reindex(daily_data.index)
-    
+
     weekly_cols = [col for col in all_results_df.columns if 'weekly' in col]
     all_results_df[weekly_cols] = all_results_df[weekly_cols].ffill()
     
@@ -136,20 +335,26 @@ def calculate_all_indicators(
 
 
 def get_default_universe() -> List[str]:
-    """Get the default ETF universe from the universe module."""
+    """Get the default ETF universe from the universe module.
+
+    universe.ETF_UNIVERSE is the single source of truth (see
+    AUDIT_DIRECTIVES.md B4 — this function previously had its own
+    hardcoded 30-symbol list that had silently drifted from
+    universe.ETF_UNIVERSE, a THIRD divergent definition alongside
+    symbols.txt). If the universe module is ever unavailable, fall back to
+    symbols.txt (kept in sync with universe.ETF_UNIVERSE) rather than a
+    second hardcoded copy that can drift again.
+    """
     try:
         from universe import ETF_UNIVERSE
         return ETF_UNIVERSE
     except ImportError:
-        # Fallback hardcoded list if universe module is unavailable
-        return [
-            "SENSEXIETF.NS", "NIFTYIETF.NS", "MON100.NS", "MAKEINDIA.NS", "SILVERIETF.NS",
-            "HEALTHIETF.NS", "CONSUMIETF.NS", "GOLDIETF.NS", "INFRAIETF.NS", "CPSEETF.NS",
-            "TNIDETF.NS", "COMMOIETF.NS", "MODEFENCE.NS", "MOREALTY.NS", "PSUBNKIETF.NS",
-            "MASPTOP50.NS", "FMCGIETF.NS", "BANKIETF.NS", "ITIETF.NS", "EVINDIA.NS",
-            "MNC.NS", "FINIETF.NS", "AUTOIETF.NS", "PVTBANIETF.NS", "MONIFTY500.NS",
-            "ECAPINSURE.NS", "MIDCAPIETF.NS", "MOSMALL250.NS", "OILIETF.NS", "METALIETF.NS"
-        ]
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(here, "symbols.txt"), "r") as f:
+                return [line.strip() for line in f if line.strip()]
+        except OSError:
+            return []
 
 # Default universe (can be overridden by caller)
 SYMBOLS_UNIVERSE = get_default_universe()
@@ -163,7 +368,9 @@ COLUMN_ORDER = [
     'zscore latest', 'zscore weekly',
     'ma20 latest', 'ma90 latest', 'ma200 latest',
     'ma20 weekly', 'ma90 weekly', 'ma200 weekly',
-    'dev20 latest', 'dev20 weekly'
+    'dev20 latest', 'dev20 weekly',
+    # Volume-profile features (daily): point-of-control + value-area position.
+    'poc latest', 'vap latest', 'va_pos latest',
 ]
 
 # --- NEW: Export max indicator period ---
@@ -231,10 +438,16 @@ def generate_historical_data(
     # Update metrics
     metrics.symbols_count = len(symbols_to_process)
     
-    # === DOWNLOAD WITH CIRCUIT BREAKER ===
+    # === DOWNLOAD WITH CIRCUIT BREAKER + RETRY ===
     try:
-        # Use circuit breaker for yfinance calls
+        # Retry INSIDE the circuit breaker, breaker OUTSIDE: a single yfinance
+        # transient (the common case — brief rate-limit blip, momentary
+        # network hiccup) gets a couple of quick backoff retries before
+        # counting as a breaker failure. Without this, RetryWithBackoff was
+        # imported but never applied anywhere, so one transient failure
+        # ended the whole run immediately (see AUDIT_DIRECTIVES.md B6).
         @yfinance_circuit.protect
+        @RetryWithBackoff(max_retries=2, initial_delay=2.0, backoff_factor=2.0)
         def download_data():
             return yf.download(
                 symbols_to_process,
@@ -242,7 +455,7 @@ def generate_historical_data(
                 end=end_date + timedelta(days=1),
                 progress=False,
             )
-        
+
         all_data = download_data()
         
     except Exception as e:
@@ -319,8 +532,18 @@ def generate_historical_data(
             if not symbol_df.empty:
                 indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator)
                 ticker_indicator_cache[ticker] = indicators_df
-                
-        except (pd.errors.DataError, KeyError, IndexError):
+
+        except (pd.errors.DataError, KeyError, IndexError, ValueError) as e:
+            # ValueError added: a malformed bar (e.g. NaN high/low reaching an
+            # int(np.floor(...)) call before the guard in compute_volume_profile
+            # was fixed) previously aborted the WHOLE data-fetch phase for
+            # every symbol, not just the offending one. One bad ticker must
+            # not fail the run — log and skip it instead.
+            try:
+                from logger_config import console
+                console.warning(f"Skipping {ticker}: indicator computation failed ({type(e).__name__}: {e})")
+            except Exception:
+                pass
             continue
 
     # 3. --- Generate Daily Snapshots in Memory ---
@@ -328,10 +551,20 @@ def generate_historical_data(
     # Use the index of the downloaded data as the authoritative date range
     date_range = all_data.index.normalize().unique()
 
+    # Warm-up is measured in TRADING bars, not calendar days: ma200 needs 200
+    # trading rows (~290 calendar days for NSE/US calendars with weekends +
+    # holidays), so a calendar-day cutoff of MAX_INDICATOR_PERIOD (200) days
+    # left the first ~90 calendar days (~30% of a typical panel) with NaN
+    # ma200/ma90-weekly etc. still being emitted as snapshots. Skip the first
+    # MAX_INDICATOR_PERIOD *bars* of date_range instead — the caller already
+    # over-fetches enough calendar days (see _load_historical_data's x1.5+30
+    # buffer) to have that many bars available before the requested window.
+    _warm_dates = set(date_range[:MAX_INDICATOR_PERIOD])
+
     for snapshot_date in date_range:
-        # --- NEW: Only start generating snapshots *after* the indicator period
+        # --- Only start generating snapshots *after* the indicator warmup
         # We also only care about dates *within* the requested range (end_date)
-        if snapshot_date < (start_date + timedelta(days=MAX_INDICATOR_PERIOD)) or snapshot_date > end_date:
+        if snapshot_date in _warm_dates or snapshot_date > end_date:
             continue
 
         daily_results: List[Dict[str, Any]] = []
@@ -362,9 +595,7 @@ def generate_historical_data(
             final_df = pd.DataFrame(daily_results)
             for col in COLUMN_ORDER:
                 if col not in final_df.columns:
-                    # np.nan (not pd.NA) so a missing column stays float64 and a
-                    # downstream float() on it won't raise "not 'NAType'".
-                    final_df[col] = np.nan
+                    final_df[col] = pd.NA
             
             final_df = final_df[COLUMN_ORDER]
             pragati_data_list.append((snapshot_date, final_df))

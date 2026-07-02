@@ -7,68 +7,276 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [8.1.0] - 2026-07-01
+## [10.0.0] - 2026-07-02
 
-### 📈 Analytics & 🔗 Broker Sync — Curate → Analyse → Execute
+### 🔍 Full-System Correctness & Rigor Audit
+
+A comprehensive audit of every module (see `AUDIT_DIRECTIVES.md` for the full
+finding-by-finding record) surfaced and resolved issues spanning calibration
+integrity, data correctness, portfolio construction, analytics, infrastructure,
+and UI truth-in-labeling. Every fix was empirically validated (statistical
+false/true-positive rate tests, bit-identical numerical comparisons, or
+end-to-end pipeline runs), not merely reviewed.
+
+**Breaking / behavioral changes**
+
+- `PASSPORT_VERSION` bumped to `v7-pragyam-conviction-strat`, auto-invalidating
+  all prior passports (v4/v5/v6). Recalibration is required for every scope.
+- Intelligence Mode will calibrate **less often** than before: a paired
+  significance test now gates every passport save (see below), so a scope
+  without a genuine, statistically-demonstrable edge over the 1/6×6 default
+  will honestly report a skip reason instead of deploying a calibration.
+- `portfolio.compute_conviction_based_weights`'s `dispersion_params` now
+  expects a bare `gamma` float; a legacy `(boost, penalty)` tuple is still
+  accepted for backward compatibility (only its first element is used).
+- The dark/light theme toggle (never functional — see below) has been removed
+  entirely; Obsidian Quant dark is now the only theme.
+
+### ✨ Added
+
+- **Strategy Endorsement** — a sixth conviction signal. Each of the 95
+  strategies' own top-quartile picks (by its internal weighting) casts an
+  "endorsement vote"; a symbol's cross-sectional percentile rank of votes
+  becomes `strat_signal`. Previously every strategy's computed weights were
+  discarded after aggregation and the union of "candidates" across 95
+  strategies was ~= the entire data-valid universe, so the strategy layer
+  contributed zero information to selection. `w_strat` cannot be calibrated
+  historically (no historical vote data exists) and stays fixed at its
+  default weight; the calibrator learns the other five signals on a 5-simplex
+  scaled to fill the remaining mass.
+- **Regime-family-conditioned calibration** — the calibration harvest is now
+  filtered to dates that actually occurred in the target regime's FAMILY
+  (Bull/Chop/Bear Mix) before any learning happens. Previously a passport
+  keyed "BEAR" was estimated on the entire trailing window regardless of
+  regime; the label distinguished only when a calibration happened to run.
+- **Statistically-significant beats-default gate** — a passport is saved only
+  when the learned weights beat the default baseline by a paired one-sample
+  t-test on per-date IC differences (not a naive point-estimate IR
+  comparison, which was found to accept ~40% of pure-noise calibrations at
+  realistic validation-date counts). Deployed weights are shrunk toward the
+  default in proportion to out-of-sample confidence.
+- **Purged, non-overlapping IC estimation** — embargoes the train/val
+  boundary and samples Information Coefficients on non-overlapping dates
+  only, removing the serial-correlation bias that inflated the naive
+  overlapping-window IR estimate.
+- **Continuous power-law position dispersion** — `adjusted = conviction **
+  gamma` replaces the median-step boost/penalty formula, which created up to
+  a ~13x weight ratio between two candidates one conviction point apart.
+- **Position-bound feasibility** — the 1%/10% bounds are automatically
+  relaxed to the minimal value that restores feasibility when `num_positions`
+  makes the nominal bounds mathematically unsatisfiable (e.g. 5 positions
+  cannot all satisfy a 10% cap).
+- **Frozen run context** — result tabs read the exact (universe, index,
+  regime, mode, anchor date) a curated portfolio was produced under, not live
+  sidebar state, so browsing the sidebar after a run can no longer re-score
+  an already-curated portfolio under a different scope or resolve Analytics
+  against the wrong benchmark.
+- **Per-session execution metrics** — `metrics.get_metrics()` now returns a
+  tracker scoped to `st.session_state` under Streamlit, so concurrent users
+  no longer share/interleave phase timings, errors, and run IDs.
+- Volume-dependent-signal coverage warning on the Portfolio tab, and an
+  upfront warning when selecting the Currency universe (FX pairs report zero
+  volume, so Oscillator/Z-Score/Value Area are structurally unavailable).
+- `analytics.resolve_risk_free_rate` — resolves the risk-free rate to the
+  benchmark's currency zone (6.5% INR vs 4.5% USD) instead of always using
+  the INR rate.
+- `AUDIT_DIRECTIVES.md` — the full audit record with literature citations.
+
+### 🔧 Fixed
+
+- **Benchmark resolution** for non-NIFTY universes (US Indexes, Commodities,
+  Crypto, Currency) — the universe-level fallback map's keys never matched
+  real universe strings, so every non-NIFTY book was silently benchmarked
+  against NIFTY 50 in the Analytics tab.
+- **Trading-day vs calendar-day warm-up** — indicator warm-up was measured in
+  calendar days where trading days were required, leaving ~30% of every
+  historical panel with NaN `ma200`/`ma90 weekly` still emitted as usable
+  snapshots.
+- **RSI warm-up mis-fill** — the "all-gains → RSI=100" backfill also stamped
+  genuine warm-up NaN rows as a maximally-overbought 100.
+- **Liquidity Oscillator warm-up contamination** — `fillna(1.0)` on the
+  volume-moving-average and price-range guards fabricated large synthetic
+  values instead of propagating NaN, contaminating roughly bars 20-40 of
+  every symbol's oscillator.
+- **Volume-profile NaN-bar crash** — a bar with valid close/volume but NaN
+  high/low raised an uncaught `ValueError`, aborting the entire data-fetch
+  phase for every symbol in the run, not just the offending one.
+- **Volume-profile performance** — the per-window histogram build is now
+  vectorized via a difference-array + cumsum (~4-5x faster, validated
+  bit-identical to the original per-bar loop).
+- Zero-signal symbols (absent from the live indicator snapshot) are excluded
+  from top-N selection instead of competing at a neutral 50 conviction score.
+- Weight-renormalization over available signals only, so a universe missing
+  volume-dependent signals (FX, some futures) doesn't have its conviction
+  range compressed toward 50 by structurally-dead weight slots.
+- BBW volatility classification switched from absolute thresholds to
+  percentile-within-window, so FX (tiny absolute BBW) and crypto (large
+  absolute BBW) are read relative to their own normal range instead of being
+  permanently mis-classified.
+- CAGR/Alpha/Calmar cards are hidden (not silently mislabeled) when the
+  return window is under 60 trading days — annualizing a sub-quarter window
+  linearly extrapolates a few days of noise into a full year.
+- Passport import now validates weights numerically and as a simplex
+  (previously only checked key presence — `{"w_rsi": 37, ...}` imported
+  without error) and rejects re-importing a defaults-shape export.
+- India-index constituent fetching is now cached (`@st.cache_data`), fixing
+  repeated NSE HTTP round-trips on every sidebar rerun.
+- TLS verification restored by default on NSE archive requests (was
+  unconditionally disabled); only relaxed as a last-resort retry on a genuine
+  SSL failure.
+- Removed the NIFTY 200 Wikipedia fallback that fabricated a "top 200" from
+  an alphabetically-ordered constituent table.
+- Single source of truth for the default ETF universe (`universe.ETF_UNIVERSE`;
+  a divergent third hardcoded copy in `backdata.py` is gone).
+- Broker Sync no longer zeroes a template's existing quantity when a matched
+  holding was curated at 0 units — left untouched, like a non-match.
+- Retry-with-backoff is now actually applied to the yfinance download (was
+  imported but never wired in).
+- Removed a 1.5s blocking `time.sleep` from the end of every successful run;
+  strategy failures are now logged instead of silently swallowed.
+
+### 🗑️ Removed
+
+- Dead UI components with zero call sites: `render_theme_toggle` (ran inside
+  a zero-height sandboxed iframe — was never clickable), `render_info_box`,
+  `render_warning_box`, `render_chart_skeleton`, `render_collapsible_section`
+  (+ `_close`), `render_export_button_row`, plus their corresponding dead CSS.
+- The `[data-theme="light"]` CSS token/override blocks (unreachable given the
+  removed toggle, and most components hard-code dark colors inline anyway).
+
+---
+
+## [9.3.0] - 2026-07-01
+
+### 🎯 Regime Detector — Fixed Weights (No Calibration)
+
+**Changed**
+
+- The market-regime detector now uses **fixed 8-factor weights** (`regime.FACTOR_WEIGHTS`)
+  — it is no longer calibrated. This adopts the legacy hardcoded-weighting design,
+  retaining the current 8th `acceptance` (volume-profile) factor at a fixed weight.
+  Only the **conviction blend** is calibrated (unchanged). Factor math, thresholds,
+  and the regime hierarchy are identical to before.
+
+**Removed**
+
+- The entire regime-factor calibration layer: `intelligence.RegimeFactorPassport`,
+  `calibrate_regime_factors`, `get_active_factor_weights`, `build_regime_harvest`,
+  `_regime_ir`, `_softmaxN`, `regime_passport_filename`, `REGIME_PASSPORT_VERSION`,
+  `REGIME_FACTOR_NAMES`, `DEFAULT_FACTOR_WEIGHTS`, `MIN_REGIME_DATES`;
+  `regime.build_regime_factor_history` + `_resolve_factor_weights`; the Phase 1.4
+  calibration step; and the `.passports/regimefactors_*.json` passport type.
+- `MarketRegimeDetector.detect()` simplified — dropped the `(universe, index, mode)`
+  parameters (regime is no longer scope/mode-dependent).
+
+---
+
+## [9.2.0] - 2026-07-01
+
+### 📈 Analytics — Track the Curated Book vs Benchmark
 
 **Added**
 
 - **Analytics tab** — measures the LIVE curated portfolio's performance against a
   **universe-matched benchmark** (NIFTY 500 for nifty500, S&P 500 for us_sp500,
-  NIFTY 50 default, etc.), anchored to the analysis date (metrics run anchor →
-  today). Adapts the standalone SWING Analysis engine into a new `analytics.py`
-  module. A normalized portfolio-vs-benchmark chart (indexed to 100) plus
-  metric-card rows for risk-adjusted (Period Return, CAGR, Alpha, Sharpe, Sortino,
-  Calmar, Info Ratio), risk (Volatility, Max Drawdown, VaR/CVaR, Beta, Tracking
-  Error) and benchmark comparison (Benchmark/Excess return, Up/Down capture,
-  Correlation, R²). Reads `st.session_state.portfolio` directly — no CSV/Excel
-  upload. The yfinance fetch is cached (`_analytics_series_cached`).
-- **Broker Sync tab** — writes the live curated portfolio's per-symbol units into
-  broker order-template JSONs (e.g. Kite `ETF.json` → `params.quantity`),
-  producing import-ready order files. Reads the curated book directly (no CSV
-  re-upload); the natural final step of the flow. Mirrors the Intelligence tab's
-  layout (status card + uploader | results table + downloads) plus a full-width
-  "How the Sync Works" method card, reusing existing Obsidian Quant chrome.
-- `analytics.py` — `resolve_benchmark`, `fetch_analysis_data`, `compute_metrics`,
-  and `build_return_series`. `charts.create_benchmark_comparison_chart` — the
-  normalized comparison line chart (amber portfolio, dotted cyan benchmark).
+  NIFTY 50 default, etc.). Adapts the standalone SWING Analysis engine into a new
+  `analytics.py` module. Core scope: a timeframe selector (1M…MAX / YTD), a
+  normalized portfolio-vs-benchmark chart (indexed to 100), and metric-card rows
+  for risk-adjusted (Period Return, CAGR, Alpha, Sharpe, Sortino, Calmar, Info
+  Ratio), risk (Volatility, Max Drawdown, VaR/CVaR, Beta, Tracking Error) and
+  benchmark comparison (Benchmark/Excess return, Up/Down capture, Correlation, R²).
+- `analytics.py` — `resolve_benchmark`, `fetch_analysis_data`, `compute_metrics`
+  (behaviour-preserving port of the SWING engine), and `build_return_series`
+  (maps the curated `symbol`/`units` book → aligned return series). No CSV/Excel
+  upload — reads `st.session_state.portfolio` directly.
+- `charts.create_benchmark_comparison_chart` — the normalized comparison line
+  chart, re-themed to Obsidian Quant (amber portfolio, dotted cyan benchmark).
 
 **Changed**
 
 - Result tabs are now seven: Portfolio · Position Guide · **Analytics** · Regime ·
-  Intelligence · **Broker Sync** · System.
-- Regime tab hero rebuilt as one self-contained HTML flex block (factor scores
-  left, regime badge right, flush height) for reliable centring; factor bars now
-  render as center-anchored diverging bars (signed [-2, +2]), plus a full-width
-  "How the Regime Is Read" method card. Regime badge content scaled up to fill the
-  taller card.
-- Sidebar vertical rhythm normalized — a single spacing token drives every
-  inter-section gap (removed ad-hoc inline title margins and spacer divs; regime
-  card and Model Passport are now standard titled sections).
+  Intelligence · Broker Sync · System.
+- Regime tab hero row rebuilt as one self-contained HTML flex block (factor scores
+  left, regime badge right, flush height) — reliable centring/alignment. Regime
+  factor bars render as center-anchored diverging bars (signed [-2,+2]); badge
+  background dimmed to a soft state-hue tint.
+
+---
+
+## [9.1.0] - 2026-07-01
+
+### 🔗 Broker Sync — Curate → Sync → Execute
+
+**Added**
+
+- **Broker Sync tab** — writes the live curated portfolio's per-symbol units into
+  broker order-template JSONs (e.g. Kite `ETF.json` → `params.quantity`), producing
+  import-ready order files. Reads `st.session_state.portfolio` directly (no CSV
+  re-upload); the natural final step of the flow. Absorbs the former standalone
+  "Broker JSON Sync" utility. Result tabs are now six: Portfolio · Position Guide ·
+  Regime · Intelligence · Broker Sync · System.
+- The tab mirrors the Intelligence tab's layout exactly — a balanced two-column
+  block (status card + uploader | results table + downloads) plus a full-width
+  "How the Sync Works" method card — and reuses its CSS, so it reads as native
+  Obsidian Quant chrome with no new styling primitives.
+
+**Changed**
+
+- Regime tab factor list now renders all eight factors (incl. Acceptance and
+  Correlation) as a single deterministic block, and the regime badge card
+  auto-sizes to sit level with it — fixing the height misalignment that appeared
+  once the 7th/8th factors were surfaced. Badge content scaled up to fill the card.
 
 **Fixed**
 
-- **"Data fetch failed: float() argument must be a string or a real number, not
-  'NAType'" on changing the analysis date** — `backdata` used `pd.NA` in its
-  safe-divides (LiquidityOscillator, RSI, oscillator z-score) and for missing
-  columns, producing nullable/object dtypes; a downstream `float()` on an `NA`
-  cell raised. Switched all of these to `np.nan` (identical missing-ness, keeps
-  columns `float64`). No change to indicator values.
-- Analytics tab now fetches **adjusted** close prices (matching how the curated
-  book is priced), anchors the value series to the first fully-priced date (no
-  fabricated jump from a not-yet-listed holding), and warns when a held symbol
-  can't be priced (so it isn't silently excluded from the metrics).
-- Sidebar regime card could paint a run behind the main flow — the main analysis
-  now syncs `regime_date` / `regime_symbols_key`, and the sidebar's change
-  detection no longer falls back to the just-overwritten `selected_date` (which
-  froze the card).
 - File-uploader dropzone rendered unstyled on Streamlit 1.5x because the theme
-  targeted only the legacy `stFileUploadDropzone` test-id; now targets both the
-  legacy and current (`stFileUploaderDropzone`) ids with a light-touch re-skin
-  that preserves the native compact layout.
-- `inject_css` now reads `theme.css` as UTF-8 (was failing on non-ASCII bytes
-  under the Windows cp1252 default) and cache-busts the injected `<style>` by
-  mtime so edits aren't served stale.
+  targeted the legacy `stFileUploadDropzone` test-id; now targets both the legacy
+  and current (`stFileUploaderDropzone`) ids with a light-touch re-skin that
+  preserves the native compact layout (fixes the oversized box, duplicated button
+  label, and enlarged delete icons).
+
+---
+
+## [9.0.0] - 2026-07-01
+
+### 📊 Value-Area Position (VAP) — Volume Profile as a Fifth Conviction Signal
+
+**Architectural Thesis**
+
+PRAGYAM had no notion of *where volume actually traded* — its only value anchor was
+the rolling mean baked into the oscillator z-score. v9.0.0 ports the measured volume-
+profile geometry from the Inferred-Delta indicator (POC + value area, no order-flow
+inference) into a cross-sectional EOD feature and threads it through the whole engine.
+
+**Added**
+
+- **`backdata.compute_volume_profile()`** — rolling proxy-binned volume profile per
+  symbol → `poc latest`, `vap latest` (volatility-normalised premium/discount to
+  value), `va_pos latest` (position inside the value area). Added to `COLUMN_ORDER`.
+- **Fifth conviction signal `vap_signal`** ∈ [-2, +2], in both `intelligence._signals_from_row`
+  and `regime.compute_conviction_signals`. `DEFAULT_WEIGHTS` is now an even 5-way
+  `0.20 ×5`; the conviction calibrator optimises the **5-simplex** (`_softmax5`).
+- **Learned regime-factor weights** — the 8 regime factors (incl. the new volume-
+  profile **`acceptance`** factor) are no longer hardcoded. `intelligence.calibrate_regime_factors`
+  learns them per `(universe, index)` by maximising the rank correlation of the
+  composite regime score vs forward universe return, stored in a `RegimeFactorPassport`.
+- **Structural selection** — `portfolio.compute_conviction_based_weights` breaks
+  top-N conviction ties by value-area position (prefer discount to value).
+
+**Changed**
+
+- Regime detector is now **8-factor** (was 7); `MarketRegimeDetector.detect` accepts
+  `(universe, selected_index, mode)` and resolves learned-or-default factor weights.
+- UI swept end-to-end: Position Guide table gains a VAP column; conviction heatmap
+  gains a Value Area row; Intelligence tab shows 5 active weights + the 5-simplex /
+  regime-factor method copy; Regime tab shows the Acceptance factor with live
+  (learned) weight percentages; System/landing cards, sidebar toggle help, README,
+  and module docstrings updated.
+- `PASSPORT_VERSION → v5-pragyam-conviction-vap` (auto-invalidates v4 passports).
+
+**Fixed**
+
+- `ui/theme.py` reads `theme.css` as UTF-8 (was crashing on Windows cp1252 default).
 
 ---
 

@@ -27,7 +27,11 @@ import pandas as pd
 import yfinance as yf
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-RISK_FREE_RATE = 0.065          # annualized, used in Sharpe/Sortino/Treynor
+RISK_FREE_RATE = 0.065          # annualized INR risk-free rate (India) — the
+                                 # default for Sharpe/Sortino/Treynor. Non-INR
+                                 # books should use resolve_risk_free_rate()
+                                 # instead of this constant directly.
+US_RISK_FREE_RATE = 0.045       # annualized USD risk-free rate proxy (~UST yield)
 DEFAULT_BENCHMARK_TICKER = "^NSEI"
 DEFAULT_BENCHMARK_NAME = "NIFTY 50"
 
@@ -40,7 +44,9 @@ TIMEFRAMES: Dict[str, Optional[int]] = {
 # ── Universe → benchmark map ────────────────────────────────────────────────────
 # Maps a Pragyam (universe, selected_index) to a Yahoo benchmark ticker + label.
 # NIFTY family → their Yahoo index tickers; sensible broad-market fallbacks
-# otherwise. selected_index (e.g. "NIFTY 500", "NIFTY MIDCAP 150") takes priority.
+# otherwise. selected_index (e.g. "NIFTY 500", "NIFTY MIDCAP 150", "S&P 500")
+# takes priority — it also covers the US_INDEX_LIST entries (universe.py),
+# since those are passed as `selected_index` too, not just NIFTY names.
 _INDEX_BENCHMARKS: Dict[str, Tuple[str, str]] = {
     "NIFTY 50":         ("^NSEI",      "NIFTY 50"),
     "NIFTY NEXT 50":    ("^NSMIDCP",   "NIFTY Midcap"),   # proxy
@@ -62,13 +68,28 @@ _INDEX_BENCHMARKS: Dict[str, Tuple[str, str]] = {
     "NIFTY METAL":        ("^CNXMETAL", "NIFTY Metal"),
     "NIFTY ENERGY":       ("^CNXENERGY", "NIFTY Energy"),
     "NIFTY REALTY":       ("^CNXREALTY", "NIFTY Realty"),
+    # US indexes (universe.US_INDEX_LIST) — these are the exact strings passed
+    # as `selected_index` when universe == "US Indexes", so they belong here
+    # alongside the NIFTY names rather than in the universe-level fallback map
+    # (which was previously keyed on strings like "us_sp500" that never
+    # matched the real universe value "US Indexes" — see AUDIT_DIRECTIVES.md A11).
+    "S&P 500":          ("^GSPC", "S&P 500"),
+    "DOW JONES":        ("^DJI",  "Dow Jones"),
+    "NASDAQ 100":       ("^NDX",  "NASDAQ 100"),
 }
 
-# Universe-level fallback when no specific index is selected.
+# Universe-level fallback when no specific index is selected — keyed on the
+# EXACT universe strings from universe.UNIVERSE_OPTIONS, not substrings that
+# never occur in real values. Previously this map's keys ("us_sp500", etc.)
+# never matched the actual universe strings ("US Indexes", "Commodities", ...),
+# so every non-NIFTY universe silently fell through to the NIFTY 50 default.
 _UNIVERSE_BENCHMARKS: Dict[str, Tuple[str, str]] = {
-    "us_sp500":    ("^GSPC", "S&P 500"),
-    "us_nasdaq100": ("^NDX", "NASDAQ 100"),
-    "us_dow":      ("^DJI",  "Dow Jones"),
+    "US Indexes":    ("^GSPC",   "S&P 500"),
+    "Commodities":   ("DBC",     "Bloomberg Commodity proxy (DBC)"),
+    "Crypto":        ("BTC-USD", "Bitcoin"),
+    "Currency":      ("UUP",     "USD Index proxy (UUP)"),
+    "ETF Index":     ("^NSEI",   "NIFTY 50"),
+    "India Indexes": ("^NSEI",   "NIFTY 50"),
 }
 
 
@@ -76,16 +97,31 @@ def resolve_benchmark(universe: str = "default",
                       selected_index: Optional[str] = None) -> Tuple[str, str]:
     """Return (yahoo_ticker, display_name) for the active (universe, index).
 
-    A specific NIFTY index selection wins; otherwise fall back to a per-universe
-    default, then NIFTY 50 for Indian/ETF universes.
+    A specific index selection (NIFTY family or US_INDEX_LIST) wins;
+    otherwise fall back to the exact-match universe default, then NIFTY 50.
     """
     if selected_index and selected_index in _INDEX_BENCHMARKS:
         return _INDEX_BENCHMARKS[selected_index]
-    u = (universe or "default").lower()
-    for key, bm in _UNIVERSE_BENCHMARKS.items():
-        if key in u:
-            return bm
+    if universe in _UNIVERSE_BENCHMARKS:
+        return _UNIVERSE_BENCHMARKS[universe]
     return (DEFAULT_BENCHMARK_TICKER, DEFAULT_BENCHMARK_NAME)
+
+
+# US-denominated benchmark tickers — any resolved benchmark starting with one
+# of these means the book (and its risk-free comparison) is USD, not INR.
+_USD_BENCHMARK_TICKERS = {"^GSPC", "^DJI", "^NDX"}
+
+
+def resolve_risk_free_rate(benchmark_ticker: str) -> float:
+    """Annualized risk-free rate matching the benchmark's currency zone.
+
+    Sharpe/Sortino/Treynor are only meaningful relative to a risk-free rate
+    denominated in the same currency as the returns being measured — using
+    the INR rate for a USD-benchmarked book (or vice versa) silently biases
+    every risk-adjusted metric. Extend _USD_BENCHMARK_TICKERS if more
+    non-INR benchmarks are added to _INDEX_BENCHMARKS / _UNIVERSE_BENCHMARKS.
+    """
+    return US_RISK_FREE_RATE if benchmark_ticker in _USD_BENCHMARK_TICKERS else RISK_FREE_RATE
 
 
 def _to_yf_ticker(symbol: str) -> str:
@@ -172,7 +208,8 @@ def compute_metrics(
 
     if returns.empty or len(returns) < 2:
         return {
-            "total_return": 0, "cagr": 0, "volatility": 0, "daily_vol": 0,
+            "total_return": 0, "cagr": 0, "cagr_meaningful": False,
+            "volatility": 0, "daily_vol": 0,
             "max_drawdown": 0, "drawdown_series": pd.Series(dtype=float),
             "sharpe": 0, "sortino": 0, "calmar": 0,
             "var_95": 0, "var_99": 0, "cvar_95": 0,
@@ -189,6 +226,15 @@ def compute_metrics(
     ann_factor = min(252 / n_days, 1) if n_days < 252 else 252 / n_days
     m["total_return"] = total_ret * 100
 
+    # Annualizing a sub-quarter return window is statistically indefensible
+    # (CFA Institute GIPS guidance advises against annualizing periods under a
+    # year) — a 4-day +2% run linearly extrapolated to "252 days" prints a
+    # three-digit "CAGR" that has no forecasting content. Below 60 trading
+    # days (~a quarter), CAGR/Alpha are computed for completeness but flagged
+    # via cagr_meaningful=False so the UI can hide those cards rather than
+    # display a number that reads as precise but is actually noise amplified
+    # by a large extrapolation factor.
+    m["cagr_meaningful"] = n_days >= 60
     if total_ret > -1:
         if n_days < 20:
             m["cagr"] = total_ret * (252 / n_days) * 100
@@ -275,15 +321,31 @@ def compute_metrics(
             b_total = (1 + b_ret).prod() - 1
             m["benchmark_return"] = b_total * 100
 
+            # Alpha compares p_cagr (portfolio) vs b_cagr (benchmark), so both
+            # MUST be annualized on the exact same day-count basis and
+            # convention — previously p_cagr used m["cagr"] (computed on the
+            # portfolio's own n_days, possibly before benchmark alignment)
+            # while b_cagr used aligned_days with a different <20 threshold,
+            # so the two sides of the alpha subtraction weren't strictly
+            # comparable. Recompute p_cagr on the SAME aligned window here.
             aligned_days = len(aligned)
             aligned_ann = min(252 / aligned_days, 1) if aligned_days < 252 else 252 / aligned_days
-            if b_total > -1:
-                b_cagr = ((1 + b_total) ** aligned_ann - 1) if aligned_days >= 20 else b_total * (252 / aligned_days)
-            else:
-                b_cagr = -1
+            p_total_aligned = (1 + p_ret).prod() - 1
 
-            p_cagr = m["cagr"] / 100
+            def _cagr_on(total_ret_: float, n_: int, ann_: float) -> float:
+                if total_ret_ <= -1:
+                    return -1.0
+                return (total_ret_ * (252 / n_)) if n_ < 20 else ((1 + total_ret_) ** ann_ - 1)
+
+            b_cagr = _cagr_on(b_total, aligned_days, aligned_ann)
+            p_cagr = _cagr_on(p_total_aligned, aligned_days, aligned_ann)
+
             expected_return = rf_rate + m["beta"] * (b_cagr - rf_rate)
+            # Alpha inherits the same sub-quarter unreliability as CAGR (it IS
+            # a function of two CAGRs) — gate it on the same aligned-window
+            # day count rather than the portfolio's own (possibly longer,
+            # pre-alignment) n_days.
+            m["cagr_meaningful"] = m["cagr_meaningful"] and aligned_days >= 60
             m["alpha"] = (p_cagr - expected_return) * 100
 
             corr = p_ret.corr(b_ret)
@@ -321,6 +383,7 @@ def build_return_series(
 
     ``portfolio`` must have ``symbol`` and ``units`` columns (the live Pragyam
     book). Returns an error string (non-empty) instead of raising on failure.
+
     ``unpriced`` lists held symbols (with non-zero units) that could not be
     priced/matched — the caller should surface these, since a dropped holding
     silently under-represents the book.
@@ -331,6 +394,7 @@ def build_return_series(
 
     symbols = [str(s) for s in portfolio["symbol"].tolist()]
     quantities = {str(s): float(u or 0) for s, u in zip(portfolio["symbol"], portfolio["units"])}
+
     # Held symbols we actually need a price for (units > 0). Zero-unit rows can't
     # affect value, so their absence is not a data gap.
     held = {s for s in symbols if quantities.get(s, 0.0) > 0}
@@ -385,7 +449,9 @@ def build_return_series(
 __all__ = [
     "TIMEFRAMES",
     "RISK_FREE_RATE",
+    "US_RISK_FREE_RATE",
     "resolve_benchmark",
+    "resolve_risk_free_rate",
     "fetch_analysis_data",
     "compute_metrics",
     "build_return_series",

@@ -7,7 +7,7 @@ Obsidian Quant Terminal Design System — Institutional-grade financial visualiz
 All charts use chart_layout() and style_axes() from ui/theme.py for consistent theming.
 Aesthetics match Nishkarsh v1.2.0 chart patterns (line widths, fills, markers, trace colors).
 
-Version: 1.4.0
+Author: @thebullishvalue
 """
 
 import plotly.graph_objects as go
@@ -29,7 +29,7 @@ COLORS = {
     "amber_glow": "rgba(212, 168, 83, 0.25)",
 
     # Heatmap / Signal: Diverging scale (Rose → Slate → Emerald)
-    # Bearish: Rose (sharp,警示)
+    # Bearish: Rose (sharp, warning)
     "rose": "#E8555A",
     "rose_dim": "rgba(232, 85, 90, 0.5)",
     "rose_glow": "rgba(232, 85, 90, 0.2)",
@@ -181,7 +181,8 @@ def create_conviction_heatmap(portfolio_with_signals: pd.DataFrame) -> go.Figure
     """Signal-strength heatmap for portfolio holdings.
 
     Each row is a position; columns are RSI, Oscillator, Z-Score, MA Alignment,
-    and the composite Conviction score. Colours run red → amber → green.
+    Value Area (VAP, shown when present), and the composite Conviction score.
+    Colours run red → amber → green.
 
     Trace colors match Nishkarsh exactly:
     - Rose (bear): #FB7185
@@ -204,6 +205,15 @@ def create_conviction_heatmap(portfolio_with_signals: pd.DataFrame) -> go.Figure
 
     signal_cols = ["rsi_signal", "osc_signal", "zscore_signal", "ma_signal"]
     col_labels = ["RSI", "Oscillator", "Z-Score", "MA Align"]
+    # Value-Area Position (volume profile) and Strategy Endorsement — show
+    # only when present so older snapshots without the column still render
+    # the legacy signal set.
+    if "vap_signal" in df.columns:
+        signal_cols.append("vap_signal")
+        col_labels.append("Value Area")
+    if "strat_signal" in df.columns:
+        signal_cols.append("strat_signal")
+        col_labels.append("Strategy")
 
     # Conviction score column: scale [0,100] → [-2,2] for unified colorscale
     conviction_normalised = (df["conviction_score"] / 100.0) * 4.0 - 2.0
