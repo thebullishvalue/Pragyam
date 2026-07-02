@@ -2536,8 +2536,11 @@ def main():
         # having run it yet) is a probable cache MISS: auto-computing there
         # used to trigger a full synchronous yfinance multi-symbol download
         # inside the sidebar's render path — 10-30s of a frozen sidebar just
-        # for looking around (see AUDIT_DIRECTIVES.md C4). Show a dimmed
-        # "stale" card with an explicit refresh button instead.
+        # for looking around (see AUDIT_DIRECTIVES.md C4). Show a simple
+        # "awaiting first run" state instead — no manual refresh control:
+        # clicking Run Analysis always computes and stores the regime as part
+        # of Phase 1, so the card self-resolves on the next rerun with no
+        # user action beyond the button they were already going to click.
         _last_run_ctx = st.session_state.get("run_context")
         _likely_cached = (
             _last_run_ctx is not None
@@ -2579,19 +2582,10 @@ def main():
                 <div style="color:var(--ink-tertiary); font-size:0.7rem; text-transform:uppercase;
                             letter-spacing:0.5px; font-weight:600; margin-bottom:4px; font-family:var(--data);">Market Regime</div>
                 <div style="color:var(--ink-tertiary); font-size:0.8rem; font-family:var(--data);">
-                    Not computed for this date/universe yet — click Refresh, or it will compute
-                    automatically when you Run Analysis.
+                    Run Analysis to detect the market regime for this date and universe.
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("↻ Refresh regime", use_container_width=True, key="sidebar_regime_refresh"):
-                with st.spinner("Detecting regime…"):
-                    rd = _detect_regime_cached(selected_date_obj, symbols_key)
-                    st.session_state.regime_result_dict = rd
-                    st.session_state.suggested_mix = rd.get("mix_name", "Chop/Consolidate Mix")
-                    st.session_state.regime_date = selected_date
-                    st.session_state.regime_symbols_key = symbols_key
-                st.rerun()
 
         # 5. Portfolio Parameters
         st.markdown('<div class="sidebar-title">Portfolio Parameters</div>', unsafe_allow_html=True)

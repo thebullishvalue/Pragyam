@@ -55,6 +55,22 @@ class BaseStrategy(ABC):
 
         df_copy = df.copy()
 
+        # Coerce every numeric-intent column to float64 BEFORE any NaN-handling
+        # below. A column entirely absent from a given day's source data (e.g.
+        # a weekly column before enough history has accumulated) is assigned
+        # `pd.NA` in backdata.generate_historical_data, which produces an
+        # object-dtype pandas column. `.fillna(0)` downcasts object-dtype
+        # columns back to numeric only as an implementation detail that
+        # pandas has deprecated (FutureWarning: "Downcasting object dtype
+        # arrays on .fillna ... is deprecated") — under the new opt-in
+        # behavior (or a future pandas default) the column stays object-dtype
+        # even after fillna, and every numpy ufunc downstream (np.tanh,
+        # np.exp, np.sqrt, np.isinf, **) then raises a TypeError. Explicit
+        # coercion here removes the dependency on that deprecated fallback.
+        numeric_cols = [c for c in df_copy.columns if c not in ("symbol", "date")]
+        for col in numeric_cols:
+            df_copy[col] = pd.to_numeric(df_copy[col], errors="coerce")
+
         rsi_columns = ['rsi latest', 'rsi weekly']
         for col in rsi_columns:
             if col in df_copy.columns:

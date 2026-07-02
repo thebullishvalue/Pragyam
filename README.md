@@ -418,9 +418,9 @@ These are all **intentional, conservative refusals** — Pragyam will not deploy
 
 This was a v8.0.0 pre-release bug where the sidebar painted before Phase 1.5 ran. Fixed: after a successful first-run calibration, Phase 1.5 triggers an `st.rerun()` so the sidebar repaints with the freshly-saved passport. If you still see this, hit **Run Analysis** once more — the passport is on disk and will be picked up.
 
-### Sidebar regime card shows "Not computed for this date/universe yet"
+### Sidebar regime card shows "Run Analysis to detect the market regime..."
 
-The sidebar only auto-computes the regime card without a spinner when the current date/universe exactly matches the last completed Run Analysis (guaranteed already cached). Browsing to a *different* date or universe shows this stale state instead of silently blocking the sidebar for 10-30s on a cache miss — click **↻ Refresh regime** to compute it explicitly, or just hit **Run Analysis**.
+The sidebar only auto-computes the regime card without a spinner when the current date/universe exactly matches the last completed Run Analysis (guaranteed already cached). Browsing to a *different* date or universe shows this awaiting state instead of silently blocking the sidebar for 10-30s on a cache miss — hit **Run Analysis** and the card fills in automatically once Phase 1 completes.
 
 ### Passport doesn't persist across `streamlit cloud` deploys
 
