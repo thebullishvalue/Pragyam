@@ -236,7 +236,7 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
 # Single LOOKBACK used by both the regime detection cache and the main-flow
 # fetch — so the regime card, the Phase 2 curation, and the Regime Score
 # History chart all reason about the same historical panel.
-_REGIME_LOOKBACK_FILES = 200
+_REGIME_LOOKBACK_FILES = 100
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
