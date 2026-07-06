@@ -275,8 +275,18 @@ footer {
     }
 }
 
-.section-hdr:first-child {
-    margin-top: 0;
+/* Streamlit wraps every st.markdown block in its own stMarkdownContainer,
+   so a header is ALWAYS the :first-child of that wrapper — a plain
+   `.section-hdr:first-child` rule here used to fire on EVERY header and
+   silently zeroed the sp-10 rhythm across the whole app: the real break
+   between sections degraded to Streamlit's ~1rem flex gap, which is why
+   bare-header breaks sat cramped next to oversized divider/gap breaks.
+   Collapse instead at the element-container level: only a header that
+   OPENS its vertical block (first element of a tab panel or column)
+   sheds the big margin. */
+[data-testid="stElementContainer"]:first-child .section-hdr,
+[data-testid="element-container"]:first-child .section-hdr {
+    margin-top: var(--sp-2);
 }
 
 /* Icon badge system */
@@ -1746,16 +1756,27 @@ footer {
    ================================================================ */
 .stPlotlyChart {
     border-radius: var(--r-md) !important;
-    border: 1px solid var(--border);
+    /* Stroke drawn as an inset ring, NOT a border: Streamlit sets this box's
+       height to exactly the figure height, so a real 1px border steals 2px
+       from the content box (border-box sizing). The plot then overflowed by
+       2px — which is what cut the bottom corners square and produced the
+       phantom scrollbar on every chart while the top corners rounded fine. */
+    border: none;
+    box-shadow: inset 0 0 0 1px var(--border);
     overflow: hidden;
     background: var(--glass);
     margin: var(--sp-2) 0 var(--sp-4) 0;
-    transition: border-color 250ms ease, box-shadow 250ms ease;
+    transition: box-shadow 250ms ease;
 }
 
 .stPlotlyChart:hover {
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Streamlit's inner plot wrapper scrolls on ANY overflow; the figure fits
+   exactly now, and any residual sub-pixel overflow must clip, not scroll. */
+.stPlotlyChart>div {
+    overflow: hidden !important;
 }
 
 /* ================================================================
@@ -1773,14 +1794,20 @@ footer {
    (which already adds sp-6 of space + its line), the two stack into an uneven
    double gap. When the divider's element-container is immediately followed by the
    header's container, collapse the header's top margin so the divider provides
-   the single, consistent break. Covers both Streamlit element-container testids. */
-[data-testid="stElementContainer"]:has(> .section-divider)
+   the single, consistent break. Covers both Streamlit element-container testids.
+   NOTE: the divider sits nested inside stMarkdown > stMarkdownContainer, so the
+   :has() must use a DESCENDANT match — the previous direct-child form
+   (:has(> .section-divider)) could never match Streamlit's real DOM and the
+   rule was dead. App code no longer places dividers before headers (the
+   header owns the section break — see app._section_divider's docstring);
+   this rule remains as the rhythm guard if such a pairing reappears. */
+[data-testid="stElementContainer"]:has(.section-divider)
     + [data-testid="stElementContainer"] .section-hdr,
-[data-testid="element-container"]:has(> .section-divider)
+[data-testid="element-container"]:has(.section-divider)
     + [data-testid="element-container"] .section-hdr,
-[data-testid="stElementContainer"]:has(> .section-divider)
+[data-testid="stElementContainer"]:has(.section-divider)
     + [data-testid="stElementContainer"] .sidebar-title,
-[data-testid="element-container"]:has(> .section-divider)
+[data-testid="element-container"]:has(.section-divider)
     + [data-testid="element-container"] .sidebar-title {
     margin-top: var(--sp-2) !important;
 }
