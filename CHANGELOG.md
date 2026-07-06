@@ -55,8 +55,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between runs. `_run_analysis` now resets the run clock alongside
   phases/errors/warnings.
 
+- **F&O universe fetch always fell to the NIFTY 500 proxy**: NSE removed the
+  "SECURITIES IN F&O" JSON index (hard 404), and the nsepython fallback used
+  `nse_get_advances_declines()` — advance/decline breadth data, not the F&O
+  list — silently mislabeled as F&O. The canonical **derivatives market-lots
+  file** (`fo_mktlots.csv`, nsearchives host) is now the primary source, with
+  structural validation of the payload (the legacy archives host answers
+  HTTP 200 with a PDF error page) and a ≥100-symbol plausibility floor. The
+  wrong-source nsepython fallback was removed; the NIFTY 500 last resort now
+  labels itself honestly as a depth proxy.
+- **Plot containers were clipped at the bottom with a phantom scrollbar**:
+  `.stPlotlyChart` drew a real 1px border while Streamlit sizes that box to
+  the exact figure height, so every chart overflowed by 2px — bottom corners
+  cut square while the top rounded fine. The stroke is now an inset
+  box-shadow ring (zero layout cost) and the inner wrapper clips rather than
+  scrolls.
+- **Section vertical rhythm was structurally broken**:
+  `.section-hdr:first-child { margin-top: 0 }` matched EVERY header (each is
+  the only child of its own stMarkdownContainer), silently zeroing the sp-10
+  section break app-wide — real breaks degraded to Streamlit's ~1rem flex
+  gap sitting next to 4–5rem divider/gap breaks (the "random dividers,
+  uneven rhythm" symptom). The collapse now happens at the element-container
+  level, so only a header that opens its tab panel/column sheds the margin.
+  The divider-adjacency guard used `:has(> .section-divider)` — a
+  direct-child combinator that can never match Streamlit's nested DOM —
+  corrected to descendant form.
+
+- **Analytics: chart legend and Benchmark card disagreed** — the Relative
+  Performance chart's benchmark series was a bare `(1+r).cumprod()`, which
+  starts at (1+r₁) on the first *return* date: the plotted line began one
+  trading day after the portfolio line and the legend's `last/first − 1`
+  silently dropped day 1's benchmark return, while the Benchmark Comparison
+  card compounded the full series. The display series now anchors a 1.0 at
+  the portfolio's base date, making the line, legend %, and card one number
+  (verified to float precision).
+- **Analytics: "CAGR" was not annualized for 20–251-day windows** — the
+  annualization exponent was capped at 1 (`min(252/n_days, 1)`), so the
+  "CAGR" subtext just repeated the raw period return under the wrong label,
+  Calmar's numerator wasn't annualized, and the Info Ratio divided a
+  period-return spread by an *annualized* tracking error (systematically
+  understated for sub-year windows). CAGR/Alpha/Calmar/Info-Ratio now use
+  true geometric annualization (252/n_days exponent) in both the headline
+  and the aligned-alpha paths; the existing `cagr_meaningful` 60-day gate
+  still keeps sub-quarter annualizations off the UI.
+
 ### 🎨 Improved
 
+- **One rhythm doctrine — the section header owns the break** (documented on
+  `_section_divider`). Removed the pre-header dividers (Portfolio →
+  Conviction Signals, Position Guide table, Regime Score History, System
+  Methodology, Analytics Returns) and pre-header `section_gap()`s (Analytics
+  Benchmark Comparison, Risk Metrics), so every section boundary is the same
+  sp-10 break. Dividers remain only at non-headered boundaries: KPI band →
+  tab strip, heatmap → CSV action, tabs → footer, and the landing page's
+  card blocks.
 - **Single-bar, monotonic progress timeline.** All run milestones render into
   the one `progress_container` bar with strictly non-decreasing percentages,
   banded by phase: Phase 1 (Data & Regime) 0–20, Phase 1.5 (Intelligence)

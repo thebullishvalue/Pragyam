@@ -1,12 +1,29 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 10.0.0
+**Version:** 10.0.1
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
 Conviction-based portfolio curation for Indian equity markets using 95 quantitative strategies, with **self-tuning Bayesian calibration** of the conviction weights (per universe, index, regime family). The market-regime detector uses fixed factor weights.
 
-**Latest:** v10.0.0 — a full correctness/rigor audit (see `AUDIT_DIRECTIVES.md`): a sixth conviction signal (Strategy Endorsement, giving the 95-strategy layer real influence on selection), regime-FAMILY-conditioned calibration (a passport no longer learns from the whole trailing window regardless of regime), a statistically significant beats-default gate with shrinkage (a calibration that doesn't demonstrably beat the 1/6×6 fallback out-of-sample is never deployed), continuous power-law position dispersion (replacing a median-step formula that created weight cliffs), corrected data-layer warm-up handling, and dozens of smaller correctness fixes across analytics, universe resolution, and the UI. Built on v9.3.0 (fixed-weight regime detector), v9.2.0 (Analytics tab), v9.1.0 (Broker Sync), and v9.0.0 (Value Area / VAP signal + 8th acceptance factor).
+**Latest:** v10.0.1 — calibration is now actually reachable: Phase 1.5's 100-day
+harvest window could yield at most 5 non-overlapping paired validation dates
+while the significance gate requires 8, so every calibration burned 100 Optuna
+trials and then failed the gate by construction. A dedicated ~18-month
+estimation panel (`_CALIBRATION_LOOKBACK_FILES`) now backs both the automatic
+and manual calibration paths, with a fail-fast reachability check up front.
+Also: the sidebar regime/passport cards now always repaint after a run
+completes; the F&O universe fetch reads the real NSE derivatives market-lots
+file instead of silently falling back to NIFTY 500; two Analytics bugs are
+fixed (the Relative Performance chart's benchmark line/legend disagreed with
+the Benchmark Comparison card, and CAGR/Alpha/Calmar/Info-Ratio were not
+annualized for 20–251-day windows); plot containers no longer clip at the
+bottom edge; and the result page's section spacing is now a single consistent
+rhythm instead of the previous mix of dividers and gaps. See `CHANGELOG.md`
+for the full list. Built on v10.0.0 (full correctness/rigor audit — see
+`AUDIT_DIRECTIVES.md`), v9.3.0 (fixed-weight regime detector), v9.2.0
+(Analytics tab), v9.1.0 (Broker Sync), and v9.0.0 (Value Area / VAP signal +
+8th acceptance factor).
 
 ---
 
@@ -21,7 +38,7 @@ PRAGYAM is a **multi-phase** portfolio system:
 
 Five of the six signal weights are **learned per (universe, index, regime family)** by maximising the cross-sectional Information Ratio of conviction against forward 10-day returns on dates that actually occurred in that regime family; the sixth (Strategy Endorsement) has no historical values to calibrate against and stays fixed. A passport is only deployed when it beats the even `1/6 ×6` fallback by a **statistically significant** margin (paired significance test, not a raw IR comparison) — otherwise Pragyam explicitly falls back to defaults and says why. The eight regime-detection factor weights are **fixed** (not calibrated). Different market regimes reward different signals; Intelligence mode discovers the right conviction mix automatically, when the evidence actually supports it.
 
-**Execution time:** ~20–40 s on the reuse path · ~30–50 s on first calibration of a new (universe, index, regime family) scope.
+**Execution time:** ~20–40 s on the reuse path · first calibration of a new (universe, index, regime family) scope now fetches a dedicated ~18-month estimation panel (v10.0.1), so expect a noticeably longer first run (extra data fetch + a larger harvest) — every subsequent run on that scope is back to the reuse-path timing.
 
 ---
 
@@ -263,11 +280,12 @@ Controls:
 ## Architecture
 
 ```
-PRAGYAM v10.0.0 — Phases
+PRAGYAM v10.0.1 — Phases
 
 ┌──────────────────────────────────────────────────────────────┐
 │ PHASE 1: DATA FETCHING                                       │
-│ → Fetch historical data for all symbols (yfinance)           │
+│ → Fetch historical data for all symbols (yfinance),          │
+│   100-day display/curation panel (_REGIME_LOOKBACK_FILES)    │
 │ → Detect market regime (8-factor composite, fixed weights)   │
 │ → Compute regime-family history series (for Phase 1.5)       │
 └──────────────────────────────────────────────────────────────┘
@@ -276,9 +294,15 @@ PRAGYAM v10.0.0 — Phases
 │ PHASE 1.5: INTELLIGENCE (on first encounter of a scope)      │
 │ → Look up passport for (universe, index, regime)             │
 │ → If exists  → reuse calibrated weights, skip to Phase 2     │
-│ → If missing → harvest 5 signals + forward returns,          │
+│ → If missing → fetch a DEDICATED ~18-month estimation panel  │
+│                (_CALIBRATION_LOOKBACK_FILES, 375 days) —     │
+│                the 100-day display panel cannot supply       │
+│                enough in-family dates for the gate below      │
+│              → harvest 5 signals + forward returns over it,  │
 │                tagged with regime FAMILY per date             │
 │              → filter harvest to the target regime family    │
+│              → fail fast if the validation split can't reach │
+│                the paired-date floor (min_calibration_dates) │
 │              → Optuna TPE × 100 trials (5-of-6-simplex,      │
 │                Strategy Endorsement excluded/fixed)           │
 │              → save passport ONLY if it beats the default     │
@@ -290,8 +314,9 @@ PRAGYAM v10.0.0 — Phases
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
 │ PHASE 2: CONVICTION-BASED CURATION                           │
-│ → Run ALL 95 strategies; each strategy's own top quartile    │
-│   casts an endorsement vote (feeds Strategy Endorsement)      │
+│ → Discover + run ALL 95 strategies; each strategy's own top  │
+│   quartile casts an endorsement vote (feeds Strategy          │
+│   Endorsement)                                                │
 │ → Aggregate candidate holdings (~200–400 symbols)            │
 │ → Score conviction using active weights (passport or default)│
 │ → Exclude symbols with zero usable signals from selection    │
@@ -302,6 +327,12 @@ PRAGYAM v10.0.0 — Phases
 │ → Apply position bounds (1%–10%, auto-relaxed if infeasible) │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+One progress bar spans all three phases with a strictly non-decreasing
+percentage (0–20 / 20–35 / 35–100 respectively); every intermediate milestone
+label is Title Case and states only what is true at that point (e.g.
+"Discovering Strategies" before Phase 2's strategy count is known, then
+"Running Strategies · N strategies" once it is).
 
 ### Module Structure
 
@@ -341,6 +372,8 @@ Pragyam-main/
 | Calibration | per-scope, persisted | per-scope, persisted | none | none |
 
 Calibration is a one-time cost per `(universe, index, regime)` tuple. The passport persists on disk; subsequent runs in the same scope reuse it instantly.
+
+> **v10.0.1 note:** the "first cal" figure above predates the calibration-reachability fix. First calibration of a scope now fetches a dedicated ~18-month estimation panel instead of reusing the 100-day display panel (which could never pass the significance gate at all — see Troubleshooting), so first-calibration wall time is higher than 30–50s. The reuse-path figure is unchanged.
 
 ---
 
@@ -408,6 +441,7 @@ The Intelligence tab now states the specific reason. Common causes:
 | `Need >15 days of history (have N)` | Increase lookback or pick a later analysis date |
 | `Harvest produced no usable rows` | Universe has too-sparse indicator coverage on the date range |
 | `Need >= 20 dates ... in the 'X Mix' regime family (have N)` | That regime family hasn't occurred often enough in the lookback window — try a longer lookback, or accept that this scope can't be calibrated yet |
+| `Validation window can yield at most N non-overlapping dates (need >= 8) ... needs >= 142` | Reachability pre-check (v10.0.1): this regime family doesn't have enough dates in the ~18-month estimation panel to ever pass the significance gate, so Optuna isn't even run. Wait for more history to accumulate in that regime, or accept the fallback |
 | `Only N paired non-overlapping validation dates available (need >= 8)` | The validation split is too thin to statistically distinguish learned weights from chance at this panel size |
 | `Validation IR ... is not positive` | The learned weights would anti-predict forward returns out-of-sample — defaults are safer |
 | `... did not significantly beat the default baseline` | The calibration doesn't demonstrably improve on the 1/6×6 fallback for this scope; this is an honest "no edge found," not a bug |
@@ -421,6 +455,15 @@ This was a v8.0.0 pre-release bug where the sidebar painted before Phase 1.5 ran
 ### Sidebar regime card shows "Run Analysis to detect the market regime..."
 
 The sidebar only auto-computes the regime card without a spinner when the current date/universe exactly matches the last completed Run Analysis (guaranteed already cached). Browsing to a *different* date or universe shows this awaiting state instead of silently blocking the sidebar for 10-30s on a cache miss — hit **Run Analysis** and the card fills in automatically once Phase 1 completes.
+
+### F&O Stocks universe loads NIFTY 500 instead of the F&O list
+
+Fixed in v10.0.1 — NSE retired the JSON endpoint Pragyam previously used, so
+every fetch fell through to the NIFTY 500 depth proxy. `get_fno_stock_list()`
+now reads the NSE derivatives market-lots file (`fo_mktlots.csv`) directly. If
+you still see the NIFTY 500 fallback message, all three sources (market-lots
+file, legacy JSON API, NIFTY 500 archive) failed — likely a transient NSE
+outage; retry, or check your network can reach `nsearchives.nseindia.com`.
 
 ### Passport doesn't persist across `streamlit cloud` deploys
 
@@ -460,6 +503,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 | Version | Date | Architecture | Headline |
 |---------|------|--------------|----------|
+| **10.0.1** | 2026-07-06 | Phases | **Calibration reachability fix** — a dedicated ~18-month estimation panel (`_CALIBRATION_LOOKBACK_FILES`) replaces the 100-day display panel for Phase 1.5 and the manual Calibrate button, with a fail-fast reachability check before Optuna runs (previously every calibration was statistically guaranteed to fail the significance gate); sidebar regime/passport cards now always repaint post-run; F&O universe fetch reads the real NSE derivatives market-lots file; two Analytics correctness fixes (benchmark chart/card agreement, true CAGR annualization for sub-year windows); plot-container bottom clipping fixed; result-page section rhythm unified to one spacing doctrine |
 | **10.0.0** | 2026-07-02 | Phases | **Full correctness/rigor audit** (`AUDIT_DIRECTIVES.md`) — sixth conviction signal (Strategy Endorsement, from real strategy votes); regime-FAMILY-conditioned calibration; statistically-significant beats-default gate with shrinkage; continuous power-law dispersion (no more weight cliffs); corrected data-layer warm-up/RSI/oscillator/volume-profile handling; fixed benchmark resolution for non-NIFTY universes; frozen run context (sidebar browsing no longer contaminates a curated portfolio's display); dozens of smaller infra/UI truth-in-labeling fixes |
 | **9.3.0** | 2026-07-01 | Phases | **Regime detector uses fixed weights** (no longer calibrated) — adopts the legacy hardcoded-weighting design, keeping the 8th acceptance factor; only the conviction blend is calibrated |
 | **9.2.0** | 2026-07-01 | Phases | **Analytics** tab — tracks the curated book vs a universe-matched benchmark (risk-adjusted / risk / benchmark metrics + normalized chart), adapting the SWING analysis engine into `analytics.py` |
