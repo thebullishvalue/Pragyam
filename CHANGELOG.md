@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [10.0.1] - 2026-07-06
+
+### 🐛 Fixed
+
+- **Calibration was mathematically unreachable — it can now actually happen.**
+  Phase 1.5 built its harvest from the 100-day `_REGIME_LOOKBACK_FILES`
+  display panel: at most 90 harvest dates → 45 validation dates → at most
+  **5** non-overlapping paired validation dates, while the paired
+  significance gate requires **8** (`MIN_PAIRED_VAL_DATES`). Every
+  calibration therefore burned 100 Optuna trials and then failed the gate,
+  by construction — the display window and the statistical gate had never
+  been reconciled. The fix sizes the data supply from the inference
+  requirement instead of weakening any gate:
+  - `intelligence.min_calibration_dates()` derives the in-family date count
+    the gate implies (142 at the defaults: 8 paired dates × horizon 10 under
+    a 50/50 split) — the documented data-supply contract.
+  - New `app._CALIBRATION_LOOKBACK_FILES = 375` (~18 months): a dedicated,
+    cached estimation panel fetched **only** when a scope actually needs
+    calibrating (reused passports never pay for it). The regime card, chart,
+    and curation stay on the fast 100-day panel. Regime-family labels for
+    the harvest are computed over the estimation panel itself.
+  - `calibrate()` now **fails fast on reachability** before the Optuna
+    search: if the validation partition cannot possibly yield 8 paired
+    dates, it reports the shortfall as the data requirement it is (with the
+    family's actual date count and the required minimum) instead of burning
+    100 trials and reporting what looked like sampling bad luck. All
+    integrity rails (paired t-test, positive val-IR, shrinkage, embargo,
+    non-overlapping stride) are unchanged — a regime family that genuinely
+    lacks history still honestly refuses to calibrate.
+- **Sidebar regime card (and passport card) froze on pre-run state after a
+  completed analysis.** The sidebar paints before `_run_analysis` executes,
+  and the only post-run repaint path was the calibration-success rerun —
+  which never fired (see above). `main()` now issues one `st.rerun()` after
+  the run flags are popped (cannot loop; the repaint pass is fully
+  cache-hit), so the regime card, passport card, and result page always
+  reflect the run that just finished.
+- Beats-default failure message now quotes the actual gate threshold
+  (`MIN_PAIRED_T_STAT = 1.895`); it previously said `t>=1.645`.
+- **Manual Calibrate button (Intelligence tab) harvested from the 100-day run
+  panel**, which the reachability gate makes a guaranteed fail — it now
+  fetches the same `_CALIBRATION_LOOKBACK_FILES` estimation panel Phase 1.5
+  uses (regime-conditioned over that panel), falling back to the run panel
+  only if the estimation fetch comes up short.
+- **Execution summary's "Total Duration" reported session age, not run
+  time**: the per-session metrics tracker's `start_time` was never reset
+  between runs. `_run_analysis` now resets the run clock alongside
+  phases/errors/warnings.
+
+### 🎨 Improved
+
+- **Single-bar, monotonic progress timeline.** All run milestones render into
+  the one `progress_container` bar with strictly non-decreasing percentages,
+  banded by phase: Phase 1 (Data & Regime) 0–20, Phase 1.5 (Intelligence)
+  20–35 — every branch (ready/skipped/calibrated/failed) lands on 35 — and
+  Phase 2 (Strategies & Curation) 35–100. Previously the bar jumped
+  backwards (25 → 21 entering calibration, 28 → 25 entering Phase 2).
+- **Milestones now state only what is true when shown, in Title Case.**
+  "Running strategies · 95 strategies" (hardcoded, shown before discovery)
+  became "Discovering Strategies" → "Running Strategies · {n} strategies";
+  "Aggregating holdings" (shown *before* the strategy loop) was replaced by
+  live in-loop updates ("Strategy {i}/{n} · {k} candidates", sweeping
+  38→65); "Phase 1 Complete" now reports the detected regime and confidence
+  instead of "Data acquisition ready".
+- **Terminal log now mirrors the milestone trace.** Each phase logs a section
+  with its load-bearing facts (panel size, detected regime, strategy /
+  candidate / position counts), and the Phase 1.5 intelligence outcome —
+  including the skip/fail *reason*, previously never printed — is logged via
+  `_log_intel_outcome`. Execution-summary polish: phase timings print in
+  Title Case (was raw `snake_case`), `total_execution` no longer double-lists
+  inside its own breakdown, the backtest-only "Rebalances: 0" row is hidden
+  on live runs, and Errors/Warnings section headers no longer render as
+  "⚠️: Errors".
+
+---
+
 ## [10.0.0] - 2026-07-02
 
 ### 🔍 Full-System Correctness & Rigor Audit

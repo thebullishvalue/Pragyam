@@ -209,8 +209,12 @@ class ExecutionMetrics:
         console.item("Total Duration", f"{self.get_total_duration():.2f}s")
 
         for phase_name, phase in self.phases.items():
+            if phase_name == "total_execution":
+                # Already reported as Total Duration above — repeating the
+                # whole run inside its own phase breakdown double-counts it.
+                continue
             status_icon = "✓" if phase.status == "success" else "✗"
-            console.detail(f"{phase_name}: {phase.duration:.2f}s [{status_icon}]")
+            console.detail(f"{phase_name.replace('_', ' ').title()}: {phase.duration:.2f}s [{status_icon}]")
 
         # Counters
         console.section("Counters")
@@ -218,7 +222,10 @@ class ExecutionMetrics:
         console.item("Days", self.days_count)
         console.item("Strategies", self.strategies_count)
         console.item("Portfolios Generated", self.portfolios_generated)
-        console.item("Rebalances", self.rebalances)
+        if self.rebalances:
+            # Backtest-only counter — printing "Rebalances: 0" on every live
+            # curation run states a fact about a process that never ran.
+            console.item("Rebalances", self.rebalances)
         
         # Performance
         if self.total_return != 0:
@@ -229,7 +236,7 @@ class ExecutionMetrics:
         
         # Errors
         if self.errors:
-            console.section("Errors", phase="⚠️")
+            console.section("Errors")
             for error in self.errors[:5]:  # Show first 5
                 console.error(f"[{error['type']}] {error['message']}")
             if len(self.errors) > 5:
@@ -237,7 +244,7 @@ class ExecutionMetrics:
         
         # Warnings
         if self.warnings:
-            console.section("Warnings", phase="⚠️")
+            console.section("Warnings")
             for warning in self.warnings[:5]:  # Show first 5
                 console.warning(warning)
             if len(self.warnings) > 5:

@@ -1,6 +1,6 @@
 [project]
 name = "pragyam"
-version = "10.0.0"
+version = "10.0.1"
 description = "Conviction-based portfolio curation for Indian equity markets: a six-signal blend (RSI, Oscillator, Z-Score, MA-alignment, volume-profile Value Area, and Strategy Endorsement) scored against a fixed eight-factor market-regime detector, with Bayesian calibration that learns five of the six conviction weights (per universe/index/regime-family) from forward returns and deploys only when a statistically significant edge over the default is demonstrated, a Broker Sync step that writes curated units into broker order JSONs, and an Analytics tab that tracks the curated book against a universe-matched benchmark — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [

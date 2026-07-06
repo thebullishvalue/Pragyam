@@ -200,6 +200,26 @@ def _intel_context() -> Tuple[str, Optional[str], str, str]:
     return universe, selected_index, regime_name, mode
 
 
+def _log_intel_outcome(outcome: Dict) -> None:
+    """Mirror the Phase 1.5 intelligence outcome to the terminal.
+
+    The progress bar shows one Intelligence milestone per run
+    (Ready/Calibrated/Skipped); the console trace must carry the same fact —
+    especially the skip/fail REASON, which is the single most diagnostically
+    useful line a run produces and previously never reached the terminal.
+    """
+    log.section("Intelligence", phase="PHASE 1.5")
+    status = (outcome.get("status") or "unknown").upper()
+    if outcome.get("label"):
+        log.item("Scope", outcome["label"])
+    log.item("Status", status)
+    if outcome.get("status") in ("calibrated", "reused"):
+        log.item("Train IR", f"{outcome.get('train_ir', float('nan')):+.3f}")
+        log.item("Val IR", f"{outcome.get('val_ir', float('nan')):+.3f}")
+    if outcome.get("reason"):
+        log.detail(outcome["reason"])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CACHED DATA FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1779,18 +1799,49 @@ def _render_intelligence_tab(regime_d: Dict):
                         "Run an analysis with a longer lookback first."
                     )
                 else:
-                    with st.spinner(f"Calibrating {passport.label} ({DEFAULT_HORIZON}-day horizon, 100 trials)..."):
-                        # Reuse the regime series computed during the last Run
-                        # Analysis when it covers this exact window; otherwise
-                        # compute it fresh so this manual calibration is also
-                        # regime-conditioned (see AUDIT_DIRECTIVES.md A2).
-                        _cached_series = st.session_state.get("regime_history_series")
-                        if _cached_series:
-                            regime_labels = regime_labels_from_series(_cached_series, len(hist_window), window_size=10)
+                    with st.spinner(
+                        f"Calibrating {passport.label} · {_CALIBRATION_LOOKBACK_FILES}-day "
+                        f"estimation panel · {DEFAULT_HORIZON}-day horizon · 100 trials..."
+                    ):
+                        # Same estimation-panel contract as Phase 1.5: the
+                        # paired beats-default gate needs >=
+                        # min_calibration_dates() in-family dates, which the
+                        # 100-day run panel (training_data_window) can never
+                        # supply — harvesting from it made this button a
+                        # guaranteed fail-fast. Fall back to the run panel
+                        # only if the estimation fetch itself comes up short.
+                        _anchor = (st.session_state.get("run_context") or {}).get(
+                            "anchor_date"
+                        ) or st.session_state.get("selected_date")
+                        _end_dt = (
+                            datetime.combine(_anchor, datetime.min.time())
+                            if _anchor else datetime.now()
+                        )
+                        _cal_hist = _load_historical_data(
+                            _end_dt, _CALIBRATION_LOOKBACK_FILES,
+                            f"UNIVERSE:{universe}|{selected_index}",
+                        )
+                        if len(_cal_hist) > len(hist_window):
+                            hist_for_harvest = _cal_hist
+                            try:
+                                _series = get_regime_history_series(_cal_hist, window_size=10, step=1)
+                            except Exception:
+                                _series = []
+                            regime_labels = regime_labels_from_series(_series, len(_cal_hist), window_size=10)
                         else:
-                            from intelligence import regime_labels_for_window
-                            regime_labels = regime_labels_for_window(hist_window, window_size=10)
-                        harvest = build_harvest(hist_window, horizon=DEFAULT_HORIZON, regime_labels=regime_labels)
+                            # Reuse the regime series computed during the last
+                            # Run Analysis when it covers this exact window;
+                            # otherwise compute it fresh so this manual
+                            # calibration is also regime-conditioned (see
+                            # AUDIT_DIRECTIVES.md A2).
+                            hist_for_harvest = hist_window
+                            _cached_series = st.session_state.get("regime_history_series")
+                            if _cached_series:
+                                regime_labels = regime_labels_from_series(_cached_series, len(hist_window), window_size=10)
+                            else:
+                                from intelligence import regime_labels_for_window
+                                regime_labels = regime_labels_for_window(hist_window, window_size=10)
+                        harvest = build_harvest(hist_for_harvest, horizon=DEFAULT_HORIZON, regime_labels=regime_labels)
                         if harvest.empty:
                             st.error("Harvest produced no usable rows. Indicator coverage may be too sparse.")
                         else:
@@ -2035,6 +2086,11 @@ def _run_analysis(
     """Execute the 2-phase analysis pipeline."""
     metrics = get_metrics()
     metrics.phases, metrics.errors, metrics.warnings = {}, [], []
+    # Reset the run clock: the tracker is per-SESSION (see metrics.get_metrics),
+    # so without this the summary's "Total Duration" reports time since the
+    # session's first run, not this run's wall time.
+    import time as _time
+    metrics.start_time, metrics.end_time = _time.time(), 0.0
     st.session_state.debug_info = []
     st.session_state.regime_history_series = None
 
@@ -2070,7 +2126,15 @@ def _run_analysis(
         progress_container = st.empty()
 
         # PHASE 1: DATA FETCHING
-        progress_bar(progress_container, 2, "Fetching market data", f"yfinance · {len(symbols_list)} symbols")
+        #
+        # Single progress bar contract: `progress_container` is the ONE
+        # progress surface for the whole run. Every milestone below renders
+        # into it with a STRICTLY NON-DECREASING percentage — the bands are
+        # Phase 1 (Data & Regime) 0-20, Phase 1.5 (Intelligence) 20-35,
+        # Phase 2 (Strategies & Curation) 35-100 — so the bar can never move
+        # backwards regardless of which Phase 1.5 branch executes. Labels are
+        # Title Case; subs carry the load-bearing datum for that milestone.
+        progress_bar(progress_container, 2, "Fetching Market Data", f"yfinance · {len(symbols_list)} symbols")
         metrics.start_phase("total_execution")
         # Must match _REGIME_LOOKBACK_FILES so the regime card / regime banner /
         # regime history chart / Phase 2 curation all share one cached panel.
@@ -2090,11 +2154,11 @@ def _run_analysis(
         metrics.end_phase("data_fetching", success=True, items=len(all_hist))
         metrics.days_count = len(all_hist)
 
-        progress_bar(progress_container, 15, "Data loaded", f"{len(all_hist)} days · {len(symbols_list)} symbols")
+        progress_bar(progress_container, 14, "Data Loaded", f"{len(all_hist)} days · {len(symbols_list)} symbols")
 
         # Regime detection — pass intelligence context so the 8 factor weights are
         # the learned ones (Intelligence mode) or the shared defaults (Standard).
-        progress_bar(progress_container, 20, "Detecting market regime", "8-factor composite scoring")
+        progress_bar(progress_container, 16, "Detecting Market Regime", "8-factor composite scoring")
         regime_result = _detect_regime_cached(selected_date, symbols_key)
         regime_name = regime_result.get("regime", "UNKNOWN")
         confidence = regime_result.get("confidence", 0.0)
@@ -2120,7 +2184,16 @@ def _run_analysis(
 
         st.session_state.current_df = all_hist[-1][1] if all_hist else pd.DataFrame()
 
-        progress_bar(progress_container, 25, "Phase 1 complete", "Data acquisition ready")
+        # Mirror the Phase 1 milestone to the terminal so the console trace
+        # carries the same checkpoints the progress bar showed.
+        log.section("Data & Regime", phase="PHASE 1")
+        log.item("Historical Panel", f"{len(all_hist)} trading days · {len(symbols_list)} symbols")
+        log.item("Market Regime", f"{regime_name.replace('_', ' ')} · {confidence:.0%} confidence")
+
+        progress_bar(
+            progress_container, 20, "Phase 1 Complete",
+            f"{regime_name.replace('_', ' ')} regime · {confidence:.0%} confidence",
+        )
 
         # Regime history series — computed ONCE here (moved up from its old
         # position after Phase 2) so Phase 1.5 can condition calibration on
@@ -2166,9 +2239,9 @@ def _run_analysis(
                     "n_val_dates":   _m["n_val_dates"],
                 })
                 progress_bar(
-                    progress_container, 25, "Intelligence ready",
+                    progress_container, 35, "Intelligence Ready",
                     f"{_passport.label} · Val IR {_m['val_ir']:+.3f} · "
-                    f"calibrated {_passport.last_calibrated}",
+                    f"Calibrated {_passport.last_calibrated}",
                 )
             elif regime_name == "UNKNOWN":
                 # A passport keyed "UNKNOWN" is a meaningless scope — it can
@@ -2182,8 +2255,8 @@ def _run_analysis(
                               "a passport keyed to UNKNOWN would never be reused.",
                 })
                 progress_bar(
-                    progress_container, 25, "Intelligence skipped",
-                    "Regime UNKNOWN — using default weights",
+                    progress_container, 35, "Intelligence Skipped",
+                    "Regime UNKNOWN · Using default weights",
                 )
             elif len(all_hist) <= DEFAULT_HORIZON + 5:
                 _outcome.update({
@@ -2191,8 +2264,8 @@ def _run_analysis(
                     "reason": f"Need >{DEFAULT_HORIZON + 5} days of history (have {len(all_hist)}).",
                 })
                 progress_bar(
-                    progress_container, 25, "Intelligence skipped",
-                    f"Need >{DEFAULT_HORIZON + 5} days of history · using default weights",
+                    progress_container, 35, "Intelligence Skipped",
+                    f"Need >{DEFAULT_HORIZON + 5} days of history · Using default weights",
                 )
             else:
                 # Estimation panel: fetched at _CALIBRATION_LOOKBACK_FILES, NOT
@@ -2205,7 +2278,7 @@ def _run_analysis(
                 # other panel and fetched only on this branch, so scopes with
                 # an existing passport never pay for it.
                 progress_bar(
-                    progress_container, 21, "Building estimation panel",
+                    progress_container, 22, "Building Estimation Panel",
                     f"{_CALIBRATION_LOOKBACK_FILES} trading days · {_passport.label}",
                 )
                 _cal_hist = _load_historical_data(
@@ -2226,9 +2299,8 @@ def _run_analysis(
                     _cal_hist = all_hist
                     _cal_series = _regime_series_for_harvest
                 progress_bar(
-                    progress_container, 22, "Calibrating intelligence",
-                    f"Building signal-return panel · {_passport.label} · "
-                    f"{DEFAULT_HORIZON}-day horizon",
+                    progress_container, 26, "Building Signal-Return Panel",
+                    f"{_passport.label} · {DEFAULT_HORIZON}-day horizon",
                 )
                 # Tag each harvested date with the regime family in effect at
                 # that date, so calibrate() conditions on regime (A2) rather
@@ -2244,27 +2316,29 @@ def _run_analysis(
                         "reason": "Harvest produced no usable rows (sparse indicators).",
                     })
                     progress_bar(
-                        progress_container, 25, "Intelligence skipped",
-                        "Harvest produced no usable rows · using default weights",
+                        progress_container, 35, "Intelligence Skipped",
+                        "Harvest produced no usable rows · Using default weights",
                     )
                 else:
                     _n_dates = _harvest["date"].nunique()
                     _n_obs = len(_harvest)
                     _best_ir = [float("-inf")]
                     progress_bar(
-                        progress_container, 23, "Calibrating intelligence",
+                        progress_container, 28, "Calibrating Intelligence",
                         f"Optuna TPE · {_n_dates} dates · {_n_obs:,} (date, symbol) rows",
                     )
 
                     def _intel_cb(trial: int, total: int, score: float):
                         if score > _best_ir[0]:
                             _best_ir[0] = score
-                        pct = 23 + int((trial / max(total, 1)) * 5)
+                        # Trials sweep 28 → 34, keeping the outcome milestone
+                        # (35) strictly ahead of every trial update.
+                        pct = 28 + int((trial / max(total, 1)) * 6)
                         best = _best_ir[0]
                         best_str = f"{best:+.3f}" if best > float("-inf") else "—"
                         progress_bar(
-                            progress_container, pct, "Calibrating intelligence",
-                            f"Trial {trial}/{total} · best IR {best_str}",
+                            progress_container, pct, "Calibrating Intelligence",
+                            f"Trial {trial}/{total} · Best IR {best_str}",
                         )
 
                     _result = calibrate(
@@ -2279,8 +2353,8 @@ def _run_analysis(
                             "reason": _reason,
                         })
                         progress_bar(
-                            progress_container, 28, "Intelligence skipped",
-                            f"{_reason} · using default weights",
+                            progress_container, 35, "Intelligence Skipped",
+                            f"{_reason} · Using default weights",
                         )
                     else:
                         _outcome.update({
@@ -2292,7 +2366,7 @@ def _run_analysis(
                             "n_val_dates":   _result["n_val_dates"],
                         })
                         progress_bar(
-                            progress_container, 28, "Intelligence calibrated",
+                            progress_container, 35, "Intelligence Calibrated",
                             f"Train IR {_result['train_ir']:+.3f} · "
                             f"Val IR {_result['val_ir']:+.3f} · "
                             f"Passport saved for {_passport.label}",
@@ -2305,14 +2379,21 @@ def _run_analysis(
                         # freshly-saved passport. Adds ~2-4s of cache-hit work but
                         # eliminates the stale-sidebar surprise.
                         st.session_state.last_intel_outcome = _outcome
+                        _log_intel_outcome(_outcome)
                         st.rerun()
 
             st.session_state.last_intel_outcome = _outcome
+            _log_intel_outcome(_outcome)
         else:
-            st.session_state.last_intel_outcome = {"status": "disabled", "reason": "Intelligence mode is off."}
+            _outcome = {"status": "disabled", "reason": "Intelligence Mode is off — using default weights."}
+            st.session_state.last_intel_outcome = _outcome
+            _log_intel_outcome(_outcome)
 
         # PHASE 2: CONVICTION-BASED CURATION
-        progress_bar(progress_container, 25, "Running strategies", f"95 strategies · {len(symbols_list)} candidates")
+        # The strategy count is not known until discovery runs, so this first
+        # milestone claims only what is true at this point (the previous label
+        # hardcoded "95 strategies" before any strategy had been discovered).
+        progress_bar(progress_container, 36, "Discovering Strategies", f"{len(symbols_list)} symbols in scope")
         metrics.start_phase("conviction_curation")
 
         try:
@@ -2323,6 +2404,9 @@ def _run_analysis(
                 st.error("No strategies available.")
                 metrics.end_phase("conviction_curation", success=False, error_msg="Empty strategies")
                 st.stop()
+
+            log.section("Conviction Curation", phase="PHASE 2")
+            log.item("Strategies", f"{len(strategies_to_run)} discovered")
 
             # Aggregate holdings + strategy endorsement votes.
             #
@@ -2340,9 +2424,10 @@ def _run_analysis(
             aggregated_holdings = {}
             strat_votes: Dict[str, int] = {}
             failed_strategies = 0
-            progress_bar(progress_container, 35, "Aggregating holdings", f"Processing {len(strategies_to_run)} strategies")
+            _n_strats = len(strategies_to_run)
+            progress_bar(progress_container, 38, "Running Strategies", f"{_n_strats} strategies · {len(symbols_list)} symbols")
 
-            for name, strategy in strategies_to_run.items():
+            for _si, (name, strategy) in enumerate(strategies_to_run.items()):
                 try:
                     port = strategy.generate_portfolio(st.session_state.current_df, capital)
                     if port.empty:
@@ -2365,6 +2450,15 @@ def _run_analysis(
                         log.warning(f"Strategy '{name}' failed: {type(e).__name__}: {e}")
                     except Exception:
                         pass
+                # Live progress across the strategy loop — the longest Phase 2
+                # stretch. Sweeps 38 → 65 (every 10th strategy plus the last),
+                # staying strictly below the 68% conviction milestone.
+                if _si % 10 == 9 or _si == _n_strats - 1:
+                    progress_bar(
+                        progress_container, 38 + int(((_si + 1) / _n_strats) * 27),
+                        "Running Strategies",
+                        f"Strategy {_si + 1}/{_n_strats} · {len(aggregated_holdings)} candidates",
+                    )
 
             if failed_strategies:
                 metrics.add_warning(f"{failed_strategies}/{len(strategies_to_run)} strategies failed to generate a portfolio")
@@ -2384,7 +2478,8 @@ def _run_analysis(
                 st.session_state.current_df["symbol"].map(strat_votes).fillna(0).astype(int)
             )
 
-            progress_bar(progress_container, 50, "Computing conviction", f"{len(aggregated_holdings)} candidates")
+            log.item("Candidates", f"{len(aggregated_holdings)} aggregated from {_n_strats} strategies")
+            progress_bar(progress_container, 68, "Computing Conviction", f"{len(aggregated_holdings)} candidates · 6-signal blend")
 
             # Conviction-based weighting with style-aware dispersion
             # SIP: conviction**2.5 | Swing: conviction**4.5 (continuous power-law
@@ -2440,7 +2535,8 @@ def _run_analysis(
                 "anchor_date": selected_date_display,
             }
 
-            progress_bar(progress_container, 85, "Portfolio curated", f"{len(st.session_state.portfolio)} positions")
+            log.item("Positions", f"{len(st.session_state.portfolio)} curated")
+            progress_bar(progress_container, 90, "Portfolio Curated", f"{len(st.session_state.portfolio)} positions")
 
             # End conviction_curation phase tracking
             metrics.end_phase("conviction_curation", success=True)
@@ -2455,7 +2551,7 @@ def _run_analysis(
             # the calibration harvest on regime — no need to recompute it here.
 
             metrics.end_phase("total_execution", success=True)
-            progress_bar(progress_container, 100, "Analysis complete", f"Portfolio: {len(st.session_state.portfolio)} positions ready")
+            progress_bar(progress_container, 100, "Analysis Complete", f"{len(st.session_state.portfolio)} positions ready")
 
             # Defensive: if conviction_score is all-NaN (shouldn't happen since
             # compute_conviction_signals fillna's to 50, but guard anyway so the
