@@ -223,7 +223,17 @@ def compute_metrics(
 
     total_ret = (1 + returns).prod() - 1
     n_days = len(returns)
-    ann_factor = min(252 / n_days, 1) if n_days < 252 else 252 / n_days
+    # Geometric annualization exponent. This was previously capped at 1 for
+    # sub-year windows (min(252/n_days, 1)), which made "CAGR" silently equal
+    # the RAW PERIOD RETURN for any window of 20-251 trading days — the
+    # "CAGR" subtext just repeated Period Return under the wrong label,
+    # Calmar's numerator wasn't annualized, and the Info Ratio divided a
+    # period-return spread by an ANNUALIZED tracking error (systematically
+    # understated for sub-year windows). CAGR is annualized by definition;
+    # the sub-quarter reliability concern is handled by cagr_meaningful
+    # below (UI hides CAGR/Alpha/Calmar under 60 days), not by quietly
+    # de-annualizing the number.
+    ann_factor = 252 / n_days
     m["total_return"] = total_ret * 100
 
     # Annualizing a sub-quarter return window is statistically indefensible
@@ -329,7 +339,9 @@ def compute_metrics(
             # so the two sides of the alpha subtraction weren't strictly
             # comparable. Recompute p_cagr on the SAME aligned window here.
             aligned_days = len(aligned)
-            aligned_ann = min(252 / aligned_days, 1) if aligned_days < 252 else 252 / aligned_days
+            # Same exponent convention as ann_factor above (the min(...,1)
+            # cap that de-annualized sub-year windows was removed there too).
+            aligned_ann = 252 / aligned_days
             p_total_aligned = (1 + p_ret).prod() - 1
 
             def _cagr_on(total_ret_: float, n_: int, ann_: float) -> float:
