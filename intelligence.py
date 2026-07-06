@@ -222,11 +222,15 @@ def _ir_for_weights(weights: Dict[str, float], harvest: pd.DataFrame, ret_col: s
 # ~40% of PURE-NOISE calibrations at n=6 paired dates; the paired t-test
 # below brought that to 0/30 at n=6, but 6 paired one-sided-95% comparisons
 # is still a very thin reed — 8 (t-critical(df=7) ~= 1.90) is the practical
-# floor at which Pragyam's actual production panel sizes (~100-190 trading
-# days at DEFAULT_HORIZON=10, see backdata._REGIME_LOOKBACK_FILES /
-# app._REGIME_LOOKBACK_FILES) can ever produce a passport at all. This is an
-# explicit, documented trade of some statistical power for calibration being
-# achievable in practice; MIN_PAIRED_T_STAT below is raised to compensate.
+# floor. This gate does NOT bend to the data supply; instead the data supply
+# is sized to the gate: min_calibration_dates() below derives the in-family
+# date count this floor implies (142 at the defaults), and the caller
+# fetches a dedicated estimation panel sized for it
+# (app._CALIBRATION_LOOKBACK_FILES — the 100-day display panel used before
+# v10.0.1 could yield at most 5 paired dates and therefore could never
+# calibrate at all). This is an explicit, documented trade of some
+# statistical power for calibration being achievable in practice;
+# MIN_PAIRED_T_STAT below is raised to compensate.
 MIN_PAIRED_VAL_DATES = 8
 # One-sided critical t-value backing the beats-default gate. 1.895 is the
 # t-critical(df=7, one-sided, 95%) value, matching the practical floor of 8
@@ -234,6 +238,29 @@ MIN_PAIRED_VAL_DATES = 8
 # samples — the gate should not get easier to pass just because the panel is
 # smaller.
 MIN_PAIRED_T_STAT = 1.895
+
+
+def min_calibration_dates(horizon: int = DEFAULT_HORIZON, train_frac: float = 0.5) -> int:
+    """Smallest number of in-family harvest dates at which the paired
+    beats-default gate is REACHABLE — the data-supply contract the caller's
+    estimation window must honour (see app._CALIBRATION_LOOKBACK_FILES).
+
+    The validation partition holds the trailing (1 - train_frac) share of the
+    dates, and _paired_beats_default strides it at >= horizon spacing, so a
+    validation span of S dates yields at most floor((S - 1) / horizon) + 1
+    non-overlapping dates. Inverting: reaching MIN_PAIRED_VAL_DATES requires a
+    validation span of (MIN_PAIRED_VAL_DATES - 1) * horizon + 1 dates, hence
+    a total of that divided by (1 - train_frac). At the defaults (8 paired
+    dates, horizon 10, 50/50 split) this is 142 in-family dates. Any panel
+    shorter than this fails the gate before a single Optuna trial runs — the
+    exact failure mode of the pre-v10.0.1 100-day panel (90 harvest dates ->
+    45 validation dates -> at most 5 paired dates < 8, structurally
+    impossible). calibrate() enforces this bound up front (fail-fast) so the
+    impossibility is reported as a data requirement, not burned through 100
+    trials and reported as bad luck.
+    """
+    val_span = (MIN_PAIRED_VAL_DATES - 1) * horizon + 1
+    return int(math.ceil(val_span / max(1.0 - train_frac, 1e-9)))
 
 
 def _paired_beats_default(opt_weights: Dict[str, float], default_weights: Dict[str, float],
@@ -725,6 +752,24 @@ def calibrate(universe: str,
     train_df = harvest[harvest["date"].isin(train_dates)]
     val_df   = harvest[harvest["date"].isin(val_dates)]
 
+    # Fail fast on reachability: the paired gate needs MIN_PAIRED_VAL_DATES
+    # non-overlapping validation dates, and the maximum the validation
+    # partition can possibly yield is fixed by its date span alone — no
+    # amount of optimization changes it (per-date MIN_XSECT filtering can
+    # only remove dates from this upper bound). Checking BEFORE the Optuna
+    # search (a) saves 100 wasted trials when the panel is structurally too
+    # short, and (b) reports the shortfall as the data requirement it is
+    # (min_calibration_dates) instead of a post-hoc "only N paired dates"
+    # that reads like sampling bad luck.
+    max_paired = len(_non_overlapping_dates(val_df, horizon))
+    if max_paired < MIN_PAIRED_VAL_DATES:
+        return {"success": False,
+                "reason": f"Validation window can yield at most {max_paired} non-overlapping dates "
+                          f"(need >= {MIN_PAIRED_VAL_DATES}). The '{regime_family_for(regime_name)}' "
+                          f"family has {len(dates)} usable dates in this panel; the significance gate "
+                          f"needs >= {min_calibration_dates(horizon, train_frac)}. More history in this "
+                          f"regime family is required before a passport can be validated."}
+
     # Sanity: defaults must score on train (otherwise the harvest is unusable).
     default_train_ir, _ = _ir_for_weights(DEFAULT_WEIGHTS, train_df, horizon=horizon)
     if not np.isfinite(default_train_ir):
@@ -809,7 +854,7 @@ def calibrate(universe: str,
         return {"success": False,
                 "reason": f"Learned weights did not significantly beat the default baseline on "
                           f"{n_paired} paired validation dates (mean IC edge {mean_diff:+.4f}, "
-                          f"t={t_stat:+.2f}, need t>=1.645). Using default weights."}
+                          f"t={t_stat:+.2f}, need t>={MIN_PAIRED_T_STAT}). Using default weights."}
 
     # Shrinkage toward the default mix, proportional to how much of the signal
     # is corroborated out-of-sample vs. in-sample. lambda -> 1 when val_ir is
@@ -866,6 +911,7 @@ __all__ = [
     "get_active_weights",
     "build_harvest",
     "calibrate",
+    "min_calibration_dates",
     "REGIME_FAMILIES",
     "regime_family_for",
     "regime_labels_for_window",

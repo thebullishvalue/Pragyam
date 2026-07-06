@@ -111,7 +111,7 @@ except ImportError:
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "v10.0.0"
+VERSION = "v10.0.1"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -237,6 +237,23 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
 # fetch — so the regime card, the Phase 2 curation, and the Regime Score
 # History chart all reason about the same historical panel.
 _REGIME_LOOKBACK_FILES = 100
+
+# Estimation panel used ONLY by Phase 1.5 calibration — sized from the
+# statistics, not from the display. The paired beats-default gate needs
+# MIN_PAIRED_VAL_DATES (=8) non-overlapping validation dates at horizon 10
+# under a 50/50 split, i.e. >= intelligence.min_calibration_dates() = 142
+# usable dates INSIDE the target regime family. The regime family typically
+# covers only a fraction of any trailing window, so the window must be a
+# multiple of that: at a ~40% family share, 142 / 0.4 + horizon ≈ 365 → 375
+# trading days (~18 months). The 100-day _REGIME_LOOKBACK_FILES panel was
+# structurally incapable of EVER calibrating: 90 harvest dates → 45
+# validation dates → at most 5 non-overlapping paired dates < 8, so every
+# run failed the gate before a single Optuna trial ran. Kept separate from
+# _REGIME_LOOKBACK_FILES so the regime card / chart / curation stay on the
+# fast 100-day panel; this longer panel is fetched (and cached for the
+# session) only when a scope actually needs calibrating — reused passports
+# never pay for it.
+_CALIBRATION_LOOKBACK_FILES = 375
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2178,6 +2195,36 @@ def _run_analysis(
                     f"Need >{DEFAULT_HORIZON + 5} days of history · using default weights",
                 )
             else:
+                # Estimation panel: fetched at _CALIBRATION_LOOKBACK_FILES, NOT
+                # the run's _REGIME_LOOKBACK_FILES display panel. The paired
+                # beats-default gate needs >= intelligence.min_calibration_dates()
+                # (142 at the defaults) usable dates INSIDE the target regime
+                # family — a 100-day panel can never supply that (90 harvest
+                # dates → at most 5 non-overlapping paired validation dates vs
+                # the 8 required, structurally unreachable). Cached like every
+                # other panel and fetched only on this branch, so scopes with
+                # an existing passport never pay for it.
+                progress_bar(
+                    progress_container, 21, "Building estimation panel",
+                    f"{_CALIBRATION_LOOKBACK_FILES} trading days · {_passport.label}",
+                )
+                _cal_hist = _load_historical_data(
+                    selected_date, _CALIBRATION_LOOKBACK_FILES, symbols_key
+                )
+                if len(_cal_hist) > len(all_hist):
+                    # Regime series over the estimation panel — the run panel's
+                    # cached series only labels the trailing 100 days.
+                    try:
+                        _cal_series = get_regime_history_series(_cal_hist, window_size=10, step=1)
+                    except Exception:
+                        _cal_series = []
+                else:
+                    # Estimation fetch failed or added nothing beyond the run
+                    # panel — degrade to the run panel; calibrate()'s
+                    # reachability check reports the shortfall honestly
+                    # instead of hard-failing Phase 1.5 here.
+                    _cal_hist = all_hist
+                    _cal_series = _regime_series_for_harvest
                 progress_bar(
                     progress_container, 22, "Calibrating intelligence",
                     f"Building signal-return panel · {_passport.label} · "
@@ -2188,9 +2235,9 @@ def _run_analysis(
                 # than learning one unconditional weight set for the whole
                 # lookback and labeling it with whatever regime is current now.
                 _regime_labels = regime_labels_from_series(
-                    _regime_series_for_harvest, len(all_hist), window_size=10
+                    _cal_series, len(_cal_hist), window_size=10
                 )
-                _harvest = build_harvest(all_hist, horizon=DEFAULT_HORIZON, regime_labels=_regime_labels)
+                _harvest = build_harvest(_cal_hist, horizon=DEFAULT_HORIZON, regime_labels=_regime_labels)
                 if _harvest.empty:
                     _outcome.update({
                         "status": "skipped",
@@ -2863,6 +2910,16 @@ def main():
         # Clear the flag after analysis completes
         st.session_state.pop("run_analysis", None)
         st.session_state.pop("run_params", None)
+        # The sidebar painted BEFORE this run executed, so its regime card and
+        # passport card still show pre-run state ("Run Analysis to detect...")
+        # — the freshly-computed regime sits in session_state but nothing
+        # repaints the sidebar in this script run. Rerun once (the same idiom
+        # Phase 1.5 uses after a successful calibration): the flags above are
+        # already popped so this cannot loop, every panel the repaint touches
+        # is now cached (regime/data/portfolio all in session_state or
+        # st.cache_data), the sidebar repaints from fresh state, and the
+        # result page renders via st.session_state.portfolio.
+        st.rerun()
 
     if st.session_state.portfolio is None and not st.session_state.get("run_analysis"):
         _render_header()
