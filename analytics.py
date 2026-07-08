@@ -124,11 +124,22 @@ def resolve_risk_free_rate(benchmark_ticker: str) -> float:
     return US_RISK_FREE_RATE if benchmark_ticker in _USD_BENCHMARK_TICKERS else RISK_FREE_RATE
 
 
-def _to_yf_ticker(symbol: str) -> str:
-    """Pragyam symbols are stored without the .NS suffix (stripped in backdata).
-    Re-apply .NS for bare NSE symbols; leave already-qualified tickers as-is."""
+def _to_yf_ticker(symbol: str, is_us: bool = False) -> str:
+    """Map a stored Pragyam symbol to its Yahoo Finance ticker.
+
+    NSE symbols are stored without the ``.NS`` suffix (stripped in backdata), so
+    bare Indian symbols need it re-applied. US universe symbols (S&P 500 / NASDAQ
+    100 / Dow — e.g. ``AAPL``, ``NVDA``, ``BRK-B``) are stored bare and are ALREADY
+    valid Yahoo tickers; appending ``.NS`` to them yields non-existent tickers
+    (``AAPL.NS``) and the whole portfolio fetch comes back empty. ``is_us`` (derived
+    from a USD benchmark by the caller) suppresses the ``.NS`` re-application.
+
+    Already-qualified tickers (containing ``.``, an ``^`` index prefix, or an ``=``
+    futures marker) are passed through untouched in either mode."""
     s = str(symbol).strip()
     if not s:
+        return s
+    if is_us:
         return s
     return s if "." in s or s.startswith("^") or "=" in s else f"{s}.NS"
 
@@ -168,7 +179,10 @@ def fetch_analysis_data(
         benchmark_df = benchmark_close.to_frame(name=benchmark_name)
         valid_dates = benchmark_df.index
 
-        ticker_map = {_to_yf_ticker(s): s for s in symbols}
+        # US books (USD benchmark) store bare, already-valid Yahoo tickers;
+        # appending .NS to them (the NSE default) breaks the entire fetch.
+        is_us = benchmark_ticker in _USD_BENCHMARK_TICKERS
+        ticker_map = {_to_yf_ticker(s, is_us): s for s in symbols}
         tickers = list(ticker_map.keys())
 
         portfolio_data = yf.download(
