@@ -16,6 +16,7 @@ plotly>=5.18.0
 # Market Data
 yfinance>=0.2.28
 requests>=2.31.0
+lxml>=4.9.0  # Required by pandas.read_html for universe constituent tables (e.g. NASDAQ 100)
 
 # Scientific Computing
 scipy>=1.11.0
