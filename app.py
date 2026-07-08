@@ -2484,10 +2484,16 @@ def _run_analysis(
             # Conviction-based weighting with style-aware dispersion
             # SIP: conviction**2.5 | Swing: conviction**4.5 (continuous power-law
             # concentration — see portfolio.py module docstring)
-            # Single source of truth for the intelligence context — mirrors what
-            # regime.compute_conviction_signals will read internally, so the curated
-            # weights and the displayed conviction column can never drift.
-            _u, _idx, _, _mode = _intel_context()
+            # Scope THIS run under its OWN live universe/index — the same values
+            # that resolved the symbols above and that the Phase 1.5 passport used
+            # (st.session_state.selected_universe/index). Do NOT call
+            # _intel_context() here: once a prior run's portfolio exists it returns
+            # the FROZEN previous run_context, so a second run under a different
+            # universe (e.g. NASDAQ 100 → India ETF) would curate the new book —
+            # and re-freeze run_context (→ the Analytics benchmark) — under the OLD
+            # scope. run_context is (re)written from these values just below.
+            _u, _idx = universe, index
+            _mode = "Intelligence" if st.session_state.get("intelligence_mode") else "Standard"
             st.session_state.portfolio = compute_conviction_based_weights(
                 aggregated_holdings,
                 st.session_state.current_df,
