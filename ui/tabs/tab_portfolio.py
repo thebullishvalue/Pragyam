@@ -22,7 +22,12 @@ from ui.components import (
     render_section_header,
     render_table_panel,
 )
-from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
+from ui.shared import (CVG_CHIP, CVG_TONE, NCO_STYLES, REGIME_FACTOR_ORDER,
+                       STYLE_LABELS, num, style_spec)
+from ui.components import render_kpi_strip
+from cvgrid import STATE_LABEL, STATE_UNITS, STATES
+from pragati import INNER_ZONE
+from samanvaya import THETA_OSC
 import html as html_module
 
 import streamlit.components.v1 as components
@@ -34,6 +39,7 @@ try:
         create_cluster_correlation_heatmap,
         create_risk_allocation_heatmap,
         create_risk_contribution_chart,
+        create_conviction_value_map,
     )
     CHARTS_AVAILABLE = True
 except ImportError:                                     # pragma: no cover
@@ -96,13 +102,37 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         "Vol %": pd.to_numeric(df["volatility"], errors="coerce") * 100,
         "Indep": 1.0 - pd.to_numeric(df["corr_to_book"], errors="coerce").abs(),
     })
+    # On a Conviction-Value Grid run the weight IS the state, so the readings that placed each
+    # holding sit right after its weight — before the risk columns, which for
+    # this style are a mirror, not a target. "Value tape" rather than "Value":
+    # that header is already the position's rupee value.
+    _uses_dh = bool((portfolio.attrs or {}).get("nco_uses_cvg", False))
+    if _uses_dh:
+        for c in ("state", "conviction", "value_tape", "state_days", "push_tier", "held_row",
+                  "cvg_units", "state_units"):
+            if c not in df.columns:
+                df[c] = np.nan
+        _at_w = view.columns.get_loc("Weight %") + 1
+        _held = pd.to_numeric(df["held_row"], errors="coerce").fillna(0) > 0
+        for off, (col, vals) in enumerate((
+            ("State", [STATE_LABEL.get(str(x), "—") + (" · held" if h else "")
+                       for x, h in zip(df["state"], _held)]),
+            ("Map units", pd.to_numeric(df["cvg_units"], errors="coerce").to_numpy()),
+            ("Push", [str(x) if isinstance(x, str) else "—" for x in df["push_tier"]]),
+            ("Conv", pd.to_numeric(df["conviction"], errors="coerce").to_numpy()),
+            ("Value tape", pd.to_numeric(df["value_tape"], errors="coerce").to_numpy()),
+            ("Days", pd.to_numeric(df["state_days"], errors="coerce").to_numpy()),
+        )):
+            view.insert(_at_w + off, col, vals)
     render_table_panel(
         view, "holdings", context=f"{n} holdings · sorted by weight",
         show_index=False,
         label_col="Symbol",
         col_precision={"Units": 0, "Price": 2, "Weight %": 2, "Value": 0,
-                       "Risk Share %": 2, "Risk − Wt": 2, "Vol %": 1, "Indep": 2},
-        lower_is_better_cols={"Risk − Wt"},
+                       "Risk Share %": 2, "Risk − Wt": 2, "Vol %": 1, "Indep": 2,
+                       "Conv": 0, "Value tape": 0, "Days": 0, "Map units": 2},
+        sign_color_cols={"Conv"} if _uses_dh else None,
+        lower_is_better_cols={"Risk − Wt", "Value tape"} if _uses_dh else {"Risk − Wt"},
         max_height=520,
     )
 
@@ -114,7 +144,21 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         f"red marks one carrying more. **Indep** is 1 − |correlation to the "
         f"book|, so higher means the holding diversifies rather than duplicates. An equal share "
         f"at this position count would be {eq_share:.2f}%."
+        + (" **State** is the holding's cell in the Conviction-Value Grid — conviction × value — and "
+           "**Map units** its weight on the graded map: the cell's units, shaded toward the "
+           "neighbouring cell by how intensely each tape is drawn, exactly as the Pine grades "
+           "its colours. **held** means the histogram is holding its row against the tape "
+           "because the push is not yet behind the change. **Push** is the pane's histogram "
+           "as drawn: which way conviction is being pushed, and whether that push is an impulse, "
+           "building, decelerating or turning (\"quiet\" when the reading is an amplified calm). "
+           "**Conv** is the conviction tape (green: buyers control) and **Value tape** the value "
+           "tape (green: cheap, red: rich), each read on the daily and weekly frames; **Days** is "
+           "how long the holding has been in its state. The risk columns are a mirror here — "
+           "this style does not read the covariance." if _uses_dh else "")
     )
+
+    if _uses_dh:
+        _render_cvg_map(portfolio)
 
     if not CHARTS_AVAILABLE:
         return
@@ -140,7 +184,10 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
            if _rc_target == "equal" else
            "This style does not target equal risk contribution, so green on the risk row "
            "simply means a holding carrying *less* variance than its capital share — the gap "
-           "between the Weight and Risk rows is the risk this method leaves unbalanced.")
+           "between the Weight and Risk rows is the risk this method leaves unbalanced."
+           + (" The **Conviction** and **Value** rows are the two tapes the weights were sized "
+              "from — green where buyers control, and where price is cheap."
+              if _at.get("nco_uses_cvg") else ""))
     )
     render_section_header(
         "Risk Contribution", "Capital share vs variance share, on one scale",
@@ -190,3 +237,91 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
                "This style does **not** allocate from the cluster tree — the matrix is shown so "
                "you can see the structure the weights were computed against.")
         )
+
+
+def _render_cvg_map(portfolio: pd.DataFrame) -> None:
+    """The grid's view of the universe: the state census, the map, the watchlist.
+
+    The Conviction-Value Grid is sized from these readings, so this section is to it what
+    Cluster Structure is to HRP — what the allocator saw. It covers the WHOLE
+    universe, not just the holdings: a name at the floor, or one the book was
+    not asked to hold, is part of the reading.
+    """
+    at = portfolio.attrs or {}
+    uni = at.get("nco_cvg_universe")
+    census = at.get("nco_cvg_census") or {}
+    n_uni = int(sum(census.values())) or len(portfolio)
+    render_section_header(
+        "Conviction-Value Map",
+        f"Conviction × value on D · W · {at.get('nco_cvg_names', 0)} of {n_uni} names read",
+        icon="compass", accent="emerald")
+
+    # The census, in allocation order, with each state's weight in units: the
+    # whole allocation rule, readable at a glance.
+    items = []
+    for code, units, label, meaning in STATES:
+        cnt = int(census.get(code, 0))
+        if cnt == 0:
+            continue          # a state earns a card only when a name is in it
+        items.append({"label": label, "value": str(cnt),
+                      "subtext": f"{units:g} unit{'s' if units != 1 else ''} · {meaning}",
+                      "color_class": CVG_CHIP[CVG_TONE[code]]})
+    render_kpi_strip(items, max_cols=5, key="cvg-census")
+
+    if CHARTS_AVAILABLE and uni is not None and not getattr(uni, "empty", True):
+        render_chart_panel(create_conviction_value_map(uni), "cvg-map",
+                           context=f"{n_uni} names · filled = held, sized by weight")
+    render_note(
+        f"Across: the **conviction tape** — who controls, and how firmly. Up: the **value tape** — "
+        f"rich or cheap against what the macro drivers and the home market explain. The dotted "
+        f"lines are each tape's own knee — conviction's inner zone at ±{INNER_ZONE:.0f}, where the "
+        f"Pine's tape turns from faint to clear, and value's θ at ±{THETA_OSC:.0f} — and cut the "
+        f"plane into the grid's nine states. Right of the band buyers control: core weight while "
+        f"price is fair or cheap, less once it is rich. Inside it control is undecided; left of "
+        f"it sellers control — watched when cheap, punished to the floor when rich. The "
+        f"**histogram runs the rows**: a name only changes row once the push is behind it, so a "
+        f"point coloured for a region it does not sit in is a row being held. The map is "
+        f"**graded**: inside its cell a name's weight moves toward the neighbouring cell by how "
+        f"intensely its tapes are drawn — a tape just past its knee sits partway, a solid one "
+        f"earns the full cell — so marker size varies within a region. Every name is held: the "
+        f"reading sets how much, never whether."
+    )
+
+    if uni is None or getattr(uni, "empty", True):
+        return
+    watch = uni[uni["state"].isin(["BASING", "DISLOCATED"])]
+    if watch.empty:
+        return
+    w = watch.assign(_c=pd.to_numeric(watch["conviction"], errors="coerce")).sort_values(
+        "_c", ascending=False)
+    view = pd.DataFrame({
+        "Symbol": w["symbol"].astype(str),
+        "State": [STATE_LABEL.get(str(x), "—") for x in w["state"]],
+        "Conv": pd.to_numeric(w["conviction"], errors="coerce"),
+        "To turn": INNER_ZONE - pd.to_numeric(w["conviction"], errors="coerce"),
+        "Push": w["push_tier"].fillna("—").astype(str),
+        "Value tape": pd.to_numeric(w["value_tape"], errors="coerce"),
+        "Days": pd.to_numeric(w["state_days"], errors="coerce"),
+        "Weight %": pd.to_numeric(w["weight_pct"], errors="coerce"),
+        "Hedged vs": w["drivers"].fillna("—").astype(str),
+    })
+    render_section_header(
+        "Watchlist",
+        f"{len(view)} cheap without buyers in control · basing "
+        f"{STATE_UNITS['BASING']:g} · dislocated {STATE_UNITS['DISLOCATED']:g} units until they turn",
+        icon="eye", accent="cyan")
+    render_table_panel(
+        view, "cvg-watchlist", context="sorted by conviction · closest to turning first",
+        show_index=False, label_col="Symbol",
+        col_precision={"Conv": 0, "To turn": 0, "Value tape": 0, "Days": 0, "Weight %": 2},
+        sign_color_cols={"Conv"}, lower_is_better_cols={"Value tape"},
+        max_height=320,
+    )
+    render_note(
+        f"Promotion is the grid itself. When a watchlist name's conviction clears "
+        f"+{INNER_ZONE:.0f} **and** the histogram confirms a push up (not turning, not quiet), it "
+        f"becomes **{STATE_LABEL['TURNED']}** if value is still cheap or "
+        f"**{STATE_LABEL['BUILDING']}** if it has recovered to fair — core weight either way. "
+        f"**To turn** is how far the conviction tape still has to travel; **Push** is whether the "
+        f"histogram is behind it yet."
+    )

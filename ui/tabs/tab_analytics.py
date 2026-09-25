@@ -1,9 +1,12 @@
 """
-PRAGYAM — The book against a benchmark and against its own shadow.
+PRAGYAM — The book against a benchmark, its own shadow, and the other styles.
 
-Two comparisons, not one. The benchmark answers "did it beat the market?";
-the equal-weight shadow of the SAME holdings answers the narrower and more
-actionable question "did the allocator earn its complexity?".
+Three comparisons, one question each. The benchmark answers "did it beat the
+market?". The equal-weight shadow of the SAME holdings answers the narrower
+and more actionable "with the names fixed, did the weights help?". The other
+styles' books — each curated from this run's own inputs — answer "would a
+different style have done better from this date?", with how far each book
+overlaps this one and whether the gap clears the noise stated beside it.
 
 Author: @thebullishvalue
 """
@@ -25,6 +28,7 @@ from ui.components import (
     render_table_panel,
 )
 from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
+from nco import METHOD_ORDER, METHOD_SPECS
 import html as html_module
 from datetime import date, datetime
 
@@ -42,6 +46,23 @@ except ImportError:                                     # pragma: no cover
 
 log = get_console()
 
+# The equal-weight shadow's name everywhere it appears. It must not read
+# "Equal Weight": that is a STYLE, whose book can hold different names, and
+# both now sit on the same chart.
+SHADOW_LABEL = "EW Shadow"
+
+# The dash each style's book is drawn with as a comparison line. Fixed per
+# style rather than by position, so a style looks the same whichever one ran.
+PEER_DASH = {"EQUAL": "solid", "ERC": "dashdot", "HRP": "longdash", "CVG": "longdashdot"}
+
+# Below this many daily returns the gap between two books is not read for
+# noise at all: a t-statistic over a couple of weeks is itself mostly noise.
+NOISE_MIN_DAYS = 20
+# |t| at or above this and the gap is called beyond noise.
+NOISE_T = 2.0
+
+PeerUnits = Tuple[Tuple[str, Tuple[str, ...], Tuple[float, ...]], ...]
+
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _analytics_series_cached(
@@ -49,25 +70,31 @@ def _analytics_series_cached(
     anchor_iso: str, days_back: int,
     bench_ticker: str, bench_name: str,
     alt_units: Optional[Tuple[float, ...]] = None,
+    peer_units: Optional[PeerUnits] = None,
 ):
     """Cached wrapper around analytics.build_return_series.
 
-    Keyed on the exact (symbols, units, anchor, benchmark, alt_units) tuple so
-    the yfinance fetch runs ONCE per unique window and every subsequent
-    render/tab-switch hits cache — no repeated downloads. Returns (port_value,
-    port_returns, bench_returns, err, unpriced, alt_value). Compute stays in
-    analytics.py; caching lives here (the Streamlit boundary), mirroring
-    _load_historical_data / _detect_regime_cached.
+    Keyed on the exact (symbols, units, anchor, benchmark, alt_units,
+    peer_units) tuple so the yfinance fetch runs ONCE per unique window and
+    every subsequent render/tab-switch hits cache — no repeated downloads.
+    Returns (port_value, port_returns, bench_returns, err, unpriced, alt_value,
+    bench_value, peers). Compute stays in analytics.py; caching lives here (the
+    Streamlit boundary), mirroring _load_historical_data / _detect_regime_cached.
 
     `alt_units` is the equal-weight shadow book over the SAME symbols. It rides
     along on this one call (rather than a second cached call with a different
     unit vector) so the comparison costs zero extra downloads and both series
     are guaranteed to share one price panel and one start date.
+
+    `peer_units` is ``((style code, symbols, units), ...)`` — the other styles'
+    books from this run. Their names join the same download for the same
+    reason.
     """
     from analytics import build_return_series
     _port = pd.DataFrame({"symbol": list(symbols), "units": list(units)})
     anchor_dt = datetime.fromisoformat(anchor_iso)
     _alt = dict(zip(symbols, alt_units)) if alt_units else None
+    _peers = {code: dict(zip(syms, us)) for code, syms, us in (peer_units or ())}
     # Logged from INSIDE the cached body, so the terminal shows this step only
     # when it actually costs a download. A line on every rerun would say nothing
     # about the run and bury the lines that do.
@@ -76,14 +103,19 @@ def _analytics_series_cached(
         _t.item("Anchor", anchor_dt.strftime("%Y-%m-%d"))
         if _alt:
             _t.detail("valuing the equal-weight shadow book on the same price panel")
+        if _peers:
+            _t.detail(f"valuing {len(_peers)} other style book(s) on the same price panel")
         result = build_return_series(
             _port, days_back, bench_ticker, bench_name,
-            anchor_date=anchor_dt, alt_quantities=_alt,
+            anchor_date=anchor_dt, alt_quantities=_alt, peer_quantities=_peers,
         )
-        _port_value, _, _bench_returns, _err, _unpriced, _, _ = result
+        _port_value, _, _bench_returns, _err, _unpriced, _, _, _peer_out = result
         if _err:
             _t.fail(_err)
         else:
+            for _code, _entry in _peer_out.items():
+                if _entry.get("reason"):
+                    _t.note(f"{METHOD_SPECS[_code]['label']} not compared — {_entry['reason']}")
             if _unpriced:
                 # A dropped holding under-represents the book rather than
                 # failing it, which is exactly the kind of quiet distortion that
@@ -102,6 +134,200 @@ def _analytics_series_cached(
         return result
 
 
+def _reads_covariance(method: str) -> bool:
+    """Whether a style's weight formula reads the covariance (registry flag)."""
+    return bool(style_spec(method).get("needs_covariance", True)) if method else False
+
+
+def _book_weights(book: pd.DataFrame) -> Dict[str, float]:
+    """Capital share per name as HELD at the anchor — units × price after
+    integer-lot flooring, not the target weight the lots were cut from."""
+    if "value" in book.columns:
+        v = pd.to_numeric(book["value"], errors="coerce")
+    else:
+        v = (pd.to_numeric(book["units"], errors="coerce")
+             * pd.to_numeric(book["price"], errors="coerce"))
+    vals = v.fillna(0.0).to_numpy(dtype=float)
+    total = float(vals.sum())
+    if total <= 0:
+        return {}
+    return {str(s): float(x) / total for s, x in zip(book["symbol"], vals)}
+
+
+def _gap_read(book_r: pd.Series, peer_r: pd.Series) -> Tuple[float, str]:
+    """The t-statistic of the mean daily return gap (book minus peer), and
+    how to read it.
+
+    The gap is set against how far the two books drift apart day to day — the
+    standard error of their mean daily difference — so two books that move
+    together can clear the bar with a small gap, and two that wander apart
+    cannot clear it with a large one. Identical books have no gap to test.
+    """
+    d = (book_r - peer_r).dropna()
+    n = len(d)
+    sd = float(d.std(ddof=1)) if n > 1 else float("nan")
+    if np.isfinite(sd) and sd < 1e-10:
+        return float("nan"), "same book"
+    if n < NOISE_MIN_DAYS or not np.isfinite(sd):
+        return float("nan"), f"under {NOISE_MIN_DAYS} days"
+    t = float(d.mean()) / (sd / np.sqrt(n))
+    return t, ("beyond noise" if abs(t) >= NOISE_T else "within noise")
+
+
+def _render_style_comparison(
+    *, portfolio: pd.DataFrame, style: str, method: str, m: Dict[str, Any],
+    port_returns: pd.Series, bench_returns: Optional[pd.Series], rf: float,
+    peer_books: Dict[str, pd.DataFrame], peer_out: Dict[str, Dict[str, Any]],
+    has_peers_key: bool, peer_notes: Dict[str, str], has_shadow: bool,
+    requested: int,
+) -> None:
+    """Style Comparison — this book against the book each OTHER style builds
+    from the same run.
+
+    The third question the tab answers, after the market and the shadow:
+    "would a different style have done better from this date?". Each peer was
+    curated at run time from this run's inputs, so the style is the one thing
+    that differs; each is priced on this book's calendar from its first date.
+
+    Two columns keep the table from crowning a winner it cannot support.
+    OVERLAP is the capital two books hold in common: at a high overlap they
+    cannot end far apart, whatever the style names suggest. The t column sets
+    the gap against the two books' day-to-day drift apart, so a window of a
+    few weeks reads as the noise it almost always is.
+    """
+    from analytics import compute_metrics
+
+    if not has_peers_key:
+        # A book curated before this comparison existed carries no peers; say
+        # so rather than show an empty section that reads as "no other style
+        # could build a book".
+        render_section_header("Style Comparison",
+                              f"{style} vs the book each other style builds from the same run",
+                              icon="layers", accent="violet")
+        render_note("This book was curated before the style comparison existed. Run the "
+                    "analysis again to compare it with the book each other style builds.")
+        return
+    if not peer_books and not peer_notes:
+        return
+
+    render_section_header("Style Comparison",
+                          f"{style} vs the book each other style builds from the same run",
+                          icon="layers", accent="violet")
+
+    w_book = _book_weights(portfolio)
+    n_book = len(w_book)
+    book_ret = float(m.get("total_return", 0.0))
+    rows: List[Dict[str, Any]] = [{
+        "Style": style,
+        "Return": book_ret,
+        "Volatility": m.get("volatility", np.nan),
+        "Sharpe": m.get("sharpe", np.nan),
+        "Max DD": m.get("max_drawdown", np.nan),
+        "Book Edge": np.nan,
+        "t": np.nan,
+        "Read": "this book",
+        "Overlap": 100.0,
+        "Shared": f"{n_book}/{n_book}",
+    }]
+    left_out: List[str] = []
+    partial: List[str] = []
+    for code in METHOD_ORDER:
+        if code == method:
+            continue
+        label = html_module.escape(str(METHOD_SPECS[code]["label"]))
+        if code in peer_notes:
+            left_out.append(f"**{label}** built no book ({html_module.escape(peer_notes[code])})")
+            continue
+        if code not in peer_books:
+            continue
+        entry = peer_out.get(code) or {}
+        v = entry.get("value")
+        if v is None or len(v) < 2 or float(v.iloc[0]) == 0:
+            left_out.append(f"**{label}** "
+                            f"({html_module.escape(entry.get('reason') or 'not valued over this window')})")
+            continue
+        r = v.pct_change(fill_method=None).dropna()
+        pm = compute_metrics(r, bench_returns, rf)
+        ret = (float(v.iloc[-1]) / float(v.iloc[0]) - 1.0) * 100.0
+        t, read = _gap_read(port_returns, r)
+        w_peer = _book_weights(peer_books[code])
+        rows.append({
+            "Style": str(METHOD_SPECS[code]["label"]),
+            "Return": ret,
+            "Volatility": pm.get("volatility", np.nan),
+            "Sharpe": pm.get("sharpe", np.nan),
+            "Max DD": pm.get("max_drawdown", np.nan),
+            "Book Edge": book_ret - ret,
+            "t": t,
+            "Read": read,
+            "Overlap": sum(min(w_book.get(s, 0.0), w) for s, w in w_peer.items()) * 100.0,
+            "Shared": f"{len(set(w_book) & set(w_peer))}/{len(w_peer)}",
+        })
+        if entry.get("unpriced"):
+            partial.append(f"**{label}** without "
+                           + html_module.escape(", ".join(entry["unpriced"][:6]))
+                           + (" …" if len(entry["unpriced"]) > 6 else ""))
+
+    if len(rows) > 1:
+        render_table_panel(
+            pd.DataFrame(rows), "style-comparison",
+            context=f"Same run inputs · {requested} positions requested · held from the anchor",
+            meta=f"{len(port_returns)} trading days",
+            show_index=False,
+            label_col="Style",
+            precision=2,
+            col_precision={"t": 1, "Overlap": 0},
+            sign_color_cols={"Book Edge"},
+            col_labels={"Return": "Return %", "Volatility": "Vol %", "Max DD": "Max DD %",
+                        "Book Edge": "Book edge %", "Overlap": "Overlap %",
+                        "Shared": "Names shared"},
+            max_height=240,
+        )
+
+    _style_h = html_module.escape(style)
+    # Why the Equal Weight STYLE and the EW Shadow can hold different names.
+    # Two causes, and the note names the one that applies: a covariance style
+    # cannot hold names without an estimate while 1/N holds every priced name
+    # (Equal Weight's names are a strict superset), or the position count is
+    # below the universe and Equal Weight keeps the first names in listing
+    # order where this style chose its own.
+    _ew_names = set(_book_weights(peer_books["EQUAL"])) if "EQUAL" in peer_books else set()
+    _ew_why = ""
+    if has_shadow and _ew_names and _ew_names != set(w_book):
+        if _ew_names > set(w_book) and _reads_covariance(method):
+            _ew_why = (f"it holds every priced name, while {_style_h} can hold only names "
+                       f"with enough history for a covariance estimate")
+        else:
+            _ew_why = ("below the universe's size it keeps the first names in listing "
+                       "order, where this style chose its own")
+    render_note(
+        f"Each row is the book that style builds from this run's own inputs — the same "
+        f"date, universe, prices, {requested} positions requested, capital and cap — held "
+        f"unchanged from "
+        f"the anchor and priced on this book's calendar. **Book edge** is this book's return "
+        f"minus that style's, so green means {_style_h} did better. **t** sets the daily gap "
+        f"between the two books against how far they drift apart day to day: under "
+        f"{NOISE_T:g} it is *within noise*, and under {NOISE_MIN_DAYS} trading days it is not "
+        f"read at all. **Overlap** is the capital the two books hold in common, so books "
+        f"that overlap heavily cannot end far apart."
+        + (f" **Equal Weight** is the style as it would have run, so it holds different "
+           f"names from the **{SHADOW_LABEL}**, which splits this book's own names 1/N: "
+           f"{_ew_why}." if _ew_why else "")
+        + (" Valued on the priced remainder: " + "; ".join(partial) + "." if partial else "")
+        + (" Not compared: " + "; ".join(left_out) + "." if left_out else "")
+    )
+    # One window from one date is a single draw. The record each style was
+    # chosen or rejected on is the long run, and it belongs beside the window
+    # so the window is not read as a ranking.
+    render_note(
+        "**One window from one date ranks nothing.** The long-run record against Equal "
+        "Weight, from monthly rebalancing over years on three universes:"
+        + "".join(f"<br>**{html_module.escape(str(METHOD_SPECS[c]['label']))}** · "
+                  f"{html_module.escape(str(METHOD_SPECS[c].get('long_run', '')))}"
+                  for c in METHOD_ORDER if METHOD_SPECS[c].get("long_run"))
+    )
+
+
 def _render_analytics_tab(portfolio: pd.DataFrame):
     """Tab — Portfolio Analytics: track the curated book vs a universe-matched
     benchmark (adapted from the SWING Analysis engine, re-themed to Obsidian Quant).
@@ -111,11 +337,15 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     metric cards. Uses the LIVE curated portfolio (no upload); the yfinance fetch is
     cached (see _analytics_series_cached).
 
-    On Swing / SIP runs the chart carries a THIRD line: the same selected names
-    weighted 1/N (the equal-weight shadow book). The benchmark measures the book
-    against the market; the shadow measures the weighting decision alone, since
-    selection is identical across styles. Omitted on Equal Weight runs, where it
-    would duplicate the portfolio line.
+    The chart carries a THIRD line on every style but Equal Weight: the same
+    selected names weighted 1/N (the EW Shadow). The benchmark measures the book
+    against the market; the shadow measures the weighting decision alone, with
+    selection held fixed. Omitted on Equal Weight runs, where it would duplicate
+    the portfolio line.
+
+    The other styles' books follow as legend-only lines and a Style Comparison
+    table: each curated from this run's inputs at run time (run_context
+    "peers"), valued off the same download and calendar as this book.
     """
     from analytics import (CAGR_MIN_DAYS, resolve_benchmark, resolve_risk_free_rate,
                            compute_metrics)
@@ -185,10 +415,10 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     _units = tuple(float(u or 0) for u in portfolio["units"].tolist())
 
     # ── Equal-weight shadow book ───────────────────────────────────────────────
-    # A third reference line on HRP runs. The benchmark answers "did the book
-    # beat the market?"; this answers the narrower and more actionable question
-    # "did the ALLOCATOR earn its complexity?" — THIS book's holdings, same
-    # anchor, same capital, split 1/N instead of by cluster variance. Integer-lot
+    # A third reference line. The benchmark answers "did the book beat the
+    # market?"; this answers the narrower and more actionable question "did the
+    # WEIGHTS earn their complexity?" — THIS book's holdings, same anchor, same
+    # capital, split 1/N instead of by the style's own weights. Integer-lot
     # flooring included, so it is a real alternative book rather than an
     # idealized fractional one.
     #
@@ -216,11 +446,23 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
             if not any(u > 0 for u in _alt_units):
                 _alt_units = None
 
+    # ── The other styles' books ────────────────────────────────────────────────
+    # Curated at run time from this run's inputs and frozen in run_context
+    # (see the "Comparison books" step in app.py). Registry order, so the table
+    # reads the same way on every run.
+    _peer_books: Dict[str, pd.DataFrame] = _run_ctx.get("peers") or {}
+    _peer_units: Optional[PeerUnits] = tuple(
+        (code,
+         tuple(str(s) for s in _peer_books[code]["symbol"]),
+         tuple(float(u or 0) for u in _peer_books[code]["units"]))
+        for code in METHOD_ORDER if code in _peer_books
+    ) or None
+
     with st.spinner(f"Loading performance history · {bench_name} benchmark…"):
         (port_value, port_returns, bench_returns, err, unpriced,
-         alt_value, bench_value) = _analytics_series_cached(
+         alt_value, bench_value, peer_out) = _analytics_series_cached(
             _symbols, _units, anchor_dt.isoformat(), days_back, bench_ticker, bench_name,
-            alt_units=_alt_units,
+            alt_units=_alt_units, peer_units=_peer_units,
         )
 
     if err:
@@ -264,9 +506,18 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
 
     # ── Relative performance: header → anchor-window chip → normalized chart ────
     _has_alt = alt_value is not None and len(alt_value) > 1 and float(alt_value.iloc[0]) != 0
+    # The other styles' value series that could be priced over this window.
+    _peer_lines = [
+        (code, str(METHOD_SPECS[code]["label"]), peer_out[code]["value"])
+        for code in METHOD_ORDER
+        if code in peer_out and len(peer_out[code]["value"]) > 1
+        and float(peer_out[code]["value"].iloc[0]) != 0
+    ]
     _rel_sub = (
-        f"Portfolio vs {bench_name} vs Equal Weight · indexed to 100" if _has_alt
-        else f"Portfolio vs {bench_name} · indexed to 100"
+        f"Portfolio vs {bench_name}"
+        + (f" vs {SHADOW_LABEL}" if _has_alt else "")
+        + " · indexed to 100"
+        + (" · other styles in the legend" if _peer_lines else "")
     )
     render_section_header("Relative Performance", _rel_sub, icon="activity", accent="accent")
     # Normalize the benchmark from its PRICE series on the portfolio's own
@@ -277,7 +528,9 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         fig = create_benchmark_comparison_chart(
             port_value, _bench_series, bench_name, m.get("total_return", 0.0),
             alt_series=alt_value if _has_alt else None,
-            alt_label="Equal Weight",
+            alt_label=SHADOW_LABEL,
+            peer_series=[(label, series, PEER_DASH.get(code, "dot"))
+                         for code, label, series in _peer_lines],
         )
         # The anchor window belongs in the PANEL HEADER, which is the app's
         # slot for "which instrument, which window" — not in a chip and a note
@@ -295,28 +548,43 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     # Read the allocation decision out loud: the chart shows three lines, this
     # states the one number the third exists to produce — what the risk-based
     # allocator added, or cost, versus splitting the same holdings evenly.
+    _peer_hint = (" The other styles' books are in the legend: click one to draw it."
+                  if _peer_lines else "")
     if not _has_alt:
         render_note(
             f"All series are indexed to 100 at the anchor date, so the vertical gap between "
             f"lines is cumulative relative performance. **{bench_name}** is the market; the "
-            f"portfolio line is the curated book."
+            f"portfolio line is the curated book." + _peer_hint
         )
     if _has_alt:
         _eq_ret = (float(alt_value.iloc[-1]) / float(alt_value.iloc[0]) - 1.0) * 100.0
         _edge = m.get("total_return", 0.0) - _eq_ret
         _edge_cls = "ink-long" if _edge > 0 else "ink-short" if _edge < 0 else ""
+        # What to expect of the gap depends on what the style's weights are
+        # FOR. A risk allocator gives up return for the volatility it removes;
+        # the grid sizes by state, and measured over years its weighting ran
+        # within half a percent a year of 1/N either way.
+        _sspec = style_spec(_run_ctx)
+        _expect = (
+            "Expect this to be negative as often as not: the allocator targets risk, and the "
+            "return it gives up is the price of the volatility it removes."
+            if _sspec.get("needs_covariance", True) else
+            "Expect this to be small and to swing either way: the grid sizes by state, not "
+            "risk, and over years of monthly rebalancing its weighting ran within half a "
+            "percent a year of 1/N."
+            if _sspec.get("uses_cvg") else ""
+        )
         # The one caption tier, which takes markup: the three emphasised values
         # are coloured by the classes that read the same tokens the chart marks
         # do, so the sentence and the lines it describes cannot disagree about
         # which green they mean.
         render_note(
-            f'<strong class="ink-violet">Equal Weight</strong> — the same '
+            f'<strong class="ink-violet">{SHADOW_LABEL}</strong> — the same '
             f'{len(portfolio)} holdings, same anchor, same capital, split 1/N instead of by '
-            f'cluster variance — returned <strong>{_eq_ret:+.2f}%</strong>. '
-            f'{html_module.escape(_style)} therefore added '
-            f'<strong class="{_edge_cls}">{_edge:+.2f}%</strong> on return. Expect this '
-            f'to be negative as often as not: the allocator targets risk, and the return it '
-            f'gives up is the price of the volatility it removes.'
+            f'{html_module.escape(_style)}\'s weights — returned '
+            f'<strong>{_eq_ret:+.2f}%</strong>. {html_module.escape(_style)} therefore added '
+            f'<strong class="{_edge_cls}">{_edge:+.2f}%</strong> on return. {_expect}'
+            + _peer_hint
         )
 
     # ── Head-to-head comparison ───────────────────────────────────────────────
@@ -328,7 +596,7 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     _cagr_ok = m.get("cagr_meaningful", True)
     render_section_header(
         "Comparative Statistics",
-        f"{_style} vs equal weight vs {bench_name}"
+        f"{_style}" + (f" vs {SHADOW_LABEL}" if _has_alt else "") + f" vs {bench_name}"
         + ("" if _cagr_ok else " · CAGR hidden, window too short to annualize"),
         icon="zap", accent="emerald",
     )
@@ -389,7 +657,7 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     # can reintroduce it.
     _cols = [(_style, 0)]
     if _has_alt:
-        _cols.append(("Equal Weight", 1))
+        _cols.append((SHADOW_LABEL, 1))
     if _bench_m is not None:
         _cols.append((bench_name, 2))
     _seen: dict[str, int] = {}
@@ -425,12 +693,21 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     )
     render_note(
         f"Green marks the best value in each row. **{_style}** is the curated book"
-        + (f"; **Equal Weight** is the same {len(portfolio)} holdings split 1/N — the "
-           "like-for-like test of the allocator" if _has_alt else "")
+        + (f"; **{SHADOW_LABEL}** is the same {len(portfolio)} holdings split 1/N — the "
+           "like-for-like test of the weights" if _has_alt else "")
         + f"; **{bench_name}** is the market. Max Drawdown, VaR and CVaR are "
-        f"negative numbers, so *higher is better* — the least negative wins. Expect the allocator "
-        f"to lead on volatility and drawdown while trailing on return: that is the trade it makes, "
-        f"not a fault."
+        f"negative numbers, so *higher is better* — the least negative wins."
+        + (" Expect the allocator to lead on volatility and drawdown while trailing on "
+           "return: that is the trade it makes, not a fault."
+           if style_spec(_run_ctx).get("needs_covariance", True) else "")
+    )
+
+    _render_style_comparison(
+        portfolio=portfolio, style=_style, method=str(_run_ctx.get("curation") or ""),
+        m=m, port_returns=port_returns, bench_returns=bench_returns, rf=RISK_FREE_RATE,
+        peer_books=_peer_books, peer_out=peer_out, has_peers_key="peers" in _run_ctx,
+        peer_notes=_run_ctx.get("peer_notes") or {}, has_shadow=_has_alt,
+        requested=int(_run_ctx.get("num_positions") or len(portfolio)),
     )
 
     # ── Relationship to benchmark ─────────────────────────────────────────────

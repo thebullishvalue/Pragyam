@@ -21,6 +21,8 @@ from ui.components import (
     render_section_header,
 )
 from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
+from cvgrid import STATE_LABEL, STATES
+from samanvaya import DEFAULT_BASKET
 from ui.theme import VERSION
 
 
@@ -88,7 +90,7 @@ def _render_system_tab(training_window: List):
             + (f" · {len(_at.get('nco_universe_excluded') or {})} excluded"
                f" (<{num(_at.get('nco_coverage_required')) or 0.8:.0%} history)"
                if _at.get("nco_universe_excluded") else
-               " · nothing excluded (1/N needs no estimate)" if not _needs_cov else "")),
+               " · nothing excluded (reads no covariance)" if not _needs_cov else "")),
         "Risk Estimation": (
             f"{_n_est} of {_n_alloc} names"
             + (f" · {len(_diag_excl)} below "
@@ -105,7 +107,38 @@ def _render_system_tab(training_window: List):
         "Data Source": "yfinance (NSE)",
         "Lookback Period": f"{len(training_window)} days",
     }
+    if _at.get("nco_uses_cvg"):
+        # What the weights were read from, over the whole allocation universe.
+        # Only on a Conviction-Value Grid run — no other style reads these, and a row for them
+        # would imply otherwise.
+        _census = _at.get("nco_cvg_census") or {}
+        details["Grid Readings"] = (
+            f"{_at.get('nco_cvg_names', 0)} of {_n_alloc} names read on both tapes"
+            + ("" if _at.get("nco_cvg_applied") else " · NONE — every name unread, book is 1/N"))
+        details["Grid States"] = " · ".join(
+            f"{STATE_LABEL[c]} {_census[c]}" for c, *_ in STATES if _census.get(c))
+        details["Histogram"] = (
+            f"runs the rows · {_at.get('nco_cvg_push_read', 0)} read · "
+            f"{_at.get('nco_cvg_confirm_up', 0)} confirm up · "
+            f"{_at.get('nco_cvg_confirm_down', 0)} confirm down · "
+            f"{_at.get('nco_cvg_unconfirmed', 0)} cannot (turning or quiet) · "
+            f"{_at.get('nco_cvg_held', 0)} rows held against the tape")
+        details["Map"] = ("graded — each name shaded within its cell by the tapes' drawn "
+                          "intensity (faint 0.12–0.45, step, bright 0.65–1.0)"
+                          if _at.get("nco_cvg_graded") else "flat cells")
+        _hm = num(_at.get("nco_cvg_hedge_median"))
+        details["Value Hedge"] = (
+            f"{DEFAULT_BASKET} basket · median hedge applied "
+            + (f"{_hm:.0%}" if _hm is not None else "—")
+            + " (weighed by its own out-of-sample skill)")
     render_kv_table(details)
+    if _at.get("nco_uses_cvg") and not _at.get("nco_cvg_applied"):
+        render_note(
+            "No name carried a calibrated reading on both tapes, so every name is UNREAD at "
+            "the neutral unit and this book is Equal Weight. Each tape needs about a year of "
+            "daily history per name; a panel cached before the grid's columns existed also "
+            "reads this way until it is refetched."
+        )
     if _uncovered:
         # Holding a name the covariance cannot see is correct for 1/N and a
         # contradiction for anything else, so say which one this is rather than
@@ -113,8 +146,8 @@ def _render_system_tab(training_window: List):
         render_note(
             f"{_uncovered} holding(s) have less than "
             f"{num(_at.get('nco_coverage_required')) or 0.8:.0%} of the estimation window "
-            f"and carry no covariance estimate. {_spec['label']} does not need one — it "
-            "sizes them identically to everything else — but every risk figure above, and "
+            f"and carry no covariance estimate. {_spec['label']} does not read one — it "
+            "sizes them by the same rule as everything else — but every risk figure above, and "
             "every risk column in the holdings table, is computed WITHOUT them"
             + (f", over {_rc_cov:.0%} of book weight." if _rc_cov is not None else ".")
         )
@@ -136,30 +169,73 @@ def _render_system_tab(training_window: List):
     render_section_header("Curation Method", "How a portfolio is built, and what it targets",
                           icon="target", accent="emerald")
     _m_spec = style_spec(st.session_state.get("run_context") or {})
+    # The Conviction-Value Grid is the one style that reads the tape, so the statements every other
+    # style can make — "allocated from the covariance", "nothing here
+    # forecasts", "why not forecast" — are not true of it, and the card says
+    # what IS true instead.
+    _reads_tape = bool(_m_spec.get("uses_cvg", False))
+    _lede = (
+        'Capital is allocated from two readings of every name, and nothing else: '
+        'Pragati&rsquo;s conviction tape &mdash; who controls, and how firmly &mdash; and '
+        'its value tape &mdash; rich or cheap against what the macro drivers and the home '
+        'market explain. Together they place the name in a state, and the state sets its '
+        'weight. The covariance is not read; the risk panels are its mirror.'
+        if _reads_tape else
+        'Capital is allocated from the return covariance structure. Nothing here '
+        'forecasts returns &mdash; the book is built to spread risk across genuinely '
+        'distinct exposures, not to predict which holding will win.'
+    )
+    _bound_label = "The honest bound" if _reads_tape else "Why not forecast"
+    _bound_body = (
+        'Reading the tape is forecasting, and Grinold\'s Fundamental Law caps what any '
+        'forecast can earn here: <code>IR = IC &times; &radic;BR &times; TC</code>, ~1%/yr on '
+        '~1.9 independent bets. The book is therefore held whole &mdash; every name at no less '
+        'than the floor, core at 12&times; it &mdash; so a wrong reading costs weight, never a '
+        'position. Read the measured sentence above as the size of what the tapes carry.'
+        if _reads_tape else
+        'Grinold\'s Fundamental Law caps forecast-driven excess return at '
+        '<code>IR = IC &times; &radic;BR &times; TC</code>. At &rho; 0.52 these '
+        '30 ETFs are only ~1.9 independent bets, so that ceiling is ~1%/yr '
+        'however good the signal. Covariance is estimable where expected '
+        'returns are not.'
+    )
     method_html = (
         '<div class="intel-method-card">'
             '<div class="intel-method-header">'
                 '<div class="intel-method-title">Curation Pipeline</div>'
-                '<div class="intel-method-pill">cluster &rarr; allocate &rarr; size</div>'
+                '<div class="intel-method-pill">'
+                    + ('read &rarr; confirm &rarr; classify &rarr; size' if _reads_tape
+                       else 'cluster &rarr; allocate &rarr; size')
+                + '</div>'
             '</div>'
             '<div class="intel-method-lede">'
-                'Capital is allocated from the return covariance structure. Nothing here '
-                'forecasts returns &mdash; the book is built to spread risk across genuinely '
-                'distinct exposures, not to predict which holding will win.'
-            '</div>'
+                + _lede
+            + '</div>'
             '<div class="intel-method-grid">'
 
                 '<div class="intel-method-tile">'
-                    '<div class="tile-label">Cluster</div>'
-                    '<div class="tile-body">'
-                        'Holdings are grouped by <code>d = sqrt(0.5(1 - &rho;))</code> correlation '
-                        'distance using Ward linkage, with the cluster count chosen by silhouette '
-                        'score. Typically resolves to ~3 groups &mdash; matching the eigenvalue '
-                        'participation ratio of the same matrix. Computed over the names carrying '
-                        'at least 80% of the estimation window: a shorter-lived holding is sized, '
-                        'but has no covariance to be clustered by.'
-                    '</div>'
-                '</div>'
+                    + ('<div class="tile-label">Read</div>'
+                       '<div class="tile-body">'
+                           'Two tapes per name, each on the ladder D &middot; W. '
+                           '<b>Conviction</b>: <code>100 &middot; tanh(mean z)</code> of '
+                           'participation-weighted agreement <code>&Sigma;c&middot;w / '
+                           '&Sigma;|c|&middot;w</code>, <code>c = &Delta;C / TR</code>. '
+                           '<b>Value</b>: Samanvaya&rsquo;s blend of the hedged return spread '
+                           'and seven market-strength views, the hedge fitted on up to three '
+                           'drivers and applied only as far as it has earned out of sample. '
+                           'Weekly rungs are rebuilt from the forming week.'
+                       '</div>'
+                       if _reads_tape else
+                       '<div class="tile-label">Cluster</div>'
+                       '<div class="tile-body">'
+                           'Holdings are grouped by <code>d = sqrt(0.5(1 - &rho;))</code> correlation '
+                           'distance using Ward linkage, with the cluster count chosen by silhouette '
+                           'score. Typically resolves to ~3 groups &mdash; matching the eigenvalue '
+                           'participation ratio of the same matrix. Computed over the names carrying '
+                           'at least 80% of the estimation window: a shorter-lived holding is sized, '
+                           'but has no covariance to be clustered by.'
+                       '</div>')
+                + '</div>'
 
                 '<div class="intel-method-tile">'
                     '<div class="tile-label">Allocate</div>'
@@ -182,7 +258,21 @@ def _render_system_tab(training_window: List):
                                     'between sub-clusters in inverse proportion to their variance. '
                                     'No matrix is inverted, which is what makes it robust when '
                                     'correlations are high and the sample is short.'),
-                          }.get(_m_spec["short"] if _m_spec["short"] in ("ERC", "HRP", "EQUAL")
+                            "CVG": ('Conviction-Value Grid, 3 &times; 3: rows are conviction &mdash; UP past '
+                                       '+30, FAINT, DOWN past &minus;30 &mdash; columns are value '
+                                       '&mdash; CHEAP, FAIR, RICH at &plusmn;&theta;. Units: turned '
+                                       '<b>3</b>, building <b>3</b>, paid <b>1.5</b> &middot; basing '
+                                       '<b>1.5</b>, idle <b>1</b>, stalling <b>0.75</b> &middot; '
+                                       'dislocated <b>1</b>, fading <b>0.5</b>, distribution '
+                                       '<b>0.25</b>. The pane&rsquo;s <b>histogram runs the rows</b>: '
+                                       'a name changes row only when the push confirms it &mdash; on '
+                                       'the side of the move, not turning, not quiet. The map is '
+                                       '<b>graded</b>: inside its cell a name&rsquo;s weight moves toward '
+                                       'the neighbouring cell by the tapes&rsquo; drawn intensity, as the '
+                                       'Pine shades them; a held row keeps between half and all of its '
+                                       'cell, by how intensely the push holding it is drawn. Every name '
+                                       'is held.'),
+                          }.get(_m_spec["short"] if _m_spec["short"] in ("ERC", "HRP", "EQUAL", "CVG")
                                 else "EQUAL", _m_spec["formula"])
                     + '</div>'
                 '</div>'
@@ -195,14 +285,10 @@ def _render_system_tab(training_window: List):
                 '</div>'
 
                 '<div class="intel-method-tile">'
-                    '<div class="tile-label">Why not forecast</div>'
+                    f'<div class="tile-label">{_bound_label}</div>'
                     '<div class="tile-body">'
-                        'Grinold\'s Fundamental Law caps forecast-driven excess return at '
-                        '<code>IR = IC &times; &radic;BR &times; TC</code>. At &rho; 0.52 these '
-                        '30 ETFs are only ~1.9 independent bets, so that ceiling is ~1%/yr '
-                        'however good the signal. Covariance is estimable where expected '
-                        'returns are not.'
-                    '</div>'
+                        + _bound_body
+                    + '</div>'
                 '</div>'
 
             '</div>'
