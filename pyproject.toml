@@ -1,7 +1,7 @@
 [project]
 name = "pragyam"
 version = "11.0.0"
-description = "Covariance-based portfolio curation over a fixed ETF universe: Hierarchical Risk Parity and Equal Weight allocators that select and weight entirely from the return covariance structure, with an eight-factor market-regime read for context, a Broker Sync step that writes curated units into broker order JSONs, and an Analytics tab tracking the book against both a universe-matched benchmark and an equal-weight shadow of the same holdings — @thebullishvalue"
+description = "Covariance-based portfolio curation over a fixed ETF universe: Equal Weight, Equal Risk Contribution and Hierarchical Risk Parity allocators that select and weight from the return covariance structure, plus a Conviction-Value Grid style that sizes each name by its cell in the 3 × 3 of the Pragati indicator's conviction and value tapes, with the pane's histogram deciding when a name changes row, with an eight-factor market-regime read for context, a Broker Sync step that writes curated units into broker order JSONs, and an Analytics tab tracking the book against a universe-matched benchmark, an equal-weight shadow of the same holdings, and the book each other style builds from the same run — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.28.0",
@@ -14,6 +14,17 @@ dependencies = [
     "colorama>=0.4.6",
     "requests>=2.31.0",
     "openpyxl>=3.1.2",
+]
+
+[project.optional-dependencies]
+# Editor / type-checking only — nothing here is imported at runtime.
+# scipy-stubs must match the installed scipy's minor version. Install it with
+# its numpy-typing-compat pinned to the INSTALLED numpy's minor version:
+# left to resolve on its own, it pulls the newest numpy (2.5 at the time of
+# writing) and breaks packages capped below it, such as numba.
+#     pip install "scipy-stubs==1.18.0.1" "numpy-typing-compat==20260602.2.4"
+dev = [
+    "scipy-stubs>=1.18.0",
 ]
 
 [tool.ruff]

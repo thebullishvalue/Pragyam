@@ -7,6 +7,210 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - Conviction-Value Grid (2026-09-26)
+
+### ✨ Added — a fourth style, read from the Pragati indicator
+
+- **Conviction-Value Grid (CVG) — a 3 × 3 state engine.** A pure reading of the
+  Pragati indicator (`pragati.pine`, formerly Dhṛti)
+  inside Pragyam's pipeline: same eligibility, top-N, 10% cap, integer lots and
+  risk diagnostics as every style, but the weights come from Pragati's two tapes
+  and its histogram and nothing else — no covariance, no solver, and none of the
+  Pine's ▲▼ ◆ or divergence signals. Conviction (UP ≥ +30 / FAINT / DOWN ≤ −30,
+  the tape's inner zone) × value (CHEAP ≤ −θ / FAIR / RICH ≥ +θ, θ = 42.9)
+  places every name in one of nine states, and the state is its weight:
+
+  ```
+                    CHEAP            FAIR           RICH
+      UP            Turned 3         Building 3     Paid 1.5
+      FAINT         Basing 1.5       Idle 1         Stalling 0.75
+      DOWN          Dislocated 1     Fading 0.5     Distribution 0.25
+  ```
+
+  Units are chosen, not fitted. Every name is held; the state sets how much,
+  never whether, and the book fills core first when N is below the universe.
+  `needs_covariance: False` — like Equal Weight, it allocates over every priced
+  symbol.
+- **The histogram runs the rows.** Columns (value) move freely. A name moves to
+  its conviction tape's row only while the pane histogram CONFIRMS a push that
+  way on all three of its channels as the Pine draws them: the column on the
+  side of the move (hue), an impulse, building or decelerating tier rather than
+  turning (lightness), and not a quiet regime (saturation). Otherwise the row is
+  held, and the UI marks it. An uncalibrated histogram lets the row follow the
+  tape.
+- **The map is graded, as the Pine draws it.** Each cell's units are its
+  centre; inside the cell a name's weight blends toward one neighbouring cell
+  per axis by how intensely its tape is shaded, on the Pine's own ramps (faint
+  0.12 → 0.45 inside the knee, a visible step, bright 0.65 → 1.0 to solid at
+  ±60 conviction / ±70 value). A held row keeps between half and all of its cell
+  by how intensely the push holding it is drawn. Weight is continuous inside a
+  cell and steps where the Pine's shading steps; it never passes a neighbouring
+  cell's units (`cvgrid.graded_units`; `nco.CVG_GRADED`).
+- **`pragati.py`** — the Pine's conviction engine (Agreement denominator, Auto
+  participation, its 20 / 3 / 200 / 20 / 3.0 defaults) with the weekly rung
+  RECONSTRUCTED from the forming week, as the Pine rebuilds every higher frame:
+  it lands on the settled weekly value to 1e-13 and never sees the rest of the
+  week (truncation test: 0.0 difference). The histogram's reading — signal
+  EMA(9), the four lightness tiers with the Pine's own gradients, the 0.1σ flat
+  band, the quiet regime — ported from section 9; no look-ahead (0.0). Two
+  adaptations, stated: the weekly rung normalises over 52 weeks, not 200, and
+  the quiet test ranks over the history available (≥ 200 bars) where the Pine
+  asks for 800. Also the 3 × 3 engine.
+- **`samanvaya.py`** — Samanvaya's value engine, carried whole: stepwise
+  partial-correlation driver selection over a 250-day window read 12 days in
+  arrears, Fisher / Šidák admission, ridge Gram-Schmidt, the hedge weighed by
+  its own out-of-sample skill, the five-member high-passed spread ensemble, the
+  seven-member market-strength breadth leg, the variance-restored blend, and
+  the weekly value rung. Checked against the Pine's quoted hedge skill: TLT
+  0.90 (Pine 0.97), INFY 0.00 (Pine 0.04).
+- **Macro drivers** (`backdata.fetch_macro_drivers`) — one batch of 20 series
+  per panel, behind the circuit breaker. US yields, INR crosses, dollar index
+  and commodities are direct; other 10-year yields are proxied by government-
+  bond ETFs converted to yield moves by duration; non-US 2-year yields have no
+  proxy and drop out, as the Pine's pooling allows. The basket is EXPANDED with
+  Brent, copper and the home equity index (Nifty / S&P 500). The Pine's driver-
+  timing rule applies: a driver closing more than a third of a day after the
+  name is read at its previous close. A failed fetch degrades the value tape to
+  unhedged; it does not end the run.
+- **Snapshot schema** — fourteen columns (`conv …`, `value …`, `cvg …`) (the conviction tape and its
+  rungs; the histogram, its drawn intensity, tier and confirmation; the value
+  tape, its chart reading, hedge and drivers; the state, its age and whether its
+  row is held). The panel cache key changes with it, so no stale panel is served.
+- **Portfolio tab, on a CVG run** — State (marked "held") / Map units / Push /
+  Conv / Value tape / Days columns beside the weight; a **Conviction-Value Map** section
+  with the state census and the map (every name placed by its tapes and coloured
+  by its state across all nine regions — a point coloured for a region it does
+  not sit in is a row being held); and a **Watchlist** of Basing and Dislocated
+  names with how far each is from turning and whether the push is behind it.
+  The risk heatmap gains Conviction, Value and Push rows.
+- **System tab / run log** — names read, the state census, the histogram's
+  confirmations and held rows, the hedge applied; the method card describes the
+  read → confirm → classify → size pipeline and states the honest bound instead
+  of "why not forecast".
+- **`research/conviction_value_grid.py`** — reproduces every figure below; the
+  pre-registration is its docstring.
+
+### 📏 Measured (pre-registered before each design was run)
+
+Monthly rebalances through the shipped pipeline, every name held. The two parts
+are isolated: **gate** is the book minus the same graded map with rows simply
+following the tape; **grading** is the book minus the same engine on flat cells.
+
+```
+             CVG − EW             gate                  grading               turnover (CVG / flat / EW)
+ETF book     −0.17%/yr (t −0.43)  −0.12%/yr (t −0.93)   +0.16%/yr (t +0.99)   0.91x / 1.18x / 0.47x
+Nifty 50     −0.32%/yr (t −0.62)  +0.31%/yr (t +2.17)   −0.07%/yr (t −0.29)   1.47x / 2.30x / 0.33x
+Dow 30       −0.41%/yr (t −0.78)  +0.28%/yr (t +1.47)   +0.28%/yr (t +0.99)   1.49x / 2.41x / 0.26x
+```
+
+**It does not beat Equal Weight**, and the evidence sentence says so — but it is
+within half a percent in every universe and no gap is significant. The
+histogram earns its seat on single stocks (+0.3%/yr, a third fewer row changes:
+Nifty 8.0 vs 12.0 per name-year) and is neutral on the sector ETFs. Grading is
+return-neutral and cuts turnover by a quarter to two-fifths — the opposite of
+what was expected before it was measured: flat cells jump a whole band on every
+state change, graded weights mostly slide. The two tapes are +0.6 correlated,
+so the disagreeing corners stay thin (Turned ~0.6% of name-days, Distribution
+~0.1%), and on single stocks the core still trails the floor the next month
+(Nifty −0.7%, Dow −0.9%, t ≈ −1.3). The expanded basket passed its
+pre-registered test in every universe (median out-of-sample hedge skill ETF
+0.01 → 0.45, Nifty 0.005 → 0.23, Dow 0.01 → 0.20). The same panels served every
+design in this entry, so read every t as directional.
+
+### 🏷️ Renamed
+
+- **The indicator: Dhṛti → Pragati** (प्रगति, "progress" — what `c = ΔC / TR`
+  measures: how much of a bar's travel became progress). The Sanskrit lineage
+  is kept and extended: Siddhi → Nishchaya → Dhṛti → Pragati. `dhriti.pine` →
+  `pragati.pine`: title, short title, header, tooltips and alert titles. The
+  engine is unchanged. **Alerts created on the old titles must be re-created**,
+  and a published TradingView script keeps its old name until republished.
+- **The style: Dhṛti Two-Tape → Conviction-Value Grid (CVG)**, named like Equal
+  Weight and Risk Parity — for what sets the weight. Method key `DHRITI` → `CVG`.
+- **Modules:** `dhriti.py` is split in two — `pragati.py` (the indicator port:
+  conviction tape and histogram) and `cvgrid.py` (the style: states, graded
+  map, classifier) — the way `samanvaya.py` ports its own indicator.
+- **Data columns** are named for what they hold, not for a brand: `conv …`,
+  `value …`, `cvg …` (was `dhriti …`). The panel cache key changes with them.
+- `research/dhriti_two_tape.py` → `research/conviction_value_grid.py`.
+
+### 🧪 Tried and withdrawn on the way
+
+- **Conviction Budget** — ERC with risk budgets `1 + 0.5 · C / 100` from the
+  conviction tape. Withdrawn as not a reading of the indicator (the covariance did the
+  work) and on the numbers: −0.34%/yr against ERC on Nifty 50 (t −2.34); a
+  pre-registered weekly-rung variant failed its own bar (t −2.61). Its solver
+  was removed and `erc_weights` restored byte for byte.
+- **Seven-state two-tape grid** — the faint row merged into one Undecided state,
+  no histogram: −0.04 / −0.96 / −1.34 %/yr against Equal Weight on ETF / Nifty /
+  Dow. Replaced by the full 3 × 3.
+- **Histogram as a weight multiplier** — `units × (1 + 0.5 · push)` on top of the
+  states: +0.15%/yr over the grid without it on Dow (t 0.5) for turnover 2.6x →
+  3.4x. Withdrawn as a patch on the engine rather than part of it; the histogram
+  now decides the rows instead.
+- **Flat 3 × 3 cells** — every name in a state at the same units: −0.33 / −0.25 /
+  −0.68 %/yr against Equal Weight, at 1.18x / 2.30x / 2.41x turnover. Replaced
+  by the graded map, which trades a quarter to two-fifths less for the same
+  return.
+
+### ✨ Added — every style in Analytics
+
+- **Style Comparison.** Analytics compared the book with the benchmark and with
+  its own equal-weight shadow; it now also compares it with the book each OTHER
+  style builds from the same run. Three questions, three references: the
+  benchmark (did it beat the market?), the shadow (with the names fixed, did the
+  weights help?) and the other styles (would a different style have done better
+  from this date?).
+- **Built at run time, frozen with the run.** After the book, the other three
+  styles go through the same `compute_nco_portfolio` with the same panel, date,
+  prices, requested positions, capital and cap — about 0.7s for all three — and
+  are stored in `run_context["peers"]`. A style that cannot build a book (ERC or
+  HRP with no estimable covariance) is recorded in `run_context["peer_notes"]`
+  and left out; it never fails the run. `run_context["num_positions"]` records
+  the requested count.
+- **One download, one calendar.** `build_return_series(peer_quantities=...)`
+  adds the peers' names to the book's download and values each peer on the
+  book's own calendar from its first date. The book's series is identical with or
+  without peers (verified), and a combined download that fails is retried with
+  the book's names alone. A peer holding a name priced only after the book's
+  first date is left out rather than given a fabricated return; a name with no
+  price at all is valued out and named, as the book's own are.
+- **The table** carries return, volatility, Sharpe and max drawdown per book,
+  plus the book's edge over each style, **Overlap** (capital held in common) and
+  a **t** on the daily gap with its read (*within* / *beyond noise*, not read
+  under 20 trading days). The note explains a differing Equal Weight book by its
+  actual cause (listing-order selection below the universe's size, or a
+  covariance style's smaller eligible set), and each style's long-run record
+  against Equal Weight — a new one-line `long_run` field in `METHOD_SPECS` — is
+  quoted beneath it.
+- **Chart:** the other styles are thin slate lines, hidden until picked in the
+  legend, each with a dash it keeps from run to run.
+
+### 🔧 Changed
+
+- `compute_nco_portfolio` sorts its output STABLY, so tied weights keep the
+  order the allocator filled them in (universe order for 1/N, state-then-room
+  for the grid). Figures are unchanged.
+- Eligibility copy reads "reads no covariance" rather than "estimates nothing",
+  which is untrue of the grid.
+- `ledoit_wolf`'s φ is computed in closed form (two matrix products) instead of
+  a Python `sum()` over T outer products. The old expression was typed `int`
+  (sum starts from 0) and genuinely crashed on `.sum()` with zero observations
+  — unreachable in the app, which never calls it below 60. Identical to 2e-16;
+  ERC weights move by at most 3e-17.
+- Panel build time rises with the value engine: a 30-name, 375-day panel went
+  from 7s to 16s on first fetch (cached thereafter).
+- The equal-weight shadow is labelled **EW Shadow** everywhere (chart, Head to
+  Head, notes). "Equal Weight" is a style whose book can hold different names,
+  and both now appear together.
+- The Analytics notes follow the style. "Split 1/N instead of by cluster
+  variance" and "expect the allocator to trail on return" were printed for every
+  style; they now name the style's own weights and state the risk trade only for
+  ERC and HRP.
+- `build_return_series` returns an eighth element, `peers`.
+
+---
+
 ## [11.0.0] - 2026-07-29
 
 ### 🧹 Shipping polish

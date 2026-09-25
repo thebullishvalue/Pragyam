@@ -15,7 +15,9 @@ is compared to the benchmark return series.
 
 ``build_return_series`` can additionally value a SECOND unit vector over the
 same names off the same price panel (``alt_quantities``) — used to chart an
-equal-weight shadow of the curated book beside it.
+equal-weight shadow of the curated book beside it — and any number of PEER
+books over their own names (``peer_quantities``): the books the other styles
+built from the same run, priced off the same download and the same calendar.
 
 Author: @thebullishvalue
 """
@@ -435,10 +437,12 @@ def build_return_series(
     benchmark_name: str,
     anchor_date: Optional[datetime] = None,
     alt_quantities: Optional[Dict[str, float]] = None,
-) -> Tuple[pd.Series, pd.Series, Optional[pd.Series], str, list, pd.Series, pd.Series]:
+    peer_quantities: Optional[Dict[str, Dict[str, float]]] = None,
+) -> Tuple[pd.Series, pd.Series, Optional[pd.Series], str, list, pd.Series, pd.Series,
+           Dict[str, Dict[str, Any]]]:
     """From a curated portfolio, produce
     ``(port_value, port_returns, bench_returns, error, unpriced, alt_value,
-    bench_value)``.
+    bench_value, peers)``.
 
     ``bench_value`` is the benchmark PRICE series on the same trimmed calendar as
     ``port_value``. Charts must normalize from it rather than from
@@ -464,10 +468,20 @@ def build_return_series(
     series could start on different dates and would then be normalized from
     different bases, making the comparison quietly wrong. ``alt_value`` is an
     empty Series when ``alt_quantities`` is None.
+
+    ``peer_quantities`` is ``{label: {symbol: units}}`` — the books the OTHER
+    styles curated from the same run, which may hold different names. Their
+    symbols join the one download, and each peer is valued on THIS book's
+    calendar, from this book's first date. The book defines the window and is
+    never re-trimmed for a peer, so its series is identical with or without
+    peers (the price fetch aligns and fills each column on its own). A peer
+    that cannot be valued over that window is reported, never approximated:
+    ``peers[label]`` is ``{"value": Series, "unpriced": [...], "reason": str}``,
+    with an empty ``value`` and a non-empty ``reason`` when it was left out.
     """
     _empty = pd.Series(dtype=float)
     if portfolio is None or portfolio.empty or "symbol" not in portfolio.columns or "units" not in portfolio.columns:
-        return _empty, _empty, None, "No curated portfolio.", [], _empty, _empty
+        return _empty, _empty, None, "No curated portfolio.", [], _empty, _empty, {}
 
     symbols = [str(s) for s in portfolio["symbol"].tolist()]
     quantities = {str(s): float(u or 0) for s, u in zip(portfolio["symbol"], portfolio["units"])}
@@ -476,16 +490,26 @@ def build_return_series(
     # affect value, so their absence is not a data gap.
     held = {s for s in symbols if quantities.get(s, 0.0) > 0}
 
-    port_prices, bench_prices = fetch_analysis_data(symbols, days_back, benchmark_ticker, benchmark_name)
+    peer_quantities = peer_quantities or {}
+    _extra = sorted({s for q in peer_quantities.values() for s in q} - set(symbols))
+    peer_reason = ""
+    port_prices, bench_prices = fetch_analysis_data(symbols + _extra, days_back,
+                                                    benchmark_ticker, benchmark_name)
+    if port_prices.empty and _extra:
+        # The peers must never cost the book its own series: a download that
+        # failed with their names in it is retried with the book's alone.
+        port_prices, bench_prices = fetch_analysis_data(symbols, days_back,
+                                                        benchmark_ticker, benchmark_name)
+        peer_reason = "prices for its holdings could not be fetched"
     if port_prices.empty:
-        return _empty, _empty, None, "Unable to fetch historical data.", sorted(held), _empty, _empty
+        return _empty, _empty, None, "Unable to fetch historical data.", sorted(held), _empty, _empty, {}
 
     if anchor_date is not None:
         cut = pd.Timestamp(anchor_date)
         port_prices = port_prices[port_prices.index >= cut]
         bench_prices = bench_prices[bench_prices.index >= cut]
         if port_prices.empty:
-            return _empty, _empty, None, "No data from the anchor date.", sorted(held), _empty, _empty
+            return _empty, _empty, None, "No data from the anchor date.", sorted(held), _empty, _empty, {}
 
     # Which held symbols never got a price column at all (unmatched / delisted /
     # ticker-suffix mismatch)? Those are genuinely absent from the value series.
@@ -497,7 +521,7 @@ def build_return_series(
         if sym in quantities:
             port_value[sym] = port_prices[sym] * quantities[sym]
     if port_value.empty:
-        return _empty, _empty, None, "No priced holdings.", unpriced, _empty, _empty
+        return _empty, _empty, None, "No priced holdings.", unpriced, _empty, _empty, {}
 
     alt_value = pd.DataFrame(index=port_prices.index)
     if alt_quantities:
@@ -545,7 +569,37 @@ def build_return_series(
             bench_value = bench_value[bench_value.index >= port_value.index[0]]
         bench_returns = bench_value.pct_change(fill_method=None).dropna()
 
-    return port_value, port_returns, bench_returns, "", unpriced, alt_series, bench_value
+    # ── The other styles' books, on this book's calendar ──────────────────────
+    # A holding with no price anywhere in the window is valued out, as the
+    # book's own are, and listed. A holding priced only AFTER the book's first
+    # date is a different matter: summing without it would start the peer on a
+    # smaller base and then spike it the day the price appears, so that peer is
+    # left out rather than given a fabricated return.
+    peers: Dict[str, Dict[str, Any]] = {}
+    for label, q in peer_quantities.items():
+        held_p = sorted(s for s, u in q.items() if float(u or 0) > 0)
+        priced_p = [s for s in held_p
+                    if s in port_prices.columns and port_prices[s].notna().any()]
+        entry: Dict[str, Any] = {"value": _empty,
+                                 "unpriced": sorted(set(held_p) - set(priced_p)),
+                                 "reason": peer_reason}
+        if not entry["reason"]:
+            if not held_p:
+                entry["reason"] = "it holds no units at this capital"
+            elif not priced_p or port_value.empty:
+                entry["reason"] = "none of its holdings could be priced"
+            else:
+                px = port_prices[priced_p].reindex(port_value.index)
+                late = [s for s in priced_p if pd.isna(px[s].iloc[0])]
+                if late:
+                    entry["reason"] = (", ".join(late[:3]) + (" …" if len(late) > 3 else "")
+                                       + " not priced on this book's first date")
+                else:
+                    units_p = pd.Series({s: float(q[s]) for s in priced_p})
+                    entry["value"] = (px * units_p).sum(axis=1)
+        peers[label] = entry
+
+    return port_value, port_returns, bench_returns, "", unpriced, alt_series, bench_value, peers
 
 
 __all__ = [

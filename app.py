@@ -5,7 +5,10 @@ PRAGYAM — Portfolio Intelligence (Streamlit App)
 Covariance-based portfolio curation over a fixed ETF universe.
 
 Architecture:
-  nco.py            → HRP / Equal Weight curation (selection AND weighting)
+  nco.py            → Equal Weight / ERC / HRP / Conviction-Value Grid curation
+  pragati.py        → pragati.pine's conviction tape and histogram
+  cvgrid.py         → the Conviction-Value Grid: states and graded map
+  samanvaya.py      → Samanvaya's value tape (the macro-hedged value engine)
   regime.py         → MarketRegimeDetector (fixed 8-factor) — context only
   backdata.py       → generate_historical_data(), compute_volume_profile()
   analytics.py      → portfolio-vs-benchmark performance metrics
@@ -34,10 +37,11 @@ deliver excess return: measured across two disjoint periods, HRP gives up
 
 Pipeline:
   Phase 1: Data fetching + regime detection (context)
-  Phase 2: Covariance curation (HRP or Equal Weight)
+  Phase 2: Covariance curation (Equal Weight, ERC, HRP or Conviction-Value Grid)
 
 Result tabs: Portfolio (holdings + risk profile + cluster structure) ·
-Analytics (book vs benchmark vs equal-weight shadow) · Regime ·
+Analytics (book vs benchmark vs equal-weight shadow vs the other styles'
+books from the same run) · Regime ·
 Broker Sync (curated units → broker JSONs) · System.
 
 Author: @thebullishvalue
@@ -100,6 +104,7 @@ from universe import (
 )
 from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec,
                  MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP)
+from cvgrid import STATE_LABEL as CVG_STATE_LABEL, STATES as CVG_STATES
 
 try:
     from charts import (
@@ -257,7 +262,14 @@ def _log_recovery(step, previous) -> None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: str) -> List[Tuple[datetime, pd.DataFrame]]:
-    """Fetch and cache historical indicator snapshots from yfinance."""
+    """Fetch and cache historical indicator snapshots from yfinance.
+
+    Snapshots carry Pragati's two tapes and the grid state (backdata.COLUMN_ORDER), and
+    the fetch includes the value tape's macro drivers. This docstring is part
+    of the cache key — st.cache_data hashes the function's source — so editing
+    it retires any panel cached before a schema change rather than serving it
+    for the rest of the TTL.
+    """
     _PANEL_FETCHES["n"] += 1
     # Announced here rather than by the caller: reaching this line IS the cache
     # miss, and saying so before the download starts puts the explanation above
@@ -443,7 +455,7 @@ def _render_header() -> None:
     """Render the main masthead header."""
     render_header(
         title=f"{PRODUCT_NAME}",
-        tagline="Covariance-Based Portfolio Curation · Equal Weight · ERC · HRP · Live NSE Data"
+        tagline="Covariance-Based Portfolio Curation · Equal Weight · ERC · HRP · CVG · Live NSE Data"
     )
 
 
@@ -456,7 +468,7 @@ _SYSTEM_PANELS = (
      "Capital is allocated from the return covariance. Nothing forecasts a return — "
      "the book spreads risk across distinct exposures rather than picking winners.",
      (("Cluster", "Ward on correlation distance"),
-      ("Allocate", "1/N · equal risk · cluster bisection"),
+      ("Allocate", "1/N · equal risk · cluster bisection · conviction-value grid"),
       ("Targets", "Volatility and drawdown"))),
     ("regime", "REGIME", "Eight-factor context",
      "A fixed-weight composite of eight measured factors over a rolling window. "
@@ -469,7 +481,7 @@ _SYSTEM_PANELS = (
      "allocation are visible — with each holding's variance share against its capital.",
      (("Clusters", "Silhouette-selected"),
       ("Per holding", "Weight · risk · vol · independence"),
-      ("Benchmark", "Equal-weight shadow book"))),
+      ("Benchmark", "EW shadow · the other styles' books"))),
 )
 
 
@@ -1096,6 +1108,7 @@ def _run_analysis(
                 "EQUAL":  ("Measuring Risk Structure", "1/N · clustering for diagnostics only"),
                 "ERC":    ("Solving Equal Risk Contribution", "cyclical coordinate descent"),
                 "HRP":    ("Clustering Risk Structure", "correlation-distance hierarchy"),
+                "CVG": ("Reading Pragati's Tapes", "conviction × value on D · W"),
             }.get(_method, ("Measuring Risk Structure", _spec["formula"]))
             progress_bar(progress_container, 40, _stage40[0],
                          f"{_spec['short']} · {_stage40[1]}")
@@ -1147,12 +1160,13 @@ def _run_analysis(
 
                 _stage60 = ("Allocating Across Clusters" if _spec["uses_clusters"]
                             else "Balancing Risk Contributions" if _spec["rc_target"] == "equal"
+                            else "Sizing by Grid State" if _spec.get("uses_cvg")
                             else "Sizing Positions")
                 progress_bar(progress_container, 60, _stage60,
                              f"{len(_prices)} symbols · {_spec['short']}")
 
                 with log.task("Allocate", f"{_spec['label']} · {_spec['formula']}") as _t:
-                    _t.item("Eligibility", "every priced symbol (estimates nothing)"
+                    _t.item("Eligibility", "every priced symbol (reads no covariance)"
                             if not _spec.get("needs_covariance", True)
                             else f"names with ≥{MIN_COVERAGE:.0%} of the estimation window")
                     _t.item("Requested", f"{num_positions} positions · "
@@ -1164,6 +1178,33 @@ def _run_analysis(
                     if _book.empty:
                         _t.fail("no book — see the reason below")
                     else:
+                        if _book.attrs.get("nco_uses_cvg"):
+                            # What the weights were read from, over the whole
+                            # universe: how many names both tapes reached, where
+                            # they placed them, and how far the value tape's
+                            # hedge was earned.
+                            _ba = _book.attrs
+                            _cz = _ba.get("nco_cvg_census") or {}
+                            _t.item("Grid readings",
+                                    f"{_ba.get('nco_cvg_names', 0)} of "
+                                    f"{_ba.get('nco_universe', 0)} names read on both tapes")
+                            _t.item("States", " · ".join(
+                                f"{CVG_STATE_LABEL[c]} {_cz[c]}"
+                                for c, *_ in CVG_STATES if _cz.get(c)))
+                            _t.item("Histogram", "runs the rows · "
+                                    f"{_ba.get('nco_cvg_confirm_up', 0)} confirm up · "
+                                    f"{_ba.get('nco_cvg_confirm_down', 0)} confirm down · "
+                                    f"{_ba.get('nco_cvg_unconfirmed', 0)} cannot · "
+                                    f"{_ba.get('nco_cvg_held', 0)} rows held")
+                            _t.item("Map", "graded — shaded within each cell by the tapes' intensity"
+                                    if _ba.get("nco_cvg_graded") else "flat cells")
+                            _hm = num(_ba.get("nco_cvg_hedge_median"))
+                            _t.item("Value hedge", "median applied "
+                                    + (f"{_hm:.0%}" if _hm is not None else "—")
+                                    + " · weighed by its own out-of-sample skill")
+                            if not _ba.get("nco_cvg_applied"):
+                                _t.note("no name read on both tapes — every name is UNREAD at "
+                                        "the neutral unit and this book is 1/N")
                         _t.ok(f"{len(_book)} positions from "
                               f"{_book.attrs.get('nco_universe', 0)} eligible names")
 
@@ -1214,6 +1255,10 @@ def _run_analysis(
                 "investment_style": investment_style,
                 "capital": capital,
                 "curation": _method,
+                # Requested, not held: a covariance style can fill fewer when
+                # the eligible universe runs out, and the style comparison
+                # must quote what every book was ASKED for.
+                "num_positions": num_positions,
             }
 
             _at = _book.attrs
@@ -1257,7 +1302,7 @@ def _run_analysis(
                 # no dispersion, which is not the same as a dispersion of zero.
                 _t.item("Risk balance",
                         (f"dispersion {_disp:.3f} " if _disp is not None else "dispersion — ")
-                        + f"({'target 0.00' if _spec['rc_target'] == 'equal' else 'not targeted'})"
+                        + ("(target 0.00)" if _spec["rc_target"] == "equal" else "(not targeted)")
                         + (f" · concentration {_conc:.2f}x equal share"
                            if _conc is not None else " · concentration —"))
                 if _spec["uses_momentum"]:
@@ -1303,6 +1348,52 @@ def _run_analysis(
                                else "the allocator zeroed the remaining names"))
                 else:
                     _t.ok(f"{len(_book)} positions · {int(_book['units'].sum()):,} units")
+
+            # ── The other styles' books, for the Analytics comparison ─────────
+            # Curated from THIS run's inputs — the same panel, date, prices,
+            # position count, capital and cap — so the one thing that differs
+            # between this book and each of them is the style. Built here rather
+            # than in the Analytics tab because the tab never sees the panel,
+            # and frozen into run_context so browsing the sidebar afterwards
+            # cannot change what this book is compared against. A style that
+            # cannot build a book here (ERC and HRP with no estimable
+            # covariance) is recorded and left out; it never fails the run.
+            _peer_codes = [k for k in METHOD_ORDER if k != _method]
+            progress_bar(progress_container, 90, "Building Comparison Books",
+                         " · ".join(METHOD_SPECS[k]["short"] for k in _peer_codes))
+            _peers: Dict[str, pd.DataFrame] = {}
+            _peer_notes: Dict[str, str] = {}
+            with log.task("Comparison books",
+                          "the other styles, from this run's inputs") as _t:
+                for _pm in _peer_codes:
+                    _pspec = method_spec(_pm)
+                    try:
+                        _pb = compute_nco_portfolio(
+                            _nco_hist, _prices, capital, num_positions,
+                            method=_pm, max_pos_pct=st.session_state.max_pos_pct,
+                        )
+                        _why = ("no estimable covariance for this universe and date"
+                                if _pspec.get("needs_covariance", True)
+                                else "no symbol had a usable price")
+                    except Exception as _e:
+                        _pb, _why = pd.DataFrame(), f"{type(_e).__name__}: {_e}"
+                    if _pb.empty:
+                        _peer_notes[_pm] = _why
+                        _t.note(f"{_pspec['label']}: {_why}")
+                        continue
+                    # Only what the comparison reads, in a fresh frame: the
+                    # book's attrs hold DataFrames, and pandas refuses to combine
+                    # frames whose attrs it cannot compare.
+                    _peers[_pm] = pd.DataFrame({
+                        "symbol": _pb["symbol"].astype(str).to_numpy(),
+                        "price": pd.to_numeric(_pb["price"], errors="coerce").to_numpy(),
+                        "units": pd.to_numeric(_pb["units"], errors="coerce").to_numpy(),
+                        "value": pd.to_numeric(_pb["value"], errors="coerce").to_numpy(),
+                    })
+                    _t.item(_pspec["label"], f"{len(_pb)} positions")
+                _t.ok(f"{len(_peers)} of {len(_peer_codes)} built")
+            st.session_state.run_context["peers"] = _peers
+            st.session_state.run_context["peer_notes"] = _peer_notes
 
             metrics.end_phase("curation", success=True)
             metrics.symbols_count = _book.attrs.get("nco_universe", len(_book))
@@ -1426,8 +1517,8 @@ def main():
             options=STYLE_LABELS,
             index=0,                      # Equal Weight — nothing measured beat it
             help=(
-                "Every style selects and weights entirely from the return covariance "
-                "structure — no return forecast is made anywhere.\n\n"
+                "Three styles weight from the return covariance and forecast nothing; "
+                "the Conviction-Value Grid reads the tape instead.\n\n"
                 "**Equal Weight** (default) — 1/N. Across 36 candidate allocators on "
                 "three universes, nothing produced a reproducible return improvement "
                 "over it. Lowest turnover of any style.\n\n"
@@ -1439,6 +1530,13 @@ def main():
                 "**Risk Parity (HRP)** — clusters by correlation, splits capital by "
                 "recursive bisection. Same job as ERC but five times the turnover; kept "
                 "for continuity.\n\n"
+                "**Conviction-Value Grid** — Pragati's 3 × 3: conviction (up / faint / down) × "
+                "value (cheap / fair / rich) places every name in one of nine states, and the "
+                "state is its weight — core 3 units, the floor 0.25 — graded within each cell "
+                "by how intensely the tapes are drawn. The histogram runs the rows: a name "
+                "only changes row once the push is behind it. Reads no covariance. Measured, "
+                "it trails Equal Weight by 0.2–0.4%/yr (none significant) at 2–6x its "
+                "turnover.\n\n"
                 "Every style returns exactly the number of positions you select. "
                 "Max Diversification was evaluated and withdrawn: it is a corner-solution "
                 "optimiser that zeroes names out, so it returned 10 holdings when 15 were "

@@ -11,6 +11,10 @@ Produces, per symbol per day (daily and weekly timeframes where noted):
   • Volume-profile features (daily): point-of-control (POC), value-area position
     (``vap`` — a volatility-normalised premium/discount to accepted value) and
     in-value position (``va_pos``). See ``compute_volume_profile``.
+  • Pragati's two tapes on the ladder D · W — conviction (pragati.py) and value
+    (samanvaya.py, hedged against a macro basket fetched once per panel by
+    ``fetch_macro_drivers``) — and the state they place each name in. See
+    ``cvgrid.compute_readings``.
 
 The canonical column set is ``COLUMN_ORDER``; ``generate_historical_data``
 returns a chronological list of ``(date, snapshot_df)`` tuples in that shape,
@@ -29,6 +33,8 @@ from typing import List, Tuple, Dict, Any, Optional, cast
 
 # Import circuit breaker, metrics and the console
 from circuit_breaker import yfinance_circuit, RetryWithBackoff
+from cvgrid import COLUMNS as CVG_COLUMNS, compute_readings
+from samanvaya import DRIVER_TICKERS
 from logger_config import console
 from metrics import get_metrics
 
@@ -268,7 +274,9 @@ def compute_volume_profile(
 
 def calculate_all_indicators(
     symbol_data: pd.DataFrame,
-    oscillator_calculator: LiquidityOscillator
+    oscillator_calculator: LiquidityOscillator,
+    driver_closes: Optional[pd.DataFrame] = None,
+    ticker: str = "",
 ) -> pd.DataFrame | None:
     """
     Calculate all indicators for a single symbol's full history.
@@ -276,7 +284,9 @@ def calculate_all_indicators(
     Returns a DataFrame indexed by date with columns for price, returns,
     oscillators, RSI, moving averages, deviations, and z-scores across
     daily and weekly timeframes, plus the daily volume-profile features
-    (POC, value-area position ``vap``, and in-value position ``va_pos``).
+    (POC, value-area position ``vap``, and in-value position ``va_pos``),
+    plus Pragati's two tapes and the Conviction-Value Grid state (``driver_closes`` feeds the value
+    tape's macro hedge; ``ticker`` sets its driver timing and home index).
     Returns ``None`` on empty input.
     """
     daily_data = symbol_data.copy()
@@ -330,7 +340,18 @@ def calculate_all_indicators(
 
     weekly_cols = [col for col in all_results_df.columns if 'weekly' in col]
     all_results_df[weekly_cols] = all_results_df[weekly_cols].ffill()
-    
+
+    # ── Pragati's two tapes, and the Conviction-Value Grid state ─────────────
+    #  What the Conviction-Value Grid allocates from. Computed HERE because this is the
+    #  last place the full OHLCV exists: the snapshots carry close prices only,
+    #  and start after a warm-up both tapes need. Attached AFTER the weekly
+    #  forward-fill above on purpose: the weekly rungs are not resampled series
+    #  waiting to be spread across their week — they are daily readings,
+    #  reconstructed from the week as it forms.
+    dh = compute_readings(daily_data, driver_closes, ticker)
+    for col in CVG_COLUMNS:
+        all_results_df[col] = dh[col].reindex(all_results_df.index)
+
     return all_results_df
 
 
@@ -371,6 +392,10 @@ COLUMN_ORDER = [
     'dev20 latest', 'dev20 weekly',
     # Volume-profile features (daily): point-of-control + value-area position.
     'poc latest', 'vap latest', 'va_pos latest',
+    # Pragati (pragati.py, samanvaya.py) and the grid (cvgrid.py): the conviction
+    # tape and its rungs, the
+    # value tape, its chart reading, hedge weight and drivers, and the state.
+    *CVG_COLUMNS,
 ]
 
 # --- NEW: Export max indicator period ---
@@ -402,6 +427,44 @@ _RECOVERY_DELAY = 1.0             # seconds between attempts on one symbol
 # than merely quiet. Shared with the forward-fill below so "recoverable gap" and
 # "gap we carry the last price across" are the same number by construction.
 _STALE_BARS = 5
+
+
+def fetch_macro_drivers(start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
+    """Daily closes of the value tape's macro drivers — one batch per panel.
+
+    Samanvaya's hedge basket (samanvaya.DRIVERS): US yields, bond-ETF proxies
+    for the other 10-year yields, the dollar index, energy, metals, the INR
+    crosses and the home equity indices. Shared by every name in the panel;
+    each name aligns them to its own calendar and close time.
+
+    Returns None rather than raising. The value engine runs without drivers —
+    the RV leg becomes the name's own path, the Pine's "Macro hedge: Off" —
+    so a failed fetch degrades the tape, it does not end the run. Each missing
+    driver is reported, since a basket short of a factor is a different basket.
+    """
+    try:
+        @yfinance_circuit.protect
+        @RetryWithBackoff(max_retries=2, initial_delay=2.0, backoff_factor=2.0)
+        def _download():
+            return yf.download(DRIVER_TICKERS, start=start_date, end=end_date + timedelta(days=1),
+                               progress=False, auto_adjust=True)
+
+        raw = _download()
+        close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+        close = close.dropna(how="all", axis=1)
+    except Exception as e:
+        get_metrics().add_warning(f"Macro drivers unavailable ({type(e).__name__}: {e}) — "
+                                  "value tape runs unhedged")
+        console.warning(f"Macro drivers unavailable ({type(e).__name__}) — value tape runs unhedged")
+        return None
+    missing = [t for t in DRIVER_TICKERS if t not in close.columns]
+    if missing:
+        get_metrics().add_warning(f"{len(missing)} macro driver(s) returned no data: "
+                                  f"{', '.join(missing)} — dropped from their factors")
+        console.warning(f"Macro drivers missing: {', '.join(missing)} — dropped from their factors")
+    console.detail(f"macro drivers · {close.shape[1]} of {len(DRIVER_TICKERS)} series · "
+                   f"{len(close.index)} bars")
+    return pd.DataFrame(close)
 
 
 def _unfetched_symbols(close: pd.DataFrame, symbols: List[str]) -> List[str]:
@@ -728,6 +791,10 @@ def generate_historical_data(
     
     all_data.columns.names = ['Indicator', 'Symbol']
     oscillator_calculator = LiquidityOscillator(length=20, impact_window=3)
+
+    # The value tape's macro basket — fetched ONCE for the whole panel, over the
+    # same window as the names, and shared by every one of them.
+    driver_closes = fetch_macro_drivers(start_date, end_date)
     
     # 2. --- Pre-calculate all indicators for all symbols ---
     ticker_indicator_cache = {}
@@ -748,7 +815,8 @@ def generate_historical_data(
             symbol_df.name = ticker
             
             if not symbol_df.empty:
-                indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator)
+                indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator,
+                                                         driver_closes, ticker)
                 # calculate_all_indicators returns None for a symbol it cannot
                 # compute. Caching that None meant the snapshot loop below
                 # dereferenced it (`full_indicator_df.index`) and took the whole
@@ -778,7 +846,7 @@ def generate_historical_data(
                         + (" …" if len(_skipped_indicators) > 12 else ""))
 
     # 3. --- Generate Daily Snapshots in Memory ---
-    pragati_data_list: List[Tuple[datetime, pd.DataFrame]] = []
+    snapshot_list: List[Tuple[datetime, pd.DataFrame]] = []
     # Use the index of the downloaded data as the authoritative date range
     date_range = all_data.index.normalize().unique()
 
@@ -870,14 +938,14 @@ def generate_historical_data(
                     final_df[col] = pd.NA
             
             final_df = final_df[COLUMN_ORDER]
-            pragati_data_list.append((snapshot_date, final_df))
+            snapshot_list.append((snapshot_date, final_df))
 
-    if pragati_data_list:
+    if snapshot_list:
         console.detail(
-            f"snapshots · {len(pragati_data_list)} days "
-            f"({pragati_data_list[0][0]:%Y-%m-%d} → {pragati_data_list[-1][0]:%Y-%m-%d}) · "
+            f"snapshots · {len(snapshot_list)} days "
+            f"({snapshot_list[0][0]:%Y-%m-%d} → {snapshot_list[-1][0]:%Y-%m-%d}) · "
             f"{len(_warm_dates)} warmup bars skipped · "
-            f"{len(pragati_data_list[-1][1])} symbols in the latest"
+            f"{len(snapshot_list[-1][1])} symbols in the latest"
         )
     else:
         console.warning(
@@ -885,7 +953,7 @@ def generate_historical_data(
             f"{MAX_INDICATOR_PERIOD}-bar warmup or past the end date"
         )
 
-    return pragati_data_list
+    return snapshot_list
 
 
 def main():

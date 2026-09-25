@@ -179,6 +179,11 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
       Volatility    its own annualized volatility
       Independence  1 - |correlation to the finished book|
       Momentum      the 12-1 rank score (only for methods that tilt on it)
+      Conviction    Pragati's conviction tape — green where buyers control
+      Value         Pragati's value tape — green where price is cheap
+      Push          Pragati's histogram as drawn — green where conviction is
+                    being pushed up
+                    (all three only on a Conviction-Value Grid book, which reads them)
 
     Colour is a within-row percentile, so each dimension is read against its own
     peers rather than on incompatible absolute scales.
@@ -211,11 +216,13 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
     attrs = getattr(portfolio, "attrs", {}) or {}
     rc_target = attrs.get("nco_rc_target", "none")
     uses_momentum = bool(attrs.get("nco_uses_momentum", False))
+    uses_cvg = bool(attrs.get("nco_uses_cvg", False))
 
     df = portfolio.copy()
     for c, default in (("risk_contribution", np.nan), ("volatility", np.nan),
                        ("corr_to_book", np.nan), ("cluster", 0),
-                       ("momentum_z", np.nan)):
+                       ("momentum_z", np.nan), ("conviction", np.nan),
+                       ("value_tape", np.nan), ("push", np.nan)):
         if c not in df.columns:
             df[c] = default
     # Cluster first, then weight — so structurally similar holdings sit together
@@ -233,6 +240,9 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
     vol = pd.to_numeric(df["volatility"], errors="coerce")
     indep = 1.0 - pd.to_numeric(df["corr_to_book"], errors="coerce").abs()
     momz = pd.to_numeric(df["momentum_z"], errors="coerce")
+    conv = pd.to_numeric(df["conviction"], errors="coerce")
+    val = pd.to_numeric(df["value_tape"], errors="coerce")
+    push = pd.to_numeric(df["push"], errors="coerce")
 
     # Score the risk-share row against the method's OWN objective (see docstring).
     rc_key = -(rc - eq_share).abs() if rc_target == "equal" else -rc
@@ -249,6 +259,12 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
         # Shown only when a tilt was actually applied, so the chart never
         # implies a factor the book does not use.
         cols.append(("Momentum", momz, momz, "{:+.2f}"))
+    if uses_cvg and (conv.notna().any() or val.notna().any()):
+        # Same rule for Pragati's two tapes. Green is buyers in control, and
+        # price cheap — the readings the book's weights were sized from.
+        cols.append(("Conviction", conv, conv, "{:+.0f}"))
+        cols.append(("Value", val, -val, "{:+.0f}"))
+        cols.append(("Push", push, push, "{:+.2f}"))
 
     z, text = [], []
     for _, raw, key, fmt in cols:
@@ -360,8 +376,7 @@ def create_risk_contribution_chart(portfolio: pd.DataFrame) -> go.Figure:
         # read as a failure whenever the cap binds.
         ok = (solved if solved is not None else disp) < 0.01
         txt = f"risk dispersion — solved {solved:.3f}" if solved is not None else ""
-        txt = (txt + f" · realised {disp:.3f} after selection + cap") if txt else \
-              f"risk dispersion {disp:.3f}"
+        txt = (txt + f" · realised {disp:.3f} after selection + cap") if txt else               f"risk dispersion {disp:.3f}"
         fig.add_annotation(
             xref="paper", yref="paper", x=0, y=1.10, showarrow=False,
             text=txt + ("  ✓ solver balanced" if ok else "  — solver did not converge"),
@@ -454,13 +469,131 @@ def create_cluster_correlation_heatmap(corr: "pd.DataFrame | None",
     return fig
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CONVICTION-VALUE GRID · THE MAP
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def create_conviction_value_map(universe: "pd.DataFrame | None") -> go.Figure:
+    """Every name placed by Pragati's two tapes — what the Conviction-Value Grid sized.
+
+    Conviction across, value up (+ rich). The dotted lines are each tape's own
+    knee — the inner zone at ±30, θ at ±42.9 — and they cut the plane into the
+    states the weights come from:
+
+        left third     conviction DOWN     dislocated · fading · distribution
+        middle band    conviction FAINT    basing · idle · stalling
+        right third    conviction UP       turned · building · paid
+
+    A point sits where its TAPES are; its colour is its STATE. The histogram
+    moves a name's row only on a confirmed push, so a point coloured for a
+    region it does not sit in is a row being held — hover says so.
+
+    Colour is the state's tone (ui.shared.CVG_TONE), the same everywhere the
+    state appears. A FILLED marker is a holding, sized by its weight; a RING is
+    a name the book was not asked to hold (N below the universe). Names with no
+    calibrated tape have no coordinates and are counted, not drawn.
+
+    Tinted regions carry a claim only where the state does: idle is left as
+    panel, because a faint tape at a fair price has nothing to say.
+    """
+    from cvgrid import STATE_LABEL
+    from pragati import INNER_ZONE
+    from samanvaya import THETA_OSC
+    from ui.shared import CVG_TONE
+
+    fig = go.Figure()
+    if universe is None or getattr(universe, "empty", True):
+        fig.update_layout(**chart_layout(height=420))
+        return fig
+
+    u = universe.copy()
+    u["conviction"] = pd.to_numeric(u["conviction"], errors="coerce")
+    u["value_tape"] = pd.to_numeric(u["value_tape"], errors="coerce")
+    u = u[u["conviction"].notna() & u["value_tape"].notna()]
+
+    z, th, lim = INNER_ZONE, THETA_OSC, 100.0
+    # Region tints, faint: the plane's structure without competing with points.
+    for x0, x1, y0, y1, tone, a in (
+        (z, lim, -lim, th, "emerald", 0.07),        # turned + building: the core
+        (z, lim, th, lim, "amber", 0.08),           # paid
+        (-lim, -z, -lim, -th, "cyan", 0.08),        # dislocated: the watchlist
+        (-lim, -z, -th, th, "rose", 0.05),          # fading
+        (-lim, -z, th, lim, "rose", 0.10),          # distribution
+        (-z, z, -lim, -th, "cyan", 0.05),           # basing
+        (-z, z, th, lim, "amber", 0.05),            # stalling
+    ):
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1, layer="below",
+                      line=dict(width=0), fillcolor=chart_rgba(tone, a))
+    for x in (-z, z):
+        fig.add_vline(x=x, line=dict(color=chart_rgba("slate", 0.55), width=1, dash="dot"))
+    for y in (-th, th):
+        fig.add_hline(y=y, line=dict(color=chart_rgba("slate", 0.55), width=1, dash="dot"))
+
+    # State names, in each region's own tone, tucked into its outer corner.
+    for x, y, xa, ya, code in (
+        (lim, -lim, "right", "bottom", "TURNED"), (lim, 0.0, "right", "middle", "BUILDING"),
+        (lim, lim, "right", "top", "PAID"),
+        (0.0, -lim, "center", "bottom", "BASING"), (0.0, 0.0, "center", "middle", "IDLE"),
+        (0.0, lim, "center", "top", "STALLING"),
+        (-lim, -lim, "left", "bottom", "DISLOCATED"), (-lim, 0.0, "left", "middle", "FADING"),
+        (-lim, lim, "left", "top", "DISTRIBUTION"),
+    ):
+        label = STATE_LABEL[code].upper()
+        fig.add_annotation(x=x, y=y, xanchor=xa, yanchor=ya, showarrow=False, text=label,
+                           font=dict(size=9, family="JetBrains Mono, monospace",
+                                     color=chart_rgba(CVG_TONE[code], 0.9)))
+
+    held = u["held"].astype(bool) if "held" in u.columns else pd.Series(True, index=u.index)
+    wpct = pd.to_numeric(u.get("weight_pct", 0.0), errors="coerce").fillna(0.0)
+    wmax = float(wpct.max()) if len(wpct) and wpct.max() > 0 else 1.0
+    show_text = len(u) <= 35
+    for code in CVG_TONE:
+        part = u[u["state"] == code]
+        if part.empty:
+            continue
+        h = held.loc[part.index]
+        col = COLORS[CVG_TONE[code]]
+        size = (7.0 + 11.0 * (wpct.loc[part.index] / wmax)).where(h, 8.0)
+        fig.add_trace(go.Scatter(
+            x=part["conviction"], y=part["value_tape"], mode="markers+text" if show_text else "markers",
+            name=STATE_LABEL[code],
+            text=part["symbol"] if show_text else None, textposition="top center",
+            textfont=dict(size=8, family="JetBrains Mono, monospace", color=chart_rgba("slate", 0.95)),
+            marker=dict(size=size.tolist(), color=[col if x else "rgba(0,0,0,0)" for x in h],
+                        line=dict(width=1.4, color=col)),
+            customdata=list(zip(part["symbol"],
+                                [STATE_LABEL[code]] * len(part),
+                                pd.to_numeric(part.get("state_days", np.nan), errors="coerce").fillna(0).astype(int),
+                                wpct.loc[part.index].round(2),
+                                part.get("drivers", pd.Series("", index=part.index)).fillna("—"),
+                                part.get("push_tier", pd.Series("", index=part.index)).fillna("—"),
+                                ["<br>row held by the histogram — push not yet behind the tape"
+                                 if (pd.to_numeric(x, errors="coerce") or 0) > 0 else ""
+                                 for x in part.get("held_row", pd.Series(0, index=part.index))])),
+            hovertemplate=("<b>%{customdata[0]}</b> · %{customdata[1]} for %{customdata[2]}d"
+                           "<br>Conviction %{x:+.0f} · Value %{y:+.0f}"
+                           "<br>Push %{customdata[5]} · weight %{customdata[3]}%%{customdata[6]}"
+                           "<br><span style='opacity:0.7;'>hedged vs %{customdata[4]}</span><extra></extra>"),
+        ))
+
+    fig.update_layout(**chart_layout(height=460, show_legend=False,
+                                     margin=dict(t=16, l=56, r=16, b=48)))
+    style_axes(fig, y_title="Value tape · rich ↑ cheap ↓", x_title="Conviction tape · sellers ← → buyers",
+               y_range=[-lim - 4, lim + 4])
+    fig.update_xaxes(range=[-lim - 4, lim + 4], zeroline=False)
+    fig.update_yaxes(zeroline=False)
+    return fig
+
+
 def create_benchmark_comparison_chart(
     port_value: pd.Series,
     bench_series: "pd.Series | None",
     benchmark_name: str = "Benchmark",
     port_return: float = 0.0,
     alt_series: "pd.Series | None" = None,
-    alt_label: str = "Equal Weight",
+    alt_label: str = "EW Shadow",
+    peer_series: "list[tuple[str, pd.Series, str]] | None" = None,
 ) -> go.Figure:
     """Normalized portfolio-vs-benchmark line chart (all series pegged to 100).
 
@@ -472,11 +605,14 @@ def create_benchmark_comparison_chart(
         alt_series: Optional third value series — the same book weighted a
             different way (the equal-weight shadow book). None omits the trace.
         alt_label: Legend label for ``alt_series``.
+        peer_series: Optional ``(label, value series, dash)`` per OTHER style's
+            book. Drawn thin in slate and hidden until picked in the legend,
+            so the default view stays the three-line read it was.
 
     Returns:
-        Plotly Figure in the Obsidian Quant theme — amber portfolio line,
+        Plotly Figure in the Obsidian Quant theme — accent portfolio line,
         dotted cyan benchmark line, dashed violet alternate-weighting line,
-        value axis on the right.
+        legend-only slate peer lines, value axis on the right.
     """
     fig = go.Figure()
     if port_value is None or len(port_value) == 0:
@@ -518,6 +654,24 @@ def create_benchmark_comparison_chart(
                 line=dict(color=COLORS["cyan"], width=2, dash="dot"),
                 hovertemplate=f"%{{x|%b %d, %Y}}<br>{benchmark_name}: %{{y:.2f}}<extra></extra>",
             ))
+
+    # The other styles' books. One neutral hue, told apart by a dash each
+    # style keeps from run to run: they are references, and the palette's
+    # other hues already say something (emerald/rose are outcomes, amber is a
+    # warning) that a peer line must not borrow.
+    for label, series, dash in peer_series or []:
+        peer = series.dropna() if series is not None else None
+        if peer is None or len(peer) == 0 or float(peer.iloc[0]) == 0:
+            continue
+        peer_norm = (peer / peer.iloc[0]) * 100.0
+        peer_ret = ((peer.iloc[-1] / peer.iloc[0]) - 1) * 100.0
+        fig.add_trace(go.Scatter(
+            x=peer_norm.index, y=peer_norm.values, mode="lines",
+            name=f"{label} ({peer_ret:+.2f}%)",
+            line=dict(color=COLORS["slate"], width=1.5, dash=dash),
+            visible="legendonly",
+            hovertemplate=f"%{{x|%b %d, %Y}}<br>{label}: %{{y:.2f}}<extra></extra>",
+        ))
 
     fig.update_layout(**chart_layout(height=380, show_legend=True))
     style_axes(fig, y_title="Indexed to 100")

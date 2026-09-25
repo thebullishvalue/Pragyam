@@ -72,6 +72,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from cvgrid import STATE_ORDER, STATE_UNITS, graded_units
+
 # Minimum return observations before a covariance estimate is trusted. Below
 # roughly 4x the asset count the sample covariance is too noisy to cluster on,
 # and the whole premise of this module is that the covariance is the reliable
@@ -181,7 +183,16 @@ def ledoit_wolf(R: np.ndarray) -> np.ndarray:
     F = rbar * np.outer(sd, sd)
     np.fill_diagonal(F, var)
     X = R - R.mean(axis=0)
-    phi = sum(((X[t:t + 1].T @ X[t:t + 1]) - S) ** 2 for t in range(T)).sum() / T
+    # φ = (1/T) Σ_t ‖x_t x_tᵀ − S‖², expanded so it needs two matrix products
+    # rather than T outer products:
+    #     Σ_t Σ_ij (x_ti x_tj − s_ij)²
+    #       = Σ_ij [(X∘X)ᵀ(X∘X)]_ij − 2 Σ_ij s_ij [XᵀX]_ij + T Σ_ij s_ij²
+    # It was a Python sum() over a generator of outer products — typed as int,
+    # since sum() starts from 0, and genuinely an int that crashed on `.sum()`
+    # when T = 0. Identical to the loop to 2e-16 relative.
+    X2 = X * X
+    phi = (float((X2.T @ X2).sum() - 2.0 * (S * (X.T @ X)).sum() + T * (S * S).sum()) / T
+           if T > 0 else 0.0)
     gamma = ((F - S) ** 2).sum()
     shrink = float(np.clip(phi / (T * gamma), 0.0, 1.0)) if gamma > 1e-20 else 0.0
     return shrink * F + (1.0 - shrink) * S
@@ -356,10 +367,12 @@ def hrp_weights(cov: np.ndarray, corr: np.ndarray) -> np.ndarray:
 #
 # `family`      accumulation | balanced | preservation | baseline
 # `uses_clusters`  whether the cluster diagnostic explains this method's weights
+# `uses_cvg` whether the weights read Pragati's two tapes (the grid-state columns)
 # `rc_target`   the risk-contribution pattern the method AIMS for, which is what
 #               the risk charts must be scored against. "equal" means the method
-#               targets identical risk shares; "none" means it does not manage
-#               risk contribution at all.
+#               targets identical risk shares; "cluster" balances across
+#               clusters; "none" means it does not manage risk contribution at
+#               all.
 # `needs_covariance`  whether the WEIGHTS are computed from the covariance. This
 #               is an eligibility rule, not a description: a style that reads the
 #               covariance can only hold names that have one, so it is confined
@@ -378,12 +391,16 @@ METHOD_SPECS = {
         "tagline": "Identical share per holding — the default, and the bar",
         "uses_clusters": False,
         "uses_momentum": False,
+        "uses_cvg": False,
         "rc_target": "none",
         "needs_covariance": False,
         "evidence": ("The default because nothing beat it. Across 36 candidate allocators "
                      "on three universes, no method delivered a reproducible return "
                      "improvement: ERC gave up 0.51%/yr on Nifty 50 and 1.48% on Dow 30. "
                      "Lowest turnover of any style."),
+        # The evidence above in one line, against Equal Weight — the form the
+        # Analytics tab's Style Comparison quotes under a one-window table.
+        "long_run": "the bar: no allocator tested on three universes beat it reproducibly on return",
         "sip_default": True,
     },
     "ERC": {
@@ -394,6 +411,7 @@ METHOD_SPECS = {
         "tagline": "Every holding contributes the same share of variance",
         "uses_clusters": False,
         "uses_momentum": False,
+        "uses_cvg": False,
         "rc_target": "equal",
         "needs_covariance": True,
         "evidence": ("The preferred risk-reduction style: it beats HRP on the any-date hit "
@@ -401,6 +419,7 @@ METHOD_SPECS = {
                      "FIVE TIMES less (0.26x/yr vs 1.31x on Nifty 50). It does NOT beat "
                      "equal weight on return (-0.51%/yr Nifty, -1.48% Dow) — it delivers "
                      "near-equal-weight returns at beta 0.92 and lower volatility."),
+        "long_run": "-0.51%/yr on Nifty 50 and -1.48% on Dow 30, at beta 0.92 and lower volatility",
         "sip_default": False,
     },
     "HRP": {
@@ -411,12 +430,47 @@ METHOD_SPECS = {
         "tagline": "Clusters by correlation, splits capital by cluster variance",
         "uses_clusters": True,
         "uses_momentum": False,
+        "uses_cvg": False,
         "rc_target": "cluster",
         "needs_covariance": True,
         "evidence": ("Cuts volatility and drawdown against equal weight but loses to it on "
                      "return in all three universes (-1.08% Nifty, -2.94% Dow) and won 0 of "
                      "115 five-year SIP streams. ERC does the same job with a fifth of the "
                      "turnover and beats HRP on any-date in every cell tested."),
+        "long_run": "-1.08%/yr on Nifty 50 and -2.94% on Dow 30, at lower volatility and drawdown",
+        "sip_default": False,
+    },
+    # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
+    # pragati.pine read through both of its tapes on the ladder D · W —
+    # conviction (who controls: the rows) and value (rich or cheap against the
+    # macro drivers, Samanvaya's engine: the columns) — each name placed in one
+    # of nine states and sized by its state. The pane's histogram runs the rows:
+    # a name changes row only when the push is behind the change (cvgrid.py).
+    # Reads NO covariance: like Equal Weight it allocates over every priced
+    # symbol, and the risk diagnostics are a mirror rather than a target.
+    "CVG": {
+        "label": "Conviction-Value Grid",
+        "short": "CVG",
+        "family": "accumulation",
+        "formula": ("graded 3 × 3 — cell units up: turned 3 · building 3 · paid 1.5 · "
+                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 1 · "
+                    "fading 0.5 · distribution 0.25; shaded within each cell by the tapes' "
+                    "intensity; rows move only on a confirmed push"),
+        "tagline": "Nine states from conviction × value; the histogram moves the rows",
+        "uses_clusters": False,
+        "uses_momentum": False,
+        "uses_cvg": True,
+        "rc_target": "none",
+        "needs_covariance": False,
+        "evidence": ("Does not beat Equal Weight, but comes close: with every name held it "
+                     "trails by 0.17%/yr on the ETF book (t -0.4), 0.32% on Nifty 50 (t -0.6) "
+                     "and 0.41% on Dow 30 (t -0.8), at 2-6x its turnover. The histogram "
+                     "running the rows adds +0.3%/yr on stocks (Nifty t 2.2, Dow t 1.5) over "
+                     "the same map without it; grading the map is return-neutral and cuts "
+                     "turnover by a quarter to two-fifths. Several designs were tried on these "
+                     "panels, so read every t as directional."),
+        "long_run": ("-0.17%/yr on the ETF book, -0.32% on Nifty 50 and -0.41% on Dow 30 — "
+                     "every t under 1, at 2-6x the turnover"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -436,20 +490,23 @@ METHOD_SPECS = {
         "tagline": "Research only — did not survive the ERC solver fix",
         "uses_clusters": False,
         "uses_momentum": True,
+        "uses_cvg": False,
         "rc_target": "equal",
         "needs_covariance": True,
         "evidence": ("NOT SHIPPED. Against a corrected ERC base it beat equal weight in 0 "
                      "of 115 five-year SIP streams and by +0.19%/yr on Nifty lump-sum "
                      "(alpha t = 1.68). The earlier 98-100% SIP hit rate was an artifact "
                      "of a defect in the ERC solver."),
+        "long_run": "+0.19%/yr on Nifty 50 lump-sum (t 1.68), 0 of 115 SIP streams won",
         "sip_default": False,
     },
 }
 
 # Selectable styles, in display order: the default first, then the
-# risk-reduction family ordered by how well it does its job per unit of trading.
+# risk-reduction family ordered by how well it does its job per unit of trading,
+# then the one style that reads the tape.
 # ERC_MOM is implemented but intentionally absent — see its spec above.
-METHOD_ORDER = ("EQUAL", "ERC", "HRP")
+METHOD_ORDER = ("EQUAL", "ERC", "HRP", "CVG")
 METHODS = METHOD_ORDER
 
 # Momentum tilt strength. 0.5 is the measured setting; the parameter surface is
@@ -585,6 +642,105 @@ def build_price_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     return px
 
 
+# Snapshot column → the name the book carries it under. Numeric readings first,
+# then the two text fields.
+CVG_FIELDS = {
+    "conv tape": "conviction",               # the conviction tape, D · W
+    "conv daily": "conviction_daily",   # its daily rung (the pane's trace)
+    "conv weekly": "conviction_weekly", # its reconstructed weekly rung
+    "conv hist": "hist",                     # the pane's histogram, native
+    "conv push": "push",                     # the histogram as drawn, −1 … +1
+    "value tape": "value_tape",              # the value tape, D · W (+ rich)
+    "value daily": "value_daily",       # Samanvaya's reading on the chart
+    "value hedge": "hedge",                   # share of the macro hedge applied
+    "conv push gate": "push_gate",           # +1 / −1 a confirmed push, 0 none
+    "cvg state days": "state_days",         # days in the current state
+    "cvg held": "held_row",                 # 1 = row held against the tape
+}
+CVG_TEXT = {
+    "cvg state": "state",                   # one of cvgrid.STATES
+    "conv push tier": "push_tier",           # e.g. "up · impulse · quiet"
+    "value drivers": "drivers",               # the hedge's drivers in force
+}
+
+
+def cvg_readings(history: Sequence[Tuple[object, pd.DataFrame]],
+                    symbols: List[str]) -> pd.DataFrame:
+    """Each symbol's grid readings as of the LAST snapshot in `history`.
+
+    backdata computes them over each symbol's full OHLCV history, warm-up
+    included — which is why they arrive as snapshot columns rather than being
+    rebuilt here: the snapshots carry close prices only, and start after the
+    warm-up both tapes need. A name with no reading — listed too recently, or
+    a panel cached before the columns existed — is UNREAD, never guessed.
+    """
+    out = pd.DataFrame(np.nan, index=list(symbols), columns=list(CVG_FIELDS.values()))
+    for name in CVG_TEXT.values():
+        out[name] = None
+    if history:
+        snap = history[-1][1]
+        if snap is not None and not snap.empty and "symbol" in snap.columns:
+            snap = snap.drop_duplicates("symbol", keep="last").set_index("symbol")
+            for col, name in CVG_FIELDS.items():
+                if col in snap.columns:
+                    out[name] = pd.to_numeric(snap[col], errors="coerce").reindex(out.index)
+            for col, name in CVG_TEXT.items():
+                if col in snap.columns:
+                    out[name] = snap[col].reindex(out.index)
+    st = out["state"].where(out["state"].isin(list(STATE_UNITS)), "UNREAD")
+    out["state"] = st.fillna("UNREAD").astype(str)
+    return out
+
+
+# Read the map GRADED (each name shaded within its cell, as the Pine draws the
+# tapes) rather than as flat cells. The research harness switches it off to
+# measure what the grading itself adds.
+CVG_GRADED: bool = True
+
+
+def cvg_units(readings: pd.DataFrame) -> pd.Series:
+    """Each name's weight in units on the 3 × 3 map (cvgrid.graded_units).
+
+    Flat cell units when CVG_GRADED is off. The histogram has already done
+    its work in deciding the state; on the graded map it also decides how
+    firmly a HELD row keeps its cell.
+    """
+    if not CVG_GRADED:
+        return r_units_flat(readings)
+    conv = pd.to_numeric(readings["conviction"], errors="coerce")
+    val = pd.to_numeric(readings["value_tape"], errors="coerce")
+    push = pd.to_numeric(readings["push"], errors="coerce")
+    return pd.Series([graded_units(str(s), c, v, p) for s, c, v, p in
+                      zip(readings["state"], conv, val, push)], index=readings.index, dtype=float)
+
+
+def r_units_flat(readings: pd.DataFrame) -> pd.Series:
+    """Each name's cell units, unshaded."""
+    return readings["state"].map(STATE_UNITS).fillna(STATE_UNITS["UNREAD"]).astype(float)
+
+
+def cvg_weights(readings: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
+    """Weights from each name's place on the 3 × 3 map, and the fill order.
+
+    Selection follows the weight, as for every allocator here: the heaviest
+    names first. Ties fall back to the states' own order (units, then the grid)
+    and then to the room between control and price, `conviction − value`, the
+    one ordering both tapes agree on. Every unit is strictly positive, so the
+    book always holds the N it was asked for: a punished name sits at the
+    floor, it is never dropped.
+    """
+    r = readings.copy()
+    units = cvg_units(r)
+    room = (pd.to_numeric(r["conviction"], errors="coerce")
+            - pd.to_numeric(r["value_tape"], errors="coerce")).fillna(0.0)
+    key = pd.DataFrame({"units": -units,
+                        "order": r["state"].map(STATE_ORDER).fillna(len(STATE_ORDER)),
+                        "room": -room}, index=r.index)
+    order = list(key.sort_values(["units", "order", "room"], kind="stable").index)
+    w = units.reindex(order).to_numpy(dtype=float)
+    return w / w.sum(), order
+
+
 def _is_priced(price: object) -> bool:
     """A usable, positive, finite price — the only input equal weight requires."""
     try:
@@ -715,9 +871,21 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # that in fact converged exactly. Two different matrices, two different
     # questions — keep them apart.
     solver_cov = cov
+    # The grid's readings, per allocation name. Read only on a CVG run: every
+    # other style's output columns stay empty, so no chart can imply a reading
+    # the book did not use.
+    _uses_dh = bool(_spec.get("uses_cvg", False))
+    dh: Optional[pd.DataFrame] = None
 
     if _m == "EQUAL":
         w = np.full(len(alloc_names), 1.0 / len(alloc_names))
+    elif _m == "CVG":
+        # Sized by STATE from the two tapes; no covariance is read. The
+        # allocation names are REORDERED into the order the book fills in, so
+        # the stable top-N below takes core names first and the floor last.
+        _read = cvg_readings(history, alloc_names)
+        w, alloc_names = cvg_weights(_read)
+        dh = _read.reindex(alloc_names)
     elif cov is None or corr is None:
         # Unreachable as the registry stands: every covariance-driven style
         # returned above when the covariance was not estimable. Kept as a hard
@@ -837,6 +1005,12 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                                 for s, ok in zip(sel, covered) if ok]
 
     px_arr = np.array([float(prices.get(s, np.nan)) for s in sel], dtype=float)
+    # Grid readings per holding, for the same reason momentum is carried: the
+    # table and charts show the reading that set the weight, not a
+    # re-derivation. Empty for every other style.
+    _dh_sel = (dh.reindex(sel) if dh is not None
+               else pd.DataFrame(index=sel, columns=[*CVG_FIELDS.values(),
+                                                     *CVG_TEXT.values()]))
     # Momentum is carried per-holding so the risk profile chart can show the
     # tilt that was actually applied, not a re-derivation of it. Methods that do
     # not use momentum emit NaN, and the chart drops the row.
@@ -854,6 +1028,13 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         "corr_to_book": corr_to_book,
         "momentum": _mom_sel.to_numpy(dtype=float),
         "momentum_z": _mom_z.to_numpy(dtype=float),
+        **{name: pd.to_numeric(_dh_sel[name], errors="coerce").to_numpy(dtype=float)
+           for name in CVG_FIELDS.values()},
+        **{name: _dh_sel[name].to_numpy(dtype=object) for name in CVG_TEXT.values()},
+        "state_units": (_dh_sel["state"].map(STATE_UNITS).to_numpy(dtype=float)
+                        if dh is not None else np.full(len(sel), np.nan)),
+        "cvg_units": (cvg_units(_dh_sel).to_numpy(dtype=float)
+                         if dh is not None else np.full(len(sel), np.nan)),
     })
     out = out[out["price"].notna() & (out["price"] > 0)].copy()
     if out.empty:
@@ -932,6 +1113,43 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                                         if _spec["uses_momentum"] else 0.0)
     out.attrs["nco_momentum_applied"] = bool(
         _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2)
+    # The grid, over the WHOLE allocation universe as well as the book: the states
+    # every name sits in (the census), the readings behind them (for the conviction-value
+    # map and the watchlist, which show names the book holds at the floor or not
+    # at all), and how far the value tape's macro hedge was earned. `applied` is
+    # False when no name had a reading — every name is then UNREAD at the
+    # neutral unit, the book is 1/N, and the UI must say so.
+    out.attrs["nco_uses_cvg"] = _uses_dh
+    if _uses_dh and dh is not None:
+        _held = set(out["symbol"])
+        _uni = dh.assign(symbol=list(dh.index), held=[s in _held for s in dh.index])
+        _uni["weight_pct"] = _uni["symbol"].map(
+            dict(zip(out["symbol"], out["weightage_pct"]))).fillna(0.0)
+        _uni["units"] = cvg_units(_uni).to_numpy(dtype=float)
+        _read = int((_uni["state"] != "UNREAD").sum())
+        out.attrs["nco_cvg_universe"] = _uni.reset_index(drop=True)
+        out.attrs["nco_cvg_names"] = _read
+        out.attrs["nco_cvg_census"] = {k: int(v) for k, v in
+                                          _uni["state"].value_counts().items()}
+        out.attrs["nco_cvg_book_census"] = {k: int(v) for k, v in
+                                               out["state"].value_counts().items()}
+        # The histogram's part: how many names it could read, how many it
+        # confirms each way, how many it cannot (turning or quiet), and how
+        # many rows it is holding against their tape right now.
+        _g = pd.to_numeric(_uni["push_gate"], errors="coerce")
+        out.attrs["nco_cvg_push_read"] = int(_g.notna().sum())
+        out.attrs["nco_cvg_confirm_up"] = int((_g > 0).sum())
+        out.attrs["nco_cvg_confirm_down"] = int((_g < 0).sum())
+        out.attrs["nco_cvg_unconfirmed"] = int((_g == 0).sum())
+        out.attrs["nco_cvg_quiet"] = int(_uni["push_tier"].astype(str).str.contains("quiet").sum())
+        out.attrs["nco_cvg_held"] = int((pd.to_numeric(_uni["held_row"], errors="coerce") > 0).sum())
+        out.attrs["nco_cvg_graded"] = CVG_GRADED
+        _h = pd.to_numeric(_uni["hedge"], errors="coerce").dropna()
+        out.attrs["nco_cvg_hedge_median"] = float(_h.median()) if len(_h) else float("nan")
+        out.attrs["nco_cvg_applied"] = _read > 0
+    else:
+        out.attrs["nco_cvg_names"] = 0
+        out.attrs["nco_cvg_applied"] = False
     # Full correlation matrix plus the cluster ordering, so the UI can draw the
     # quasi-diagonalized structure the allocator actually saw. Ordering by
     # cluster is what makes the block structure visible — the same reordering
@@ -943,7 +1161,9 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
             corr, index=est_names, columns=est_names).loc[_order, _order]
         out.attrs["cluster_order"] = _order
         out.attrs["cluster_labels"] = dict(lab_by_name)
-    return out.sort_values("weightage_pct", ascending=False).reset_index(drop=True)
+    # Stable, so ties keep the order the allocator filled them in: universe
+    # order for 1/N, state-then-room for the grid.
+    return out.sort_values("weightage_pct", ascending=False, kind="stable").reset_index(drop=True)
 
 
 __all__ = [
@@ -954,6 +1174,8 @@ __all__ = [
     "MOMENTUM_LAMBDA",
     "MOMENTUM_LOOKBACK",
     "MOMENTUM_SKIP",
+    "CVG_FIELDS",
+    "CVG_TEXT",
     "correlation_distance",
     "inverse_variance",
     "ledoit_wolf",
@@ -961,6 +1183,9 @@ __all__ = [
     "risk_contributions",
     "hrp_weights",
     "erc_weights",
+    "cvg_readings",
+    "cvg_units",
+    "cvg_weights",
     "momentum_scores",
     "rank_z",
     "apply_momentum_tilt",
