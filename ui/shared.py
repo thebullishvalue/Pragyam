@@ -44,6 +44,24 @@ REGIME_FACTOR_ORDER = [
 ]
 
 
+# Grid states → the app's semantic tones. One mapping for the conviction-value map, the
+# holdings table and the census, so a state is the same colour everywhere. Each
+# tone keeps its app-wide meaning: emerald the favourable end (buyers in control
+# below a rich price), amber CAUTION (a price already rich), cyan information
+# (a cheap name being watched for its turn), slate unclaimed (no statement),
+# rose the unfavourable end (sellers in control).
+CVG_TONE = {
+    "TURNED": "emerald", "BUILDING": "emerald",
+    "PAID": "amber", "STALLING": "amber",
+    "BASING": "cyan", "DISLOCATED": "cyan",
+    "IDLE": "slate", "UNREAD": "slate",
+    "FADING": "rose", "DISTRIBUTION": "rose",
+}
+# The same, in render_chip's vocabulary.
+CVG_CHIP = {"emerald": "success", "amber": "warning", "cyan": "info",
+               "slate": "neutral", "rose": "danger"}
+
+
 def style_spec(ctx_or_method) -> dict:
     """Registry record for a run context, a method code, or a style label."""
     if isinstance(ctx_or_method, dict):
