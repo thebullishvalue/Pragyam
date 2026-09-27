@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - CVG units re-confirmed by Sanket's v9 audit (2026-09-27)
+
+### 📝 Documented — no code change
+
+- Sanket's v9 audit of `pragati.pine` found the v8 audit's scoring biased toward reversion
+  (returns demeaned by the era's own mean) and re-measured everything without look-ahead,
+  across three eras on daily and weekly bars. The grid's capitulation cell (Dislocated) was
+  still followed by gains in every era and Distribution by losses; the other cells read near
+  zero. The allocator test behind the v8 units used portfolio returns and is unaffected. The
+  units stand. Pragati v9's ▲ is now the capitulation turn, read from this same grid.
+
+---
+
 ## [Unreleased] - CVG units v8, measured (2026-09-27)
 
 ### 🔧 Changed — four cells re-weighted to Pragati v8
