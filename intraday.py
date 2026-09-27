@@ -109,15 +109,26 @@ def _derive(src: pd.DataFrame | None, n: int) -> pd.DataFrame | None:
     return o.sort_index()
 
 
-def prefetch(symbols, frames=tuple(FETCH)) -> None:
-    """Batch-fetch every intraday frame for a universe into the session cache."""
+def sources(wanted=DAILY_FRAMES) -> tuple:
+    """The fetched frames a set of ladder frames is built from (3m <- 1m, 4h <- 1h)."""
+    return tuple(dict.fromkeys(DERIVED[f][0] if f in DERIVED else f for f in wanted))
+
+
+def prefetch(symbols, frames=tuple(FETCH), on_frame=None, report=DAILY_FRAMES) -> dict:
+    """Batch-fetch intraday frames for a universe into the session cache.
+
+    ``on_frame(i, n, frame)`` is called before each frame (for a progress bar). Returns the
+    coverage — {frame: symbols that have it} over ``report``, derived frames included."""
     if not ENABLED:
-        return
+        return {}
     syms = [s for s in dict.fromkeys(symbols) if s]
-    for f in frames:
+    frames = tuple(frames)
+    for i, f in enumerate(frames):
+        if on_frame is not None:
+            on_frame(i, len(frames), f)
         need = [s for s in syms if (s, f) not in _CACHE]
-        for i in range(0, len(need), 50):
-            chunk = need[i:i + 50]
+        for j in range(0, len(need), 50):
+            chunk = need[j:j + 50]
             got = _download(chunk, *FETCH[f])
             with _LOCK:
                 for s in chunk:
@@ -127,13 +138,14 @@ def prefetch(symbols, frames=tuple(FETCH)) -> None:
             for f, (src, n) in DERIVED.items():
                 if (s, f) not in _CACHE and (s, src) in _CACHE:
                     _CACHE[(s, f)] = _derive(_CACHE[(s, src)], n)
+        return {f: sum(1 for s in syms if _CACHE.get((s, f)) is not None) for f in report}
 
 
 def frames(symbol: str, wanted=DAILY_FRAMES) -> dict:
     """{frame: bars} for one symbol — only the frames that exist. Fetches what is missing."""
     if not ENABLED or not symbol:
         return {}
-    base = {DERIVED[f][0] if f in DERIVED else f for f in wanted}
+    base = sources(wanted)
     missing = [f for f in base if (symbol, f) not in _CACHE]
     if missing:
         prefetch([symbol], frames=tuple(missing))
@@ -176,4 +188,4 @@ def session_days(ix: pd.DatetimeIndex, chart_days: pd.DatetimeIndex) -> pd.Datet
 
 
 __all__ = ["DAILY_FRAMES", "DERIVED", "ENABLED", "FETCH", "WEEKLY_FRAMES", "clear", "frames",
-           "prefetch", "session_days"]
+           "prefetch", "session_days", "sources"]

@@ -965,7 +965,7 @@ def _run_analysis(
         # Phase 2 (Strategies & Curation) 35-100 — so the bar can never move
         # backwards regardless of which Phase 1.5 branch executes. Labels are
         # Title Case; subs carry the load-bearing datum for that milestone.
-        progress_bar(progress_container, 2, "Fetching Market Data", f"yfinance · {len(symbols_list)} symbols")
+        progress_bar(progress_container, 2, "Fetching Market Data", f"yfinance · {len(symbols_list)} symbols · daily + intraday ladder")
         metrics.start_phase("total_execution")
         # Must match _REGIME_LOOKBACK_FILES so the regime card / regime banner /
         # regime history chart / Phase 2 curation all share one cached panel.
@@ -1191,6 +1191,10 @@ def _run_analysis(
                             _t.item("States", " · ".join(
                                 f"{CVG_STATE_LABEL[c]} {_cz[c]}"
                                 for c, *_ in CVG_STATES if _cz.get(c)))
+                            _t.item("Conviction ladder",
+                                    f"down {_ba.get('nco_cvg_ladder_down', 0)} · "
+                                    f"D · W ↺ {_ba.get('nco_cvg_ladder_up', 0)} "
+                                    "(↺ = no calibrated intraday history yet)")
                             _t.item("Histogram", "runs the rows · "
                                     f"{_ba.get('nco_cvg_confirm_up', 0)} confirm up · "
                                     f"{_ba.get('nco_cvg_confirm_down', 0)} confirm down · "
