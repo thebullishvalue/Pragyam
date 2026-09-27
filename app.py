@@ -1108,7 +1108,7 @@ def _run_analysis(
                 "EQUAL":  ("Measuring Risk Structure", "1/N · clustering for diagnostics only"),
                 "ERC":    ("Solving Equal Risk Contribution", "cyclical coordinate descent"),
                 "HRP":    ("Clustering Risk Structure", "correlation-distance hierarchy"),
-                "CVG": ("Reading Pragati's Tapes", "conviction × value on D · W"),
+                "CVG": ("Reading Pragati's Tapes", "conviction (Ladder down) × value (D · W)"),
             }.get(_method, ("Measuring Risk Structure", _spec["formula"]))
             progress_bar(progress_container, 40, _stage40[0],
                          f"{_spec['short']} · {_stage40[1]}")
