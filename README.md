@@ -205,6 +205,13 @@ turnover; no single t clears 2, so it is shipped as consistent rather than
 proven. The ETF book (1–27 funds, from 2012) is too thin to split and is not
 tested. The figures below are the seed units' and are kept as the record.
 
+Sanket's v9 audit (`studies/pragati_v9_audit.md`) re-measured the grid with look-ahead-free
+scoring — the v8 audit had demeaned returns by each era's own mean, which leans toward
+reversion — across three eras (2006–13, 2014–19, 2020–26) on daily and weekly bars. The
+capitulation cell (Dislocated) was still followed by gains in every era (+0.06 to +0.08σ over
+10–20 bars outside crypto) and Distribution by losses; the other cells are near zero. The
+allocator test above is on portfolio returns and was never affected. The units stand.
+
 **The histogram runs the rows.** Value moves a name between columns freely —
 price is where it is. Control is different: the tape says where control is
 going, and the pane's histogram — the Pine's primary read — says whether the
