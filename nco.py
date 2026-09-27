@@ -452,9 +452,9 @@ METHOD_SPECS = {
         "label": "Conviction-Value Grid",
         "short": "CVG",
         "family": "accumulation",
-        "formula": ("graded 3 × 3 — cell units up: turned 3 · building 3 · paid 1.5 · "
-                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 1 · "
-                    "fading 0.5 · distribution 0.25; shaded within each cell by the tapes' "
+        "formula": ("graded 3 × 3 — cell units up: turned 3 · building 1.5 · paid 0.75 · "
+                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 3 · "
+                    "fading 1.5 · distribution 0.25; shaded within each cell by the tapes' "
                     "intensity; rows move only on a confirmed push"),
         "tagline": "Nine states from conviction × value; the histogram moves the rows",
         "uses_clusters": False,
@@ -462,15 +462,16 @@ METHOD_SPECS = {
         "uses_cvg": True,
         "rc_target": "none",
         "needs_covariance": False,
-        "evidence": ("Does not beat Equal Weight, but comes close: with every name held it "
-                     "trails by 0.17%/yr on the ETF book (t -0.4), 0.32% on Nifty 50 (t -0.6) "
-                     "and 0.41% on Dow 30 (t -0.8), at 2-6x its turnover. The histogram "
-                     "running the rows adds +0.3%/yr on stocks (Nifty t 2.2, Dow t 1.5) over "
-                     "the same map without it; grading the map is return-neutral and cuts "
-                     "turnover by a quarter to two-fifths. Several designs were tried on these "
-                     "panels, so read every t as directional."),
-        "long_run": ("-0.17%/yr on the ETF book, -0.32% on Nifty 50 and -0.41% on Dow 30 — "
-                     "every t under 1, at 2-6x the turnover"),
+        "evidence": ("Units re-measured in v8 (research/cvg_reweight.py; monthly, every name "
+                     "held, net of 10bp India / 3bp US costs; chosen before 2018, confirmed "
+                     "after). Against the seed units it adds +0.42%/yr (t 0.6) then +0.98% "
+                     "(t 1.5) on Nifty 50 and +0.55% (t 1.0) then +0.89% (t 1.0) on Dow 30, "
+                     "at lower turnover. Against Equal Weight: Nifty +0.83%/yr (t 2.1) then "
+                     "+0.47% (t 1.3); Dow -0.23% then +0.90% (t 2.4). The ETF book (1-27 "
+                     "funds from 2012) is too thin to test. Several designs were tried on "
+                     "these panels, so read every t as directional."),
+        "long_run": ("vs Equal Weight, before / after 2018: Nifty 50 +0.83% / +0.47%/yr, "
+                     "Dow 30 -0.23% / +0.90%/yr — at 1.2-1.3x monthly turnover"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────

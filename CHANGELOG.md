@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - CVG units v8, measured (2026-09-27)
+
+### 🔧 Changed — four cells re-weighted to Pragati v8
+
+```
+                  CHEAP            FAIR             RICH
+    UP            Turned 3         Building 1.5     Paid 0.75
+    FAINT         Basing 1.5       Idle 1           Stalling 0.75
+    DOWN          Dislocated 3     Fading 1.5       Distribution 0.25
+```
+
+- **Dislocated 1 → 3, Fading 0.5 → 1.5, Building 3 → 1.5, Paid 1.5 → 0.75.**
+  From the Pragati v5 / v7 audit in Sanket (380 instruments, six asset classes,
+  20 years, chosen before 2018 and confirmed after): capitulation was followed
+  by gains in both eras on every class but crypto; adding at UP·fair earned
+  nothing. Pragati v8 is v5 with these units.
+- **Re-measured in this allocator** before shipping (`research/cvg_reweight.py`,
+  pre-registered; monthly, every name held, net of 10bp India / 3bp US costs):
+  v8 − seed units, before / after 2018, %/yr — Nifty 50 +0.42 (t 0.6) / +0.98
+  (t 1.5), Dow 30 +0.55 (t 1.0) / +0.89 (t 1.0). v8 − Equal Weight — Nifty +0.83
+  (t 2.1) / +0.47 (t 1.3), Dow −0.23 / +0.90 (t 2.4). Turnover falls (Nifty
+  1.28x vs 1.47x, Dow 1.17x vs 1.47x before 2018). Shipped because it held in
+  both eras on both panels; no single t clears 2. The ETF book (1–27 funds from
+  2012) is too thin to test.
+- Core states are now Turned and Dislocated; tones follow the action (emerald
+  Buy, cyan Accumulate, amber Hold / Trim, rose Exit). The watchlist notes that
+  a Dislocated name already carries full weight.
+
+---
+
 ## [Unreleased] - Conviction-Value Grid (2026-09-26)
 
 ### ✨ Added — a fourth style, read from the Pragati indicator

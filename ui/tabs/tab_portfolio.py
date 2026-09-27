@@ -308,7 +308,8 @@ def _render_cvg_map(portfolio: pd.DataFrame) -> None:
     render_section_header(
         "Watchlist",
         f"{len(view)} cheap without buyers in control · basing "
-        f"{STATE_UNITS['BASING']:g} · dislocated {STATE_UNITS['DISLOCATED']:g} units until they turn",
+        f"{STATE_UNITS['BASING']:g} · dislocated {STATE_UNITS['DISLOCATED']:g} units (capitulation, "
+        f"measured)",
         icon="eye", accent="cyan")
     render_table_panel(
         view, "cvg-watchlist", context="sorted by conviction · closest to turning first",
@@ -321,7 +322,9 @@ def _render_cvg_map(portfolio: pd.DataFrame) -> None:
         f"Promotion is the grid itself. When a watchlist name's conviction clears "
         f"+{INNER_ZONE:.0f} **and** the histogram confirms a push up (not turning, not quiet), it "
         f"becomes **{STATE_LABEL['TURNED']}** if value is still cheap or "
-        f"**{STATE_LABEL['BUILDING']}** if it has recovered to fair — core weight either way. "
+        f"**{STATE_LABEL['BUILDING']}** ({STATE_UNITS['BUILDING']:g}) if it has recovered to fair. "
+        f"A **{STATE_LABEL['DISLOCATED']}** name already carries full weight: measured (Pragati "
+        f"v8), capitulation was followed by gains in both eras, so it is not waiting to be bought. "
         f"**To turn** is how far the conviction tape still has to travel; **Push** is whether the "
         f"histogram is behind it yet."
     )

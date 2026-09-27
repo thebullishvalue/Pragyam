@@ -101,7 +101,7 @@ streamlit run app.py
 | **Equal Weight** *(default)* | baseline | Identical `1/N` per holding. The default because nothing beat it — see below. Lowest turnover of any style. |
 | **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes while trading ~5× less. |
 | **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. Same job as ERC at five times the turnover; kept for continuity. |
-| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction × value, each on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: within 0.5%/yr of Equal Weight, not above it (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
+| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction × value, each on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: v8 units beat the seed units in both eras on Nifty 50 and Dow 30 and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
 
 Every style travels the identical pipeline — same eligibility filter, same
 clustering diagnostics, same risk decomposition — so any difference on screen is
@@ -177,13 +177,33 @@ Nifty 50 0.005 → 0.23, Dow 30 0.01 → 0.20).
 
 **The 3 × 3.** Each tape is cut at its own shading knee — conviction at its
 inner zone (±30), value at θ (±42.9) — into nine states, each with its weight in
-units (chosen from what the state means, not fitted):
+units (grid v8 — measured, see below):
 
 |                          | value cheap      | value fair     | value rich          |
 |--------------------------|------------------|----------------|---------------------|
-| **conviction up** (≥ +30)| Turned · 3       | Building · 3   | Paid · 1.5          |
+| **conviction up** (≥ +30)| Turned · 3       | Building · 1.5 | Paid · 0.75         |
 | **conviction faint**     | Basing · 1.5     | Idle · 1       | Stalling · 0.75     |
-| **conviction down** (≤ −30)| Dislocated · 1 | Fading · 0.5   | Distribution · 0.25 |
+| **conviction down** (≤ −30)| Dislocated · 3 | Fading · 1.5   | Distribution · 0.25 |
+
+The seed units were Building 3, Paid 1.5, Dislocated 1 and Fading 0.5. The
+Pragati v5 / v7 audit (Sanket, `studies/pine_audit.md`: 380 instruments, six
+asset classes, 20 years) found capitulation — sellers in control at a cheap or
+fair price — followed by gains in both eras on every class but crypto, and
+adding at UP·fair earning nothing, so those four cells were moved. Re-measured in
+this allocator (`research/cvg_reweight.py`; monthly, every name held, net of
+10bp India / 3bp US costs; decided on data before 2018, confirmed once after):
+
+```
+               v8 − seed units            v8 − Equal Weight          turnover (v8 / seed)
+               <2018          ≥2018       <2018          ≥2018       <2018        ≥2018
+Nifty 50       +0.42 (t 0.6)  +0.98 (1.5) +0.83 (t 2.1)  +0.47 (1.3) 1.28x/1.47x  1.27x/1.49x
+Dow 30         +0.55 (t 1.0)  +0.89 (1.0) −0.23 (t −0.4) +0.90 (2.4) 1.17x/1.47x  1.24x/1.49x
+```
+
+(%/yr.) The move is positive in both eras on both stock panels at lower
+turnover; no single t clears 2, so it is shipped as consistent rather than
+proven. The ETF book (1–27 funds, from 2012) is too thin to split and is not
+tested. The figures below are the seed units' and are kept as the record.
 
 **The histogram runs the rows.** Value moves a name between columns freely —
 price is where it is. Control is different: the tape says where control is
@@ -207,7 +227,7 @@ continuous inside a cell and steps where the Pine's shading steps.
 Every name is held — the state sets how much, never whether — and the book
 fills heaviest first when N is below the universe.
 
-**Measured** (pre-registered, monthly rebalances through the shipped pipeline,
+**Measured, seed units** (pre-registered, monthly rebalances through the shipped pipeline,
 every name held). The two parts are isolated: **gate** is the book minus the
 same graded map with rows simply following the tape; **grading** is the book
 minus the same engine on flat cells:
