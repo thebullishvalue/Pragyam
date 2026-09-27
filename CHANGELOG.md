@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads as neutral-to-slightly-worse so far, consistent with Sanket's head-to-head (a tie on
   stocks; the gain was on indices, commodities and FX). Ladder down is the product decision;
   this is the number to watch.
+- **Run log.** The panel fetch logs the intraday ladder's coverage per frame and its time (or
+  `cached`), warning for names with no intraday history; the CVG step logs a `Conviction ladder`
+  census (names read down vs D · W ↺). The first progress milestone names the intraday fetch.
 
 ### CVG units re-confirmed by Sanket's v9 audit (2026-09-27)
 

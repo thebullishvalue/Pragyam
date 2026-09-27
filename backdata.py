@@ -710,9 +710,19 @@ def generate_historical_data(
         # fetched once for the whole universe, read by cvgrid.compute_readings per name.
         try:
             import intraday as _idm
-            _idm.prefetch(list(symbols_to_process))
+            _t0 = time.time()
+            _cov = _idm.prefetch(list(symbols_to_process))
+            if _cov:
+                _n = len(set(symbols_to_process))
+                console.detail("intraday ladder · " + " · ".join(f"{f} {_cov.get(f, 0)}" for f in _idm.DAILY_FRAMES)
+                               + (f" of {_n} symbols · {_dt:.1f}s" if (_dt := time.time() - _t0) >= 0.1 else f" of {_n} symbols · cached"))
+                if _n - max(_cov.values()):
+                    console.warning(f"{_n - max(_cov.values())} symbol(s) have no intraday history — "
+                                    "their conviction reads D · W (↺)")
+            else:
+                console.detail("intraday ladder disabled — conviction reads D · W (↺)")
         except Exception as _e:        # the tape then reads Ladder up for every name
-            console.detail(f"intraday prefetch failed ({type(_e).__name__}) — conviction reads D · W")
+            console.warning(f"intraday prefetch failed ({type(_e).__name__}: {_e}) — conviction reads D · W (↺)")
         console.detail(
             f"received {len(all_data.index)} bars × "
             f"{len(getattr(all_data.get('Close', all_data), 'columns', []))} price columns"

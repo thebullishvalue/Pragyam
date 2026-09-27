@@ -1148,6 +1148,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         out.attrs["nco_cvg_unconfirmed"] = int((_g == 0).sum())
         out.attrs["nco_cvg_quiet"] = int(_uni["push_tier"].astype(str).str.contains("quiet").sum())
         out.attrs["nco_cvg_held"] = int((pd.to_numeric(_uni["held_row"], errors="coerce") > 0).sum())
+        # The conviction ladder each name read today: DOWN (intraday rungs) or D · W ↺.
+        _ld = pd.to_numeric(_uni["ladder_down"] if "ladder_down" in _uni else pd.Series(dtype=float), errors="coerce")
+        out.attrs["nco_cvg_ladder_down"] = int((_ld == 1).sum())
+        out.attrs["nco_cvg_ladder_up"] = int((_ld == 0).sum())
         out.attrs["nco_cvg_graded"] = CVG_GRADED
         _h = pd.to_numeric(_uni["hedge"], errors="coerce").dropna()
         out.attrs["nco_cvg_hedge_median"] = float(_h.median()) if len(_h) else float("nan")
