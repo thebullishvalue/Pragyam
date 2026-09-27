@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   +0.29 / +0.13 / +0.10 %/yr over the v8 units on Nifty 50, +0.04 / +0.02 / +0.07 on Dow 30,
   +0.37 / +0.23 / +0.12 on the top-30 Nifty book. The 200-day trend tilt and the neutralised units
   were tested and rejected.
+- **Old vs new, each on its own freshly generated snapshots** (monthly, net of costs; v9.0 =
+  Ladder up + Dislocated 3, v9.1 = Ladder down + Dislocated 4). Before Nov 2024 only the units
+  differ (no intraday history): +0.01 %/yr Nifty 50, −0.07 top-30, +0.07 Dow 30. Since Nov 2024,
+  with Ladder down live: −0.35 %/yr Nifty 50 (t −0.8), −1.04 top-30 (t −0.5), −0.08 Dow 30 —
+  none significant, and turnover higher (Nifty 1.94x vs 1.45x). On stock books the ladder choice
+  reads as neutral-to-slightly-worse so far, consistent with Sanket's head-to-head (a tie on
+  stocks; the gain was on indices, commodities and FX). Ladder down is the product decision;
+  this is the number to watch.
 
 ---
 
