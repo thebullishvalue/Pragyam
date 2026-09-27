@@ -21,22 +21,30 @@ clear step brighter past it". The value tape turns rich or cheap at θ (±42.9 o
 its ±100 scale), Samanvaya's threshold:
 
                       value CHEAP        value FAIR        value RICH
-    UP     (≥ +30)    TURNED      3      BUILDING    3     PAID          1.5
+    UP     (≥ +30)    TURNED      3      BUILDING    1.5   PAID          0.75
     FAINT             BASING      1.5    IDLE        1     STALLING      0.75
-    DOWN   (≤ −30)    DISLOCATED  1      FADING      0.5   DISTRIBUTION  0.25
+    DOWN   (≤ −30)    DISLOCATED  3      FADING      1.5   DISTRIBUTION  0.25
 
   TURNED        cheap, and buyers now in control — a dislocation that turned
-  BUILDING      buyers in control while price is still fair — the core
-  PAID          buyers in control of a price already rich — held, not added to
+  BUILDING      buyers in control while price is still fair — held, not added to
+  PAID          buyers in control of a price already rich — trimmed
   BASING        cheap, control not yet decided — the setup before a turn
   IDLE          fair, control not yet decided
   STALLING      rich, and the control that made it rich has faded
-  DISLOCATED    cheap, sellers still in control — the watchlist
-  FADING        sellers in control at a fair price
+  DISLOCATED    cheap, sellers still in control — capitulation
+  FADING        sellers in control at a fair price — a washout
   DISTRIBUTION  sellers in control of a rich price — the floor
 
-Units are the weight at each state's centre, CHOSEN from what it means, not
-fitted. Every name is held: the state sets how much, never whether.
+Units are the weight at each state's centre. Five were chosen from meaning; FOUR
+WERE MEASURED (Pragati v8, 2026-09): DISLOCATED 1 → 3, FADING ½ → 1½, BUILDING 3 → 1½,
+PAID 1½ → ¾. The Sanket audit of pragati.pine (380 instruments, six asset classes,
+~20 years) found sellers in control at a cheap or fair price followed by gains in
+BOTH eras on every class but crypto, and buyers in control at a fair price lagging;
+research/cvg_reweight.py then tested the four moves in THIS allocator — monthly, every
+name held, net of costs — choosing on data before 2018 and confirming after it. They
+beat the seed units in both eras on Nifty 50 (+0.42%/yr, +0.98%/yr) and Dow 30
+(+0.55%/yr, +0.89%/yr) at a sixth less turnover; the ETF book held too few funds
+before 2019 to test. Every name is held: the state sets how much, never whether.
 
 The map is GRADED, as the Pine draws it: within its cell a name's weight moves
 toward one neighbouring cell per axis by how intensely each reading is shaded —
@@ -90,14 +98,14 @@ COLUMNS = pragati.COLUMNS + samanvaya.VALUE_COLUMNS + STATE_COLUMNS
 # order the book fills in when N is below the universe.
 STATES = (
     ("TURNED",       3.00, "Turned",        "cheap, and buyers now in control"),
-    ("BUILDING",     3.00, "Building",      "buyers in control at a fair price"),
-    ("PAID",         1.50, "Paid",          "buyers in control, price already rich"),
+    ("DISLOCATED",   3.00, "Dislocated",    "cheap, sellers still in control — capitulation"),
+    ("BUILDING",     1.50, "Building",      "buyers in control at a fair price"),
     ("BASING",       1.50, "Basing",        "cheap, control not yet decided"),
+    ("FADING",       1.50, "Fading",        "sellers in control at a fair price — a washout"),
     ("IDLE",         1.00, "Idle",          "fair price, control not yet decided"),
-    ("DISLOCATED",   1.00, "Dislocated",    "cheap, sellers still in control"),
     ("UNREAD",       1.00, "Unread",        "a tape not yet calibrated"),
+    ("PAID",         0.75, "Paid",          "buyers in control, price already rich"),
     ("STALLING",     0.75, "Stalling",      "rich, and control has faded"),
-    ("FADING",       0.50, "Fading",        "sellers in control at a fair price"),
     ("DISTRIBUTION", 0.25, "Distribution",  "sellers in control of a rich price"),
 )
 # (row, column) → state. Rows: +1 UP, 0 FAINT, −1 DOWN. Columns: 0 cheap,
@@ -111,8 +119,8 @@ STATE_UNITS = {code: u for code, u, _, _ in STATES}
 STATE_LABEL = {code: lab for code, _, lab, _ in STATES}
 STATE_MEANING = {code: m for code, _, _, m in STATES}
 STATE_ORDER = {code: i for i, (code, _, _, _) in enumerate(STATES)}
-CORE_STATES = ("TURNED", "BUILDING")
-FLOOR_STATES = ("FADING", "DISTRIBUTION")
+CORE_STATES = ("TURNED", "DISLOCATED")          # 3 units each (v8)
+FLOOR_STATES = ("DISTRIBUTION",)                 # ¼ unit
 CELL = {code: rc for rc, code in GRID.items()}          # state → (row, column)
 
 # ── The graded map ───────────────────────────────────────────────────────────
