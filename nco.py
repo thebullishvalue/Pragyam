@@ -441,7 +441,7 @@ METHOD_SPECS = {
         "sip_default": False,
     },
     # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
-    # pragati.pine read through both of its tapes on the ladder D · W —
+    # pragati.pine read through both of its tapes (conviction on Ladder down, value on D · W) —
     # conviction (who controls: the rows) and value (rich or cheap against the
     # macro drivers, Samanvaya's engine: the columns) — each name placed in one
     # of nine states and sized by its state. The pane's histogram runs the rows:
@@ -468,8 +468,11 @@ METHOD_SPECS = {
                      "(t 1.5) on Nifty 50 and +0.55% (t 1.0) then +0.89% (t 1.0) on Dow 30, "
                      "at lower turnover. Against Equal Weight: Nifty +0.83%/yr (t 2.1) then "
                      "+0.47% (t 1.3); Dow -0.23% then +0.90% (t 2.4). The ETF book (1-27 "
-                     "funds from 2012) is too thin to test. Several designs were tried on "
-                     "these panels, so read every t as directional."),
+                     "funds from 2012) is too thin to test. v12: Dislocated 3 → 4 beat 3 in all "
+                     "three eras (Nifty +0.29 / +0.13 / +0.10 %/yr, Dow +0.04 / +0.02 / +0.07); "
+                     "the conviction tape reads Ladder down where intraday history exists, "
+                     "which read slightly negative on Nifty since Nov 2024 (−0.35 %/yr, t −0.8). "
+                     "Several designs were tried on these panels, so read every t as directional."),
         "long_run": ("vs Equal Weight, before / after 2018: Nifty 50 +0.83% / +0.47%/yr, "
                      "Dow 30 -0.23% / +0.90%/yr — at 1.2-1.3x monthly turnover"),
         "sip_default": False,
@@ -646,7 +649,7 @@ def build_price_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
 # Snapshot column → the name the book carries it under. Numeric readings first,
 # then the two text fields.
 CVG_FIELDS = {
-    "conv tape": "conviction",               # the conviction tape, D · W
+    "conv tape": "conviction",               # the conviction tape, Ladder down (D · W ↺)
     "conv daily": "conviction_daily",   # its daily rung (the pane's trace)
     "conv weekly": "conviction_weekly", # its reconstructed weekly rung
     "conv ladder down": "ladder_down",       # 1 = the tape read Ladder down, 0 = D · W ↺

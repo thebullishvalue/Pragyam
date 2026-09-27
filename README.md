@@ -1,6 +1,6 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 11.0.0
+**Version:** 12.0.0
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
@@ -8,6 +8,16 @@ Covariance-based portfolio curation over a fixed ETF universe. The book is built
 to **spread risk**, not to predict returns.
 
 ---
+
+## What changed in v12
+
+v12 adds a fourth style, the **Conviction-Value Grid (CVG)** — the Pragati indicator's two tapes
+(conviction × value) placing every name in a 3 × 3 of states, each sized by measured units
+(details below). Its conviction tape reads **Ladder down** (pragati.pine v9.1): the intraday
+frames inside each day that yfinance carries, falling back to D · W on days older than that
+history. Measured throughout — the units were re-weighted only where the change held in every
+era; a trend tilt and a neutralised map were tested and rejected. Everything else from v11
+stands.
 
 ## What changed in v11, and why
 
@@ -101,7 +111,7 @@ streamlit run app.py
 | **Equal Weight** *(default)* | baseline | Identical `1/N` per holding. The default because nothing beat it — see below. Lowest turnover of any style. |
 | **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes while trading ~5× less. |
 | **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. Same job as ERC at five times the turnover; kept for continuity. |
-| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction × value, each on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: v8 units beat the seed units in both eras on Nifty 50 and Dow 30 and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
+| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction on Ladder down (the intraday frames inside each day; D · W before intraday history), value on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
 
 Every style travels the identical pipeline — same eligibility filter, same
 clustering diagnostics, same risk decomposition — so any difference on screen is
@@ -151,14 +161,21 @@ every other style — but the weights come from the indicator and nothing else:
 its two tapes and its histogram. No covariance, no solver, no signal (▲▼ ◆ and
 divergences are not used).
 
-**The two tapes**, each read on the daily chart and the weekly frame above it,
-the weekly rung rebuilt from the week as it forms (it lands on the settled
-weekly value to 1e-13 and never sees the rest of the week):
+**The two tapes:**
 
 - **Conviction** (`pragati.py`) — who controls, and how firmly:
   `100 · tanh(mean z)` of participation-weighted agreement `Σc·w / Σ|c|·w`,
-  `c = ΔC / TR`. The Pine's engine and defaults, one adaptation: the weekly
-  rung normalises over 52 weeks, not 200, which this panel cannot supply.
+  `c = ΔC / TR`, over its ladder. **Ladder down** (v12, pragati.pine v9.1's
+  default): the daily chart plus every lower frame yfinance carries — 1m (7
+  days), 3m, 5m / 15m / 30m (60 days), 1h (≈ 2 years), 4h — each running the
+  engine on its own history and averaged inside the day, joining where it has
+  calibrated (`intraday.py`, fetched once per universe). Days older than the
+  intraday history read **Ladder up**, D · W — the weekly rung rebuilt from the
+  week as it forms, normalised over 52 weeks — and the snapshot's
+  `conv ladder down` is 0. Measured head to head in Sanket (2024-26): the grid
+  tied on stocks; in this book's own old-vs-new comparison the change read
+  slightly negative on Nifty (−0.35 %/yr since Nov 2024, t −0.8) — see the
+  CHANGELOG. A product decision, watched.
 - **Value** (`samanvaya.py`) — rich or cheap against what the drivers explain:
   Samanvaya's blend of a hedged return spread and seven market-strength views.
   The hedge is fitted on at most three drivers, chosen by stepwise partial
@@ -177,7 +194,7 @@ Nifty 50 0.005 → 0.23, Dow 30 0.01 → 0.20).
 
 **The 3 × 3.** Each tape is cut at its own shading knee — conviction at its
 inner zone (±30), value at θ (±42.9) — into nine states, each with its weight in
-units (grid v8 — measured, see below):
+units (measured — v8, and Dislocated 3 → 4 in v12; see below):
 
 |                          | value cheap      | value fair     | value rich          |
 |--------------------------|------------------|----------------|---------------------|

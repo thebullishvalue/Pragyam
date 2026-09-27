@@ -253,7 +253,7 @@ def _render_cvg_map(portfolio: pd.DataFrame) -> None:
     n_uni = int(sum(census.values())) or len(portfolio)
     render_section_header(
         "Conviction-Value Map",
-        f"Conviction × value on D · W · {at.get('nco_cvg_names', 0)} of {n_uni} names read",
+        f"Conviction (Ladder down) × value (D · W) · {at.get('nco_cvg_names', 0)} of {n_uni} names read",
         icon="compass", accent="emerald")
 
     # The census, in allocation order, with each state's weight in units: the

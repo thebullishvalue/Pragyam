@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] - Conviction ladder DOWN · Dislocated 4 units (2026-09-27)
+## [12.0.0] - 2026-09-27 — the Conviction-Value Grid (Pragati v9.1)
+
+### Conviction ladder DOWN · Dislocated 4 units (2026-09-27)
 
 - **The conviction tape reads Ladder down** (pragati.pine v9.1): the day's intraday frames from
   yfinance (`intraday.py`, prefetched per universe in `backdata`), each averaged inside the day;
@@ -25,11 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stocks; the gain was on indices, commodities and FX). Ladder down is the product decision;
   this is the number to watch.
 
----
+### CVG units re-confirmed by Sanket's v9 audit (2026-09-27)
 
-## [Unreleased] - CVG units re-confirmed by Sanket's v9 audit (2026-09-27)
-
-### 📝 Documented — no code change
+#### 📝 Documented — no code change
 
 - Sanket's v9 audit of `pragati.pine` found the v8 audit's scoring biased toward reversion
   (returns demeaned by the era's own mean) and re-measured everything without look-ahead,
@@ -38,11 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zero. The allocator test behind the v8 units used portfolio returns and is unaffected. The
   units stand. Pragati v9's ▲ is now the capitulation turn, read from this same grid.
 
----
+### CVG units v8, measured (2026-09-27)
 
-## [Unreleased] - CVG units v8, measured (2026-09-27)
-
-### 🔧 Changed — four cells re-weighted to Pragati v8
+#### 🔧 Changed — four cells re-weighted to Pragati v8
 
 ```
                   CHEAP            FAIR             RICH
@@ -68,11 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Buy, cyan Accumulate, amber Hold / Trim, rose Exit). The watchlist notes that
   a Dislocated name already carries full weight.
 
----
+### Conviction-Value Grid (2026-09-26)
 
-## [Unreleased] - Conviction-Value Grid (2026-09-26)
-
-### ✨ Added — a fourth style, read from the Pragati indicator
+#### ✨ Added — a fourth style, read from the Pragati indicator
 
 - **Conviction-Value Grid (CVG) — a 3 × 3 state engine.** A pure reading of the
   Pragati indicator (`pragati.pine`, formerly Dhṛti)
@@ -153,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`research/conviction_value_grid.py`** — reproduces every figure below; the
   pre-registration is its docstring.
 
-### 📏 Measured (pre-registered before each design was run)
+#### 📏 Measured (pre-registered before each design was run)
 
 Monthly rebalances through the shipped pipeline, every name held. The two parts
 are isolated: **gate** is the book minus the same graded map with rows simply
@@ -180,7 +176,7 @@ pre-registered test in every universe (median out-of-sample hedge skill ETF
 0.01 → 0.45, Nifty 0.005 → 0.23, Dow 0.01 → 0.20). The same panels served every
 design in this entry, so read every t as directional.
 
-### 🏷️ Renamed
+#### 🏷️ Renamed
 
 - **The indicator: Dhṛti → Pragati** (प्रगति, "progress" — what `c = ΔC / TR`
   measures: how much of a bar's travel became progress). The Sanskrit lineage
@@ -197,7 +193,7 @@ design in this entry, so read every t as directional.
   `value …`, `cvg …` (was `dhriti …`). The panel cache key changes with them.
 - `research/dhriti_two_tape.py` → `research/conviction_value_grid.py`.
 
-### 🧪 Tried and withdrawn on the way
+#### 🧪 Tried and withdrawn on the way
 
 - **Conviction Budget** — ERC with risk budgets `1 + 0.5 · C / 100` from the
   conviction tape. Withdrawn as not a reading of the indicator (the covariance did the
@@ -216,7 +212,7 @@ design in this entry, so read every t as directional.
   by the graded map, which trades a quarter to two-fifths less for the same
   return.
 
-### ✨ Added — every style in Analytics
+#### ✨ Added — every style in Analytics
 
 - **Style Comparison.** Analytics compared the book with the benchmark and with
   its own equal-weight shadow; it now also compares it with the book each OTHER
@@ -249,7 +245,7 @@ design in this entry, so read every t as directional.
 - **Chart:** the other styles are thin slate lines, hidden until picked in the
   legend, each with a dash it keeps from run to run.
 
-### 🔧 Changed
+#### 🔧 Changed
 
 - `compute_nco_portfolio` sorts its output STABLY, so tied weights keep the
   order the allocator filled them in (universe order for 1/N, state-then-room

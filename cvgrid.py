@@ -2,7 +2,8 @@
 PRAGYAM — the Conviction-Value Grid (CVG)
 ══════════════════════════════════════════════════════════════════════════════
 
-A portfolio style read from Pragati's two tapes, each on the ladder D · W:
+A portfolio style read from Pragati's two tapes — conviction on Ladder down (the
+intraday frames inside each day; D · W before intraday history), value on D · W:
 
     CONVICTION   who controls, and how firmly — pragati.py
     VALUE        where price stands against what the drivers explain, rich or
