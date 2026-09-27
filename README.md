@@ -183,7 +183,7 @@ units (grid v8 — measured, see below):
 |--------------------------|------------------|----------------|---------------------|
 | **conviction up** (≥ +30)| Turned · 3       | Building · 1.5 | Paid · 0.75         |
 | **conviction faint**     | Basing · 1.5     | Idle · 1       | Stalling · 0.75     |
-| **conviction down** (≤ −30)| Dislocated · 3 | Fading · 1.5   | Distribution · 0.25 |
+| **conviction down** (≤ −30)| Dislocated · 4 | Fading · 1.5   | Distribution · 0.25 |
 
 The seed units were Building 3, Paid 1.5, Dislocated 1 and Fading 0.5. The
 Pragati v5 / v7 audit (Sanket, `studies/pine_audit.md`: 380 instruments, six

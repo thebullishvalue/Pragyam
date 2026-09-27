@@ -23,7 +23,7 @@ its ±100 scale), Samanvaya's threshold:
                       value CHEAP        value FAIR        value RICH
     UP     (≥ +30)    TURNED      3      BUILDING    1.5   PAID          0.75
     FAINT             BASING      1.5    IDLE        1     STALLING      0.75
-    DOWN   (≤ −30)    DISLOCATED  3      FADING      1.5   DISTRIBUTION  0.25
+    DOWN   (≤ −30)    DISLOCATED  4      FADING      1.5   DISTRIBUTION  0.25
 
   TURNED        cheap, and buyers now in control — a dislocation that turned
   BUILDING      buyers in control while price is still fair — held, not added to
@@ -97,8 +97,8 @@ COLUMNS = pragati.COLUMNS + samanvaya.VALUE_COLUMNS + STATE_COLUMNS
 # within equal units by the grid (top row first, cheap before rich); it is the
 # order the book fills in when N is below the universe.
 STATES = (
+    ("DISLOCATED",   4.00, "Dislocated",    "cheap, sellers still in control — capitulation"),
     ("TURNED",       3.00, "Turned",        "cheap, and buyers now in control"),
-    ("DISLOCATED",   3.00, "Dislocated",    "cheap, sellers still in control — capitulation"),
     ("BUILDING",     1.50, "Building",      "buyers in control at a fair price"),
     ("BASING",       1.50, "Basing",        "cheap, control not yet decided"),
     ("FADING",       1.50, "Fading",        "sellers in control at a fair price — a washout"),
@@ -237,7 +237,7 @@ def classify_states(conv: pd.Series, value: pd.Series,
 
 
 def compute_readings(df: pd.DataFrame, driver_closes: Optional[pd.DataFrame] = None,
-                   symbol: str = "") -> pd.DataFrame:
+                   symbol: str = "", intraday: Optional[dict] = None) -> pd.DataFrame:
     """Both of Pragati's tapes and the grid state, for one name — every
     column in COLUMNS.
 
@@ -250,7 +250,10 @@ def compute_readings(df: pd.DataFrame, driver_closes: Optional[pd.DataFrame] = N
     if df is None or df.empty:
         return pd.DataFrame(columns=list(COLUMNS))
     df = df.sort_index()
-    conv = compute_conviction(df).reindex(df.index)
+    if intraday is None:
+        import intraday as _idm
+        intraday = _idm.frames(symbol) if symbol else {}
+    conv = compute_conviction(df, intraday).reindex(df.index)
     val = samanvaya.compute_value(df, driver_closes, symbol).reindex(df.index)
     st = classify_states(conv["conv tape"], val["value tape"], conv["conv push gate"])
     return pd.concat([conv, val, st], axis=1)[list(COLUMNS)]

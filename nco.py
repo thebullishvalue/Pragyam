@@ -453,7 +453,7 @@ METHOD_SPECS = {
         "short": "CVG",
         "family": "accumulation",
         "formula": ("graded 3 × 3 — cell units up: turned 3 · building 1.5 · paid 0.75 · "
-                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 3 · "
+                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 4 · "
                     "fading 1.5 · distribution 0.25; shaded within each cell by the tapes' "
                     "intensity; rows move only on a confirmed push"),
         "tagline": "Nine states from conviction × value; the histogram moves the rows",
@@ -649,6 +649,7 @@ CVG_FIELDS = {
     "conv tape": "conviction",               # the conviction tape, D · W
     "conv daily": "conviction_daily",   # its daily rung (the pane's trace)
     "conv weekly": "conviction_weekly", # its reconstructed weekly rung
+    "conv ladder down": "ladder_down",       # 1 = the tape read Ladder down, 0 = D · W ↺
     "conv hist": "hist",                     # the pane's histogram, native
     "conv push": "push",                     # the histogram as drawn, −1 … +1
     "value tape": "value_tape",              # the value tape, D · W (+ rich)
