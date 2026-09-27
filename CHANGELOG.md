@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] - Conviction ladder DOWN · Dislocated 4 units (2026-09-27)
+
+- **The conviction tape reads Ladder down** (pragati.pine v9.1): the day's intraday frames from
+  yfinance (`intraday.py`, prefetched per universe in `backdata`), each averaged inside the day;
+  days before the intraday history read D · W (`conv ladder down` = 0).
+- **Dislocated 3 → 4 units.** `research/cvg_v9.py` (pre-registered, three eras, net of costs):
+  +0.29 / +0.13 / +0.10 %/yr over the v8 units on Nifty 50, +0.04 / +0.02 / +0.07 on Dow 30,
+  +0.37 / +0.23 / +0.12 on the top-30 Nifty book. The 200-day trend tilt and the neutralised units
+  were tested and rejected.
+
+---
+
 ## [Unreleased] - CVG units re-confirmed by Sanket's v9 audit (2026-09-27)
 
 ### 📝 Documented — no code change

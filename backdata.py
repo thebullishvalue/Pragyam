@@ -705,6 +705,13 @@ def generate_historical_data(
             f"{start_date:%Y-%m-%d} → {end_date:%Y-%m-%d}"
         )
         all_data = download_data()
+        # The conviction ladder reads DOWN (v9.1): every intraday frame yfinance carries,
+        # fetched once for the whole universe, read by cvgrid.compute_readings per name.
+        try:
+            import intraday as _idm
+            _idm.prefetch(list(symbols_to_process))
+        except Exception as _e:        # the tape then reads Ladder up for every name
+            console.detail(f"intraday prefetch failed ({type(_e).__name__}) — conviction reads D · W")
         console.detail(
             f"received {len(all_data.index)} bars × "
             f"{len(getattr(all_data.get('Close', all_data), 'columns', []))} price columns"

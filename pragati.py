@@ -17,7 +17,12 @@ The conviction tape (the Pine's own header, WHAT IT MEASURES)
     participation   w = min(V / EMA(V), cap)            relative TR if no volume
     agreement       raw = 100 * Σ(c·w) / Σ(|c|·w)       over the lookback
     scaling         100 * tanh(raw / 3σ), σ over the normalization window
-    tape            100 * tanh(mean z over the ladder D · W), EMA(3)
+    tape            100 * tanh(mean z over the ladder), EMA(3)
+                    LADDER DOWN (pragati.pine v9.1's default): the chart and every lower
+                    frame yfinance carries — 1m · 3m · 5m · 15m · 30m · 1h · 4h, each
+                    averaged inside the day (intraday.py). Where a day has no intraday
+                    history (1h reaches back ~2 years) the tape reads Ladder up, D · W,
+                    and `conv ladder down` is 0 — the Pine's FALLBACK, per bar.
 
 The weekly rung is RECONSTRUCTED the way the Pine rebuilds every higher frame:
 the parent's settled state as of its last closed week, completed with the week
@@ -83,7 +88,11 @@ QUIET_KEEP = 0.45        # a quiet column is mixed 55% toward neutral
 TIER_T = {"impulse": (18.0, 0.0), "building": (60.0, 38.0),
           "decelerating": (70.0, 50.0), "turning": (88.0, 72.0)}
 
-CONVICTION_COLUMNS = ("conv tape", "conv daily", "conv weekly")
+CONVICTION_COLUMNS = ("conv tape", "conv daily", "conv weekly", "conv ladder down")
+
+# The conviction ladder: "down" (v9.1) reads the frames inside the day where they exist,
+# "up" reads D · W everywhere (v8 / v9).
+LADDER = "down"
 PUSH_COLUMNS = ("conv hist", "conv push", "conv push tier", "conv push gate")
 COLUMNS = CONVICTION_COLUMNS + PUSH_COLUMNS
 
@@ -344,7 +353,25 @@ def weekly_rung(df: pd.DataFrame, norm: int = NORMALIZATION_WEEKLY
     return z, err
 
 
-def compute_conviction(df: pd.DataFrame) -> pd.DataFrame:
+def inside_rung(frame: pd.DataFrame, labels: pd.DatetimeIndex, chart_index: pd.DatetimeIndex) -> pd.Series:
+    """A lower frame's z, participation-weighted inside each day it belongs to (the Pine's
+    f_inside); na until the frame's own normalization window is clean (f_child)."""
+    ch = chart_rung(frame)
+    z = ch["z"].where(ch["ready"])
+    tr = _true_range(frame["high"], frame["low"], frame["close"])
+    w, _, _, _ = _participation(tr, frame["volume"] if "volume" in frame.columns
+                                else pd.Series(np.nan, index=frame.index))
+    w = w.fillna(1.0).clip(lower=1e-6)
+    lab = pd.DatetimeIndex(labels)
+    keep = ~lab.isna()
+    z, w, lab = z[keep], w[keep], lab[keep]
+    num = (z * w).groupby(lab).sum(min_count=1)
+    den = w.where(z.notna()).groupby(lab).sum(min_count=1)
+    y = (num / den).where(den > 0)
+    return y.reindex(pd.DatetimeIndex(chart_index).normalize()).set_axis(chart_index)
+
+
+def compute_conviction(df: pd.DataFrame, intraday: dict | None = None) -> pd.DataFrame:
     """The conviction tape and its two rungs for one name's daily OHLCV.
 
     Section 5 · the tape: every rung's z — the chart's included — averaged in
@@ -368,8 +395,26 @@ def compute_conviction(df: pd.DataFrame) -> pd.DataFrame:
     z_chart = ch["z"].where(ready)
     z_lad = ((z_chart + zw.fillna(0.0)) / (ready.astype(float) + zw.notna().astype(float))).where(ready)
     tape = _ema(100.0 * _tanh(z_lad), SMOOTHING) if SMOOTHING > 1 else 100.0 * _tanh(z_lad)
+    use_dn = pd.Series(False, index=df.index)
+    if LADDER == "down" and intraday:
+        import intraday as _idm
+        rungs = {}
+        for f, bars in intraday.items():
+            if bars is not None and len(bars):
+                rungs[f] = inside_rung(bars, _idm.session_days(bars.index, df.index), df.index)
+        if rungs:
+            R = pd.DataFrame(rungs, index=df.index)
+            n_child = R.notna().sum(axis=1)
+            z_dn = ((z_chart + R.sum(axis=1, min_count=1).fillna(0.0))
+                    / (ready.astype(float) + n_child)).where(ready)
+            tape_dn = _ema(100.0 * _tanh(z_dn), SMOOTHING) if SMOOTHING > 1 else 100.0 * _tanh(z_dn)
+            # the Pine's ladReady: a lower rung held for norm + smooth bars before it leads
+            use_dn = pd.Series(np.cumsum((ready & (n_child > 0)).to_numpy()) > NORMALIZATION + SMOOTHING,
+                               index=df.index)
+            tape = tape.where(~use_dn, tape_dn)
     res = pd.DataFrame({
         "conv tape": tape.where(ready),
+        "conv ladder down": use_dn.astype(float).where(ready),
         "conv daily": ch["trace"].where(ready),
         "conv weekly": (100.0 * _tanh(zw)).where(zw.notna()),
     }, index=df.index)
