@@ -13,7 +13,7 @@ to **spread risk**, not to predict returns.
 
 v12 adds a fourth style, the **Conviction-Value Grid (CVG)** — the Pragati indicator's two tapes
 (conviction × value) placing every name in a 3 × 3 of states, each sized by measured units
-(details below). Its conviction tape reads **Ladder down** (pragati.pine v9.1): the intraday
+(details below). Its conviction tape reads **Ladder down** (pragati.pine v9.3; the default since v9.1): the intraday
 frames inside each day that yfinance carries, falling back to D · W on days older than that
 history. Measured throughout — the units were re-weighted only where the change held in every
 era; a trend tilt and a neutralised map were tested and rejected. Everything else from v11
@@ -165,8 +165,8 @@ divergences are not used).
 
 - **Conviction** (`pragati.py`) — who controls, and how firmly:
   `100 · tanh(mean z)` of participation-weighted agreement `Σc·w / Σ|c|·w`,
-  `c = ΔC / TR`, over its ladder. **Ladder down** (v12, pragati.pine v9.1's
-  default): the daily chart plus every lower frame yfinance carries — 1m (7
+  `c = ΔC / TR`, over its ladder. **Ladder down** (v12; pragati.pine's
+  default since v9.1): the daily chart plus every lower frame yfinance carries — 1m (7
   days), 3m, 5m / 15m / 30m (60 days), 1h (≈ 2 years), 4h — each running the
   engine on its own history and averaged inside the day, joining where it has
   calibrated (`intraday.py`, fetched once per universe). Days older than the

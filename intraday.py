@@ -1,5 +1,5 @@
 """
-PRAGYAM — intraday bars for the conviction ladder, Ladder DOWN (pragati.pine v9.1's default)
+PRAGYAM — intraday bars for the conviction ladder, Ladder DOWN (pragati.pine's default since v9.1)
 ══════════════════════════════════════════════════════════════════════════════════════════
 
 On a daily chart the Pine's Ladder down reads every standard frame below the chart —

@@ -18,7 +18,7 @@ The conviction tape (the Pine's own header, WHAT IT MEASURES)
     agreement       raw = 100 * Σ(c·w) / Σ(|c|·w)       over the lookback
     scaling         100 * tanh(raw / 3σ), σ over the normalization window
     tape            100 * tanh(mean z over the ladder), EMA(3)
-                    LADDER DOWN (pragati.pine v9.1's default): the chart and every lower
+                    LADDER DOWN (pragati.pine's default since v9.1): the chart and every lower
                     frame yfinance carries — 1m · 3m · 5m · 15m · 30m · 1h · 4h, each
                     averaged inside the day (intraday.py). Where a day has no intraday
                     history (1h reaches back ~2 years) the tape reads Ladder up, D · W,
