@@ -21,7 +21,13 @@ from ui.components import (
     render_section_header,
 )
 from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
-from cvgrid import STATE_LABEL, STATES
+from cvgrid import STATE_LABEL, STATE_UNITS, STATES
+
+# The CVG units as the allocator applies them, read from cvgrid so this text cannot drift.
+_CVG_UNITS_HTML = ' &middot; '.join(
+    ', '.join(f"{STATE_LABEL[c].lower()} <b>{STATE_UNITS[c]:g}</b>" for c in row)
+    for row in (("TURNED", "BUILDING", "PAID"), ("BASING", "IDLE", "STALLING"),
+                ("DISLOCATED", "FADING", "DISTRIBUTION")))
 from samanvaya import DEFAULT_BASKET
 from ui.theme import VERSION
 
@@ -260,11 +266,9 @@ def _render_system_tab(training_window: List):
                                     'correlations are high and the sample is short.'),
                             "CVG": ('Conviction-Value Grid, 3 &times; 3: rows are conviction &mdash; UP past '
                                        '+30, FAINT, DOWN past &minus;30 &mdash; columns are value '
-                                       '&mdash; CHEAP, FAIR, RICH at &plusmn;&theta;. Units: turned '
-                                       '<b>3</b>, building <b>3</b>, paid <b>1.5</b> &middot; basing '
-                                       '<b>1.5</b>, idle <b>1</b>, stalling <b>0.75</b> &middot; '
-                                       'dislocated <b>1</b>, fading <b>0.5</b>, distribution '
-                                       '<b>0.25</b>. The pane&rsquo;s <b>histogram runs the rows</b>: '
+                                       '&mdash; CHEAP, FAIR, RICH at &plusmn;&theta;. Units (live): '
+                                       + _CVG_UNITS_HTML +
+                                       '. The pane&rsquo;s <b>histogram runs the rows</b>: '
                                        'a name changes row only when the push confirms it &mdash; on '
                                        'the side of the move, not turning, not quiet. The map is '
                                        '<b>graded</b>: inside its cell a name&rsquo;s weight moves toward '
