@@ -23,6 +23,17 @@ the top-30 book (Nifty); Nifty 50 and Dow 30; eras E1 < 2014, E2 2014-2019, E3 �
 
 DECISION RULE: a momentum map is 'better' only if it beats C4 in ALL THREE eras on BOTH universes
 (every-name book). Otherwise the reversion map stays.
+
+RESULT (2026-09-28) — REJECTED. Every momentum map lost to C4 in every era on both universes, net
+of costs, at higher turnover (%/yr vs C4, E1 / E2 / E3):
+    Nifty 50 all     M1 −1.20 −1.82 −1.47 · M2 −1.50 −2.35 −1.73 · M3 −0.83 −1.25 −1.15 · M4 −1.69 −0.97 −1.64
+    Nifty 50 top-30  M1 −1.90 −3.79 −3.60 · M2 −2.42 −4.42 −3.94 · M3 −1.54 −3.25 −2.63 · M4 −2.31 −2.77 −3.94
+    Dow 30 all       M1 −1.09 −0.82 −0.94 · M2 −0.99 −0.92 −1.24 · M3 −1.11 −0.61 −0.82 · M4 −1.28 −0.93 −0.67
+The reference R12 (12-1 month momentum, not a grid map) beat C4 on Nifty in 2014-19 and 2020+
+(+1.38, +0.46) but lost −2.82 before 2014 and −1.04 on Dow after 2020: not consistent either.
+Sanket's lab (380 instruments, look-ahead-free) agrees: the momentum maps read negative on
+time-series scoring in E1 and E3 at every horizon; cross-sectionally they beat C4 only after 2020
+at 40-60 bars. The one class where they win clearly is crypto.
 """
 from __future__ import annotations
 
