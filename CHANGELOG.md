@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [12.0.1] - 2026-09-28
+
+### Fixed
+- **System tab: the CVG units were the pre-v8 seed** (dislocated 1, fading 0.5, building 3, paid
+  1.5). The text now reads the live unit table from `cvgrid`, so it shows what the allocator
+  applies (dislocated 4, fading 1.5, building 1.5, paid 0.75, …) and cannot drift again.
+- A stale `CORE_STATES` comment in `cvgrid.py` (Dislocated is 4 units, not 3).
+
+### Not affected
+- pragati.pine v9.2 (legacy TURN removed, settings regrouped) and v9.3 (the ▲ skips conviction's
+  quiet regime) change only the signal layer and the pane's display. Pragyam reads the grid and
+  its units — no ▲▼ ◆ — so its weights are unchanged.
+
 ## [12.0.0] - 2026-09-27 — the Conviction-Value Grid (Pragati v9.1)
 
 ### Conviction ladder DOWN · Dislocated 4 units (2026-09-27)

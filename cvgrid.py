@@ -120,7 +120,7 @@ STATE_UNITS = {code: u for code, u, _, _ in STATES}
 STATE_LABEL = {code: lab for code, _, lab, _ in STATES}
 STATE_MEANING = {code: m for code, _, _, m in STATES}
 STATE_ORDER = {code: i for i, (code, _, _, _) in enumerate(STATES)}
-CORE_STATES = ("TURNED", "DISLOCATED")          # 3 units each (v8)
+CORE_STATES = ("TURNED", "DISLOCATED")          # the two Buy cells (3 and 4 units)
 FLOOR_STATES = ("DISTRIBUTION",)                 # ¼ unit
 CELL = {code: rc for rc, code in GRID.items()}          # state → (row, column)
 
