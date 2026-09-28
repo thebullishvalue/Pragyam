@@ -1,4 +1,4 @@
-# PRAGYAM v11.0.0 — Dependencies
+# PRAGYAM v12.0.1 — Dependencies
 # @thebullishvalue · Covariance-Based Portfolio Curation
 # Python 3.10+ required
 
