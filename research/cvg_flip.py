@@ -18,6 +18,16 @@ books, Nifty 50 and Dow 30, eras E1 < 2014 / E2 2014-2019 / E3 ≥ 2020).
 
 DECISION RULE: a flip tilt is 'better' only if it beats C4 in ALL THREE eras on BOTH universes
 (every-name book) AND beats F-any (the state map must add something to the flip).
+
+RESULT (2026-09-28) — REJECTED. %/yr vs C4, net of costs, E1 / E2 / E3:
+    Nifty 50 all     F-any −0.38 −0.15 −0.10 · F-cheap +0.04 −0.07 −0.01 · F-cap −0.01 +0.01 −0.04
+    Nifty 50 top-30  F-any +0.01 −0.81 −0.60 · F-cheap −0.08 −0.10 +0.01 · F-cap −0.03 −0.01 −0.04
+    Dow 30 all       F-any +0.02 −0.32 −0.02 · F-cheap +0.11 +0.09 −0.04 · F-cap +0.04 +0.05 −0.06
+No variant beats C4 in all three eras on both universes. The state-conditioned tilts sit within
+±0.1 %/yr of C4 (they touch few names); the flip in any state costs return and adds turnover.
+Sanket's lab agrees: the green flip alone reads 0.000 in every era; conditioned on the grid it
+is positive only in washout (+0.02 to +0.04σ, every era, both scorers) — about half the shipped
+▲'s size — and capitulation-conditioned flips fail 2014-19.
 """
 from __future__ import annotations
 
