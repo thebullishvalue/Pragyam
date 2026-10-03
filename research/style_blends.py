@@ -50,11 +50,55 @@ its gap to them is the turnover the netting saves.
 DATA REPAIR (found in iteration 1, applied to every universe and style alike): yfinance carries
 NESTLEIND.NS as a flat line from Oct 2006 to Jan 2010 (786 unchanged closes) and BAJAJ-AUTO.NS
 flat for 45 sessions around its 2008 demerger relisting. A zero-variance name takes nearly all of
-an inverse-variance split — raw HRP held 100% NESTLEIND in 2009 — so iteration 1's HRP and ERC
-books on Nifty 50 before 2010 were reading the defect, not the method. A close that repeats the
+an inverse-variance split — raw HRP put 100% on NESTLEIND in 2009, and the HRP and ERC books held
+it at the 10% cap — so iteration 1's Nifty 50 books before 2010 partly read the defect. A close that repeats the
 previous one inside a run of ≥ STALE_RUN sessions is now unpriced: no style holds the name on
 those days, and the covariance styles admit it once its window has real returns. Dow 30 and the
 ETF book have no such run; their books are unchanged.
+
+RESULT (2026-10-03) — no blend beats Equal Weight or CVG on return; HRP+CVG is a better risk
+style than ERC. Every-name book, Nov 2006 – Sep 2026 (236 months), net of costs, repaired data:
+
+                       Nifty 50                                     Dow 30
+              CAGR   vol  ret/vol  maxDD  turn  vs EW (t)     CAGR   vol  ret/vol  maxDD  turn  vs EW (t)
+  EW         19.69  22.3   0.93  -58.4  0.37      —          15.52  16.5   0.96  -39.9  0.27      —
+  ERC        19.28  20.3   0.98  -54.6  0.42  -0.75 (-1.2)   14.23  15.3   0.95  -37.7  0.31  -1.33 (-2.6)
+  HRP        19.31  18.8   1.04  -50.3  1.23  -1.03 (-0.8)   12.87  14.2   0.93  -35.5  0.91  -2.70 (-2.8)
+  CVG        20.48  22.7   0.94  -58.5  1.48  +0.76 (+2.4)   15.78  16.7   0.97  -39.3  1.41  +0.28 (+1.0)
+  HRP+CVG    19.98  20.6   0.99  -54.5  1.08  -0.11 (-0.2)   14.39  15.3   0.96  -36.8  0.95  -1.18 (-2.4)
+  HRP+EW     19.55  20.4   0.98  -54.5  0.71  -0.51 (-0.8)   14.25  15.2   0.96  -37.2  0.54  -1.32 (-2.7)
+  CVG+EW     20.10  22.4   0.93  -58.4  0.87  +0.39 (+2.4)   15.65  16.6   0.96  -39.6  0.79  +0.14 (+1.0)
+  HRP+CVG+EW 19.90  21.1   0.97  -55.8  0.80  -0.07 (-0.2)   14.77  15.7   0.96  -37.9  0.69  -0.78 (-2.4)
+
+  (vs EW is the paired monthly gap, %/yr arithmetic, and its t; a lower-volatility book gives up
+  less CAGR than that gap, so read CAGR for the compounded result.)
+
+  CAGR by era, E1 / E2 / E3     Nifty 50                  Dow 30
+  EW                            17.93 / 18.83 / 22.31     14.39 / 18.32 / 14.23
+  ERC                           18.57 / 18.27 / 20.93     13.37 / 16.77 / 12.88
+  HRP                           20.21 / 17.40 / 20.10     12.48 / 15.40 / 11.06
+  CVG                           19.16 / 19.68 / 22.59     14.17 / 18.50 / 15.06
+  HRP+CVG                       19.80 / 18.59 / 21.40     13.48 / 16.92 / 13.10
+  HRP+EW                        19.15 / 18.15 / 21.23     13.58 / 16.83 / 12.68
+  CVG+EW                        18.55 / 19.26 / 22.45     14.28 / 18.41 / 14.65
+  HRP+CVG+EW                    19.20 / 18.69 / 21.71     13.79 / 17.39 / 13.49
+
+Against the rule (six cells: two universes × three eras):
+  · return — no blend beats EW (CVG+EW 5/6: it trails by 0.11 on Dow E1; the HRP blends 1/6) or
+    CVG (≤ 1/6). HRP+CVG and HRP+CVG+EW beat ERC 6/6; HRP+CVG+EW beats HRP+EW 6/6.
+  · return / volatility — only HRP+CVG passes, over ERC (6/6): ERC's volatility (20.6 vs 20.3
+    Nifty, 15.3 vs 15.3 Dow) at +0.70 / +0.16 %/yr more CAGR, at 2.5-3x its turnover (netted).
+  · a blend is its members' midpoint: within +0.01 to +0.03 %/yr of their mean on both stock
+    panels (the turnover the netting saves); raw-weight and finished-book averages agree to ±0.03.
+  · CVG+EW is CVG at half the active bet: half its edge (+0.39 / +0.14), the same t, 0.6x its
+    turnover. HRP+EW is an ERC at 1.7x the trading. Return / volatility spans only 0.93-1.04
+    on Nifty and 0.93-0.97 on Dow across all eight — the styles trade return for risk at ~par.
+Iteration 1 (stale data): Nifty HRP read 18.75% (E1 18.60%) and EW 19.45%; the flat names took
+the 10% cap in the HRP and ERC books and ~1/N in the rest, so every Nifty style read low.
+Not ruled on: the ETF book is 27 months (Jul 2024 on, ≥ 10 funds) — the HRP family +0.4 to +0.8
+%/yr over EW, CVG −0.45, no t above 0.7. The top-N books measure selection more than weighting
+(HRP / ERC keep the lowest-volatility names, 1/N keeps listing order): Nifty top-30 CAGR CVG 21.73
+· CVG+EW 21.44 · EW 20.29 · HRP+CVG 20.03 · HRP+CVG+EW 20.00 · HRP+EW 18.86 · HRP 18.80 · ERC 17.64.
 
 Run:  python research/style_blends.py [etf_book|nifty_50|dow_30]     (all three by default;
       snapshots cached to research/cvg_reweight_<universe>.pkl, shared with the other harnesses)
@@ -275,7 +319,7 @@ def verdict(summ: dict) -> None:
         rows = []
         for bl in BLENDS:
             rec = {"blend": bl}
-            for ref in KEYS + [f"{bl}·b"]:
+            for col, ref in [(k, k) for k in KEYS] + [("its ·b", f"{bl}·b")]:
                 if ref == bl:
                     continue
                 wins, cells = 0, 0
@@ -288,7 +332,7 @@ def verdict(summ: dict) -> None:
                         if bl in x and ref in x:
                             cells += 1
                             wins += int(x[bl] > x[ref])
-                rec[ref] = f"{wins}/{cells}" + (" ✓" if cells == 6 and wins == 6 else "")
+                rec[col] = f"{wins}/{cells}" + (" ✓" if cells == 6 and wins == 6 else "")
             rows.append(rec)
         print(pd.DataFrame(rows).set_index("blend").to_string(), flush=True)
 
