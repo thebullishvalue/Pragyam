@@ -3,7 +3,9 @@ research/style_search_pit.py — the Dow 30 holdout re-read on point-in-time mem
 
 REGISTERED AFTER THE HOLDOUT WAS SEEN — a check on it, not a new test. The style search's holdout
 (research/style_search_holdout.py) found managed_mom clearing all six cells. Its E3 margin over CVG
-on the Dow came from NVDA, AMZN and CRM, held through runs that preceded their joining the Dow:
+on the Dow (+2.0 pts summed) is a small residual of larger bets, led by NVDA (+5.8), with NKE +2.0,
+WMT +1.3, AMZN +1.0, CAT and CRM +0.8 against DOW −2.4 and DIS −2.1 (style_search_holdout.py
+--attribution). NVDA, AMZN and CRM were held through runs that preceded their joining the Dow:
 the panel is TODAY's constituents. This harness rebuilds the Dow as it stood each day of E3:
 
     members   S&P Dow Jones Indices' changes since 2020-01-01:
