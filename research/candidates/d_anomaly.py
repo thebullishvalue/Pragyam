@@ -102,6 +102,47 @@ were volatile and went up (a structural headwind for any lottery-avoidance tilt)
 weak in emerging markets. The most likely failure: the tilt reproduces part of HRP's Nifty E1 gain
 but loses in Nifty E2 / Dow E2, i.e. it is a low-vol tilt by another name. I would put the chance
 that any of the six clears all four discovery cells at roughly 10-15%.
+
+RESULT (2026-10-03, discovery only) — REJECTED: none of the six beats the best existing style in
+ANY of the four cells. All six trail plain CVG in every cell too. The loss grows with λ.
+Six configurations run, exactly the declared grid, nothing else. Every-name book, net of costs.
+Data note: the discovery px panel starts 2006-10, so SEASON is missing until the Nov 2007 holding
+month. Before that the composite averages its three lottery ranks, as declared.
+
+  CAGR % net (margin vs best existing in that cell)          vol % per cell, turnover /yr
+                     Nifty E1       Nifty E2       Dow E1         Dow E2         Nifty E1/E2 vol  Dow E1/E2 vol  turn N / D
+  BAR (best)         20.21 HRP      19.68 CVG      14.39 EW       18.50 CVG
+  CVG (control)      19.16 (-1.05)  19.68 ( 0.00)  14.17 (-0.21)  18.50 ( 0.00)  30.3 / 15.0      19.4 / 12.8    1.48 / 1.35
+  max λ=0.5          18.22 (-1.99)  19.31 (-0.37)  13.53 (-0.86)  18.05 (-0.45)  28.8 / 14.9      18.3 / 12.3    2.62 / 2.33
+  max λ=1.0          17.15 (-3.05)  18.88 (-0.80)  12.80 (-1.58)  17.72 (-0.78)  27.6 / 14.8      17.3 / 12.0    4.03 / 3.46
+  ivol λ=0.5         18.58 (-1.63)  19.37 (-0.31)  13.63 (-0.76)  17.48 (-1.02)  28.6 / 15.0      18.5 / 12.4    2.27 / 2.01
+  ivol λ=1.0         17.86 (-2.35)  18.98 (-0.70)  13.05 (-1.34)  16.41 (-2.08)  27.1 / 15.1      17.7 / 12.0    3.63 / 3.21
+  composite λ=0.5    18.06 (-2.15)  19.47 (-0.21)  13.52 (-0.87)  18.05 (-0.45)  29.1 / 14.9      18.6 / 12.5    2.61 / 2.40
+  composite λ=1.0    16.85 (-3.35)  19.17 (-0.51)  12.78 (-1.60)  17.62 (-0.88)  28.1 / 14.8      18.0 / 12.2    4.16 / 3.79
+  maxDD (E1 cells, monthly NAV): CVG −58.5 / −39.3 · max λ1 −56.2 / −37.6 · ivol λ1 −52.0 / −37.2 ·
+  composite λ1 −55.2 / −37.4. The tilts cut vol and drawdown a little, at a larger cost in return.
+  Paired gap to CVG, t: −0.35 to −1.90 across the 24 config-cells. None is positive.
+
+  FINALIST (the rule's fallback, since none passes): ivol_tilt(lam=0.5). It has the largest
+  smallest-margin, −1.63 (Nifty E1), and is named only because the protocol asks for one. It
+  trails CVG in all four cells and is not a credible beat-all candidate. Runner-up max λ0.5 −1.99.
+
+  WHY IT FAILED (read-only diagnostics after the run; they informed no selection):
+  · It is not costs. The λ1 gap to CVG is −1.1 to −1.5 %/yr GROSS, against −0.06 to −0.27 of
+    extra cost.
+  · The 2009 rebound did it. Gross gap vs CVG in 2009: −11.4 (max), −13.8 (ivol), −10.2 (comp)
+    %/yr on Nifty; −5.5 to −7.4 on Dow. The names that just spiked or were most idiosyncratic
+    in the crash led the V-shaped recovery, the same junk-rally pattern as a momentum crash.
+    IVOL did protect in 2007-08 on Nifty (+5.2 %/yr gross over 23 months, about +10 points)
+    but lost about 14 points in 2009 alone.
+    In 2010-13 and 2014-19 the gap is about 0 to −2.
+  · The lottery signals carry no premium here. Mean monthly rank IC with next-month return:
+    −MAX5 −0.002 (Nifty) / −0.015 (Dow); −IVOL −0.005 / −0.022; −RSKEW −0.002 / 0.000. All
+    |t| ≤ 1.2, and the Dow signs are wrong. This matches HXZ 2020 (no MAX/IVOL premium in large
+    caps) and post-publication decay. SEASON was the only positive signal: IC +0.015 (t 1.0)
+    Nifty, +0.022 (t 1.2) Dow, concentrated in Dow E2 (+0.063, t 2.4) and ≈ 0 in Nifty E1. It
+    was not run alone. Adding it now would be post-hoc. A fresh pre-registration elsewhere is
+    the honest test.
 """
 from __future__ import annotations
 
