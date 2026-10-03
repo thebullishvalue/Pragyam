@@ -96,6 +96,55 @@ The harness renormalises and applies the 10% cap (C2/C3 already satisfy it).
 
 PRE-STATED EXPECTATION: C1/C2(λ=1) most at risk in Nifty E1 (low-risk anomaly, crash era);
 C2(λ=4) and C3(κ=0.8) most at risk in Dow E1/E2 and Nifty E2 (they drift toward low volatility).
+
+RESULT (discovery only, run 2026-10-03 after the declaration above; 9 configurations, none added)
+──────────────────────────────────────────────────────────────────────────────────────────────────
+Net CAGR % per cell and margin vs the best existing style in that cell (bar: Nifty E1 20.21 HRP,
+Nifty E2 19.68 CVG, Dow E1 14.39 EW, Dow E2 18.50 CVG). vol / maxDD / turnover per yr per cell.
+
+                        Nifty E1        Nifty E2        Dow E1          Dow E2        min    cells
+config                  CAGR   marg     CAGR   marg     CAGR   marg     CAGR   marg   margin beaten
+vol_power k=0.5         17.91  -2.29    19.36  -0.32    14.81  +0.42    19.39  +0.90  -2.29  2/4
+vol_power k=1           17.73  -2.48    19.95  +0.27    15.22  +0.83    20.66  +2.16  -2.48  3/4
+vol_power k=2           17.21  -3.00    21.36  +1.68    16.07  +1.68    22.27  +3.77  -3.00  3/4
+kelly_egr lam=1         17.51  -2.69    28.35  +8.68    17.08  +2.70    24.10  +5.61  -2.69  3/4
+kelly_egr lam=2         18.77  -1.44    26.12  +6.44    12.65  -1.74    23.09  +4.59  -1.74  2/4  ← finalist
+kelly_egr lam=4         22.22  +2.01    20.32  +0.65    12.30  -2.09    18.32  -0.18  -2.09  2/4
+egr_riskbudget k=0.8    22.36  +2.15    17.93  -1.75    12.40  -1.99    14.95  -3.55  -3.55  1/4
+egr_riskbudget k=0.9    23.69  +3.48    19.77  +0.10    11.55  -2.84    17.90  -0.60  -2.84  2/4
+egr_riskbudget k=1.0    22.08  +1.88    21.48  +1.81    12.12  -2.27    20.41  +1.91  -2.27  3/4
+
+vol % (NE1/NE2/DE1/DE2), maxDD % (same), turnover/yr (same):
+vol_power k=0.5       30.8/15.3/20.1/13.2   -60.3/-16.4/-41.4/-12.8   0.43/0.35/0.31/0.24
+vol_power k=1         32.3/15.9/21.0/13.8   -62.5/-17.4/-43.0/-13.9   0.47/0.38/0.36/0.28
+vol_power k=2         35.3/17.4/22.9/14.8   -66.6/-20.0/-45.6/-16.2   0.57/0.48/0.46/0.37
+kelly_egr lam=1       37.4/19.3/23.9/15.3   -67.8/-17.8/-46.6/-16.2   1.03/0.83/0.63/0.61
+kelly_egr lam=2       32.4/17.3/19.3/12.9   -64.1/-14.7/-46.0/-12.6   0.96/0.89/0.78/0.70
+kelly_egr lam=4       24.5/13.8/15.9/11.0   -48.8/-12.2/-36.7/ -8.7   0.98/0.86/0.59/0.68
+egr_riskbudget k=0.8  24.2/13.2/15.7/10.8   -45.5/-12.5/-34.2/ -9.3   1.09/0.82/0.52/0.57
+egr_riskbudget k=0.9  27.0/13.4/17.0/11.0   -49.6/-12.1/-39.4/ -8.8   1.05/0.98/0.64/0.66
+egr_riskbudget k=1.0  30.8/14.4/18.8/12.0   -59.6/-12.4/-42.9/-11.0   1.04/1.08/0.73/0.71
+
+NO configuration beats the best existing style in all 4 discovery cells. The family splits exactly
+along the known tension: the high-σ / max-γ* end (C1, C2 λ=1) wins Dow E1/E2 and Nifty E2 but
+loses Nifty E1 (the low-risk crash era); the low-risk end (C2 λ=4, C3) wins Nifty E1 but loses
+Dow E1 (and mostly Dow E2). No point on the γ*-vs-risk frontier clears both Nifty E1 and Dow E1.
+Dow E1 is fragile in λ: +2.70 at λ=1, −1.74 at λ=2.
+
+FINALIST (rule 6, none beat all → largest smallest-margin): kelly_egr(ctx, lam=2.0) — half-Kelly
+under the equal-geometric-growth prior; smallest margin −1.74 (Dow E1), also −1.44 Nifty E1;
++6.44 Nifty E2, +4.59 Dow E2. It fails 2 of 4 discovery cells, so it is not a "beats all"
+candidate. Runner-up (not nominated): kelly_egr lam=4, −2.09.
+
+Attribution (finalist and λ=1, active contribution vs 1/N): the book is ~34/47 Nifty and ~18-20/30
+Dow names pinned at the 1/(2N) floor plus a concentrated sleeve; the E2 edge comes from names that
+JOINED today's index after large runs — ADANIENT, EICHERMOT, INDIGO, BEL, TITAN (Nifty E2); NVDA,
+AMZN, CRM (Dow E2); BAJFINANCE, SHRIRAMFIN (Nifty E1). This is the survivorship bias stated up
+front: high idiosyncratic volatility + low correlation in 2007-2019 ≈ "small then, in the index
+now". The E2 margins should be read as mostly selection, not harvesting.
+
+Solver health: SLSQP fallbacks 0/310 rebalances (C2 finalist), 4/465 Nifty and 1/465 Dow for C3 (min-var or
+clipped solution held those months).
 """
 from __future__ import annotations
 
