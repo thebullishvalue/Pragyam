@@ -31,6 +31,32 @@ READING RULE: one universe, ~19 months — nothing here can be significant or ru
 three-era rule in style_blends.py stays the test. A style "held up" on this book only if it is
 ahead of EW in both A1 and B (two disjoint periods). Descriptive only; no product change.
 
+RESULT (2026-10-03) — nothing beat Equal Weight on return, and no style held up: every style
+trailed EW through the 2025 rally (A1) and led it through the flat 2026 (B). The gap's sign follows
+the market — the risk styles' lower beta, not an edge. The HRP blends had the best return /
+volatility and the shallowest drawdowns, by margins this sample cannot separate. Every fund held
+(27), daily-marked, net of costs:
+
+               Window A · Mar 2025 – Oct 2026 · 396 days    A1 · Mar – Nov 2025    B · Dec 2025 – Oct 2026
+              CAGR   vol  ret/vol  maxDD  turn  vs EW (t)    CAGR  vs EW (t)        CAGR  vs EW (t)
+  EW         17.71  13.8   1.25  -12.3  0.20      —         40.64      —            0.86      —
+  ERC        15.40  13.1   1.16  -13.2  0.50  -2.08 (-1.1)  32.65  -6.01 (-2.2)    2.26  +1.34 (+0.6)
+  HRP        15.92  12.6   1.23  -11.9  0.94  -1.69 (-0.7)  33.26  -5.58 (-1.7)    2.72  +1.69 (+0.5)
+  CVG        17.22  13.7   1.23  -12.3  1.44  -0.44 (-0.5)  37.69  -2.15 (-2.2)    1.94  +1.04 (+0.8)
+  HRP+CVG    16.82  12.8   1.28  -12.0  1.01  -0.90 (-0.6)  36.40  -3.23 (-1.2)    2.13  +1.13 (+0.6)
+  HRP+EW     16.98  12.9   1.28  -12.0  0.59  -0.76 (-0.5)  37.73  -2.25 (-0.9)    1.51  +0.54 (+0.3)
+  CVG+EW     17.47  13.7   1.24  -12.3  0.77  -0.22 (-0.5)  39.16  -1.07 (-2.2)    1.41  +0.52 (+0.8)
+  HRP+CVG+EW 16.98  13.1   1.27  -12.1  0.73  -0.73 (-0.6)  37.61  -2.31 (-1.2)    1.61  +0.65 (+0.5)
+
+  · HRP and ERC held 17 → 23 funds in A1, not 23 as registered: the ten funds listed after Apr
+    2024 lacked 80% of a covariance window at the start. They held all 27 from Dec 2025, where B
+    begins. A blend containing HRP held all 27 throughout, the late funds taking only its other
+    member's share — hence its gap to its members' mean (+0.6 %/yr in A1, −0.2 in B).
+  · ERC drew down further than EW (−13.2 vs −12.3) while giving up 2.1 %/yr.
+  · Top-15 books are selection: 1/N keeps listing order, which here includes the silver and gold
+    funds (EW top-15 22.3% over A). CVG's top-15 turned over 4.2x/yr and made 13.7%; HRP+CVG's
+    18.6% (ret/vol 1.42) led the books that are not 1/N.
+
 Run:  python research/etf_blends.py     (reads research/cvg_reweight_etf_book.pkl, as built by
       research/style_blends.py)
 """
