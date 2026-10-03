@@ -108,6 +108,48 @@ DECISION (as the brief): a finalist must beat the best existing style in all 4 d
 Dow E1/E2), ranked by smallest margin; if none does, the configuration with the largest smallest-margin.
 At most 2 finalists. No tuning beyond the grid; no new candidates after results (any would be marked
 POST-HOC and counted).
+
+RESULT (2026-10-03) — discovery only (ss.load(u), every-name book, net of costs; 9 configurations x 2
+universes, exactly the grid above; no post-hoc candidates)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════
+CAGR % net, (margin vs the best existing style in that cell: Nifty E1 HRP 20.21 · Nifty E2 CVG 19.68 ·
+Dow E1 EW 14.39 · Dow E2 CVG 18.50). TO = turnover/yr, vol %, maxDD % over all of discovery (2007-02 → 2019-12).
+
+    config                 Nifty E1        Nifty E2        TO   vol   maxDD | Dow E1          Dow E2          TO   vol   maxDD | min    all 4
+    resid_mom(lam=0.5)     18.89 (-1.32)   20.96 (+1.28)   1.90 23.8  -58.0 | 14.28 (-0.11)   18.30 (-0.20)   1.84 16.4  -38.6 | -1.32  no
+    resid_mom(lam=1.0)     18.50 (-1.71)   22.18 (+2.50)   2.45 23.3  -57.4 | 14.27 (-0.12)   18.03 (-0.46)   2.44 16.3  -38.3 | -1.71  no
+    resid_mom(lam=2.0)     17.75 (-2.45)   23.51 (+3.84)   2.80 22.9  -57.3 | 13.95 (-0.43)   17.77 (-0.73)   2.83 16.4  -39.0 | -2.45  no
+    high52(lam=0.5)        18.06 (-2.14)   19.55 (-0.13)   1.41 22.3  -55.4 | 13.00 (-1.39)   17.81 (-0.68)   1.48 15.8  -39.7 | -2.14  no
+    high52(lam=1.0)        16.89 (-3.32)   19.31 (-0.37)   1.88 20.6  -52.1 | 11.88 (-2.51)   17.04 (-1.46)   2.13 15.2  -40.2 | -3.32  no
+    high52(lam=2.0)        15.05 (-5.16)   18.32 (-1.36)   2.56 19.1  -49.3 | 10.76 (-3.63)   16.01 (-2.48)   3.01 14.7  -40.9 | -5.16  no
+    managed_mom(lam=0.5)   20.29 (+0.08)   20.62 (+0.94)   1.68 24.0  -57.8 | 14.36 (-0.03)   18.73 (+0.24)   1.59 16.8  -39.2 | -0.03  no
+    managed_mom(lam=1.0)   21.38 (+1.17)   21.44 (+1.77)   1.99 23.9  -57.0 | 14.61 (+0.22)   18.90 (+0.41)   1.91 17.1  -39.1 | +0.22  YES
+    managed_mom(lam=2.0)   22.03 (+1.82)   22.36 (+2.68)   2.15 24.0  -57.4 | 14.84 (+0.46)   19.13 (+0.63)   2.07 17.5  -39.6 | +0.46  YES
+    (reference: CVG TO 1.48 / 1.35, vol 24.4 / 16.7, maxDD -58.5 / -39.3; HRP vol 19.4 / 13.8)
+
+    Paired t of the monthly margin vs the best style, managed_mom lam=2.0: Nifty E1 0.88, E2 0.87, Dow E1 0.33,
+    E2 0.43 (lam=1.0: 0.78, 0.83, 0.24, 0.41) — every margin is positive and none is statistically strong.
+
+FINALISTS (rule: all-4 winners first, ranked by their smallest margin)
+    1. managed_mom, lam=2.0   — smallest margin +0.46 (Dow E1); margins +1.82 / +2.68 / +0.46 / +0.63.
+    2. managed_mom, lam=1.0   — smallest margin +0.22 (Dow E1); margins +1.17 / +1.77 / +0.22 / +0.41.
+
+WHAT DROVE IT (diagnostic decomposition run AFTER the results: NOT candidates, not eligible, counted here
+for transparency — the 12-1 overlay at lam=1 with no management / gate only / BSC scale only)
+    Nifty E1: plain 18.96 · gate-only 21.42 · scale-only 19.39 · managed 21.38. Dow E1: 12.90 · 14.60 · 13.44 · 14.61.
+    E2 is unaffected by the gate (it never fired after 2009): plain 21.52 / 18.81 vs managed 21.44 / 18.90.
+    => The E1 wins are the Daniel-Moskowitz bear gate, and it fired ONCE per universe: Nifty 2008-11 → 2009-05
+    (7 rebalances), Dow 2008-11 → 2009-11 (13). Without it the overlay loses -15.6 %/yr vs CVG in Nifty 2009 and
+    -7.8 in Dow 2009 — the textbook momentum crash. The BSC scale was nearly inert (mean 0.97 Nifty, 0.95 Dow).
+    The E2 wins are plain 12-1 momentum paying on top of CVG in 2014-19 (Nifty 2015/2017, Dow 2015/2017;
+    Dow 2019 cost -5.4 at lam=2). resid_mom was strong in Nifty E2 only (it too lost in 2009: -7.4 Nifty, -6.1 Dow
+    at lam=1 — beta-stripping did not prevent the rebound crash here). high52 lost in every cell: it cut vol and
+    drawdown and protected in 2008 (+5.6 vs CVG, Nifty), then lost -21.6 (Nifty) / -14.6 (Dow) in the 2009
+    rebound, with no gate to switch it off.
+
+HOLDOUT RISK (written before the holdout): the E1 edge is one avoided crash, by a rule (DM 2016) whose own
+sample included 2009; margins are small (Dow E1 +0.22/+0.46, t ≤ 0.33); the gate cannot see crashes that
+don't follow a 24-month market loss (e.g. sharp factor rotations inside bull markets), and it is post-publication.
 """
 from __future__ import annotations
 
