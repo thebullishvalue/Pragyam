@@ -78,6 +78,49 @@ SURVIVORSHIP: the universes are today's Nifty 50 / Dow 30, so names that fell an
   that kept losing left the index (and the panel). Any discovery edge here is an upper bound.
 
 Run:  python research/candidates/a_reversal.py      (discovery only; both universes, every-name book)
+
+RESULT (2026-10-03, discovery only: Feb 2007 – Dec 2019; no holdout data opened)
+──────────────────────────────────────────────────────────────────────────────────
+All 9 declared configurations ran on nifty_50 and dow_30, every-name book, net of costs. No post-hoc
+candidates, no tuning off the grid. Net CAGR %, margin vs the best existing style in that cell
+(bar: Nifty E1 20.21 HRP · Nifty E2 19.68 CVG · Dow E1 14.39 EW · Dow E2 18.50 CVG), turnover/yr,
+vol and maxDD over the whole discovery window:
+
+                            Nifty E1        Nifty E2        Dow E1          Dow E2        Nifty         Dow
+                          CAGR  margin    CAGR  margin    CAGR  margin    CAGR  margin   TO  vol  mDD    TO  vol  mDD
+  A1 resid_rev lam=0.25   19.15  −1.06    19.86  +0.18    14.31  −0.08    18.87  +0.38  2.6 25.0 −59.1  2.5 17.0 −38.9
+  A1 resid_rev lam=0.5    19.07  −1.14    19.82  +0.15    14.36  −0.03    19.16  +0.67  3.6 25.4 −59.6  3.4 17.2 −38.7
+  A1 resid_rev lam=1.0    18.83  −1.38    19.46  −0.22    14.51  +0.12    19.55  +1.05  4.8 26.1 −60.3  4.4 17.4 −38.6
+  A2 stress_rev lam=0.5   19.44  −0.77    19.77  +0.10    13.97  −0.41    18.56  +0.06  1.8 24.8 −59.1  1.8 17.0 −39.3
+  A2 stress_rev lam=1.0   19.44  −0.77    19.77  +0.09    13.97  −0.42    18.58  +0.09  2.1 25.0 −59.7  2.2 17.1 −38.8
+  A2 stress_rev lam=2.0   19.24  −0.97    19.68  +0.00    14.08  −0.30    18.71  +0.21  2.5 25.3 −60.6  2.5 17.2 −38.1
+  A3 capit_rev lam=0.5    19.94  −0.26    20.15  +0.48    14.35  −0.04    18.77  +0.27  2.1 24.8 −59.1  1.9 16.8 −38.2
+  A3 capit_rev lam=1.0    20.50  +0.29    20.17  +0.49    14.74  +0.36    19.03  +0.53  2.5 25.1 −59.4  2.1 16.8 −37.1
+  A3 capit_rev lam=2.0    20.92  +0.72    20.30  +0.62    14.91  +0.52    19.26  +0.76  2.8 25.4 −59.9  2.2 16.7 −36.4
+  (for reference: CVG TO 1.5 / 1.4; Nifty E1 vol HRP 23.7, CVG 30.3, A3 lam=2 31.8)
+
+FINALISTS (rule 6: all-4-cell winners, ranked by smallest margin)
+  1. capit_rev_cvg(ctx, lam=2.0)   smallest margin +0.52 (Dow E1)
+  2. capit_rev_cvg(ctx, lam=1.0)   smallest margin +0.29 (Nifty E1)
+  A1 and A2 fail: the unconditional residual reversal costs Nifty E1 (more lam, worse) and the
+  stress-switched one is CVG plus noise; neither clears Nifty E1 or Dow E1.
+
+DIAGNOSTICS (read with care — none of these changed the choice)
+  · vs CVG, paired monthly (lam=2 / lam=1): Nifty E1 +1.98 / +1.49 %/yr (t 1.55 / 1.55), E2 +0.56 / +0.44
+    (t 0.58 / 0.66); Dow E1 +0.63 / +0.51 (t 0.96 / 0.95), E2 +0.68 / +0.48 (t 1.56 / 1.38). Pooled over
+    both universes: +0.99 / +0.75 %/yr, t 2.15 / 2.14 — below a Bonferroni bar for this family's 10
+    configurations (≈2.8), far below one for the whole search.
+  · Nifty E1 is beaten on RETURN, not protection: vol 31.8 vs HRP 23.7, maxDD −59.9 vs −50.3; the paired
+    t vs HRP is 0.69 (tracking error 10.6%/yr). The E1 win over HRP is noise-sized.
+  · The tilt is thin: CVG's held DOWN row holds 3.8 names on average on Nifty (2.6 Dow) and none in 34
+    of 155 months, when A3 = CVG. Top-5 names supply 84% (Nifty) and 142% (Dow) of the summed active
+    return; by year it is lumpy (Nifty 2012 +5.6, Dow 2008 +5.8, Dow 2019 +3.8 vs CVG at lam=2).
+  · SURVIVORSHIP is visible in the contributors. Dow 2008's +5.8 came from JPM, AMZN (not a Dow member
+    until 2024), BA, GS — financials that survived; the 2008 Dow's capitulation names that did NOT come
+    back (AIG, Citigroup, GM) are absent from today's list and are exactly what A3 would have bought.
+    Nifty's top contributors (Titan, Shriram Finance, Apollo Hospitals, Eicher, UltraTech, L&T, Infosys,
+    Bharti) include several later entrants; the 2008-13 Nifty fallers that never recovered (realty,
+    power, telecom names later dropped) are not in the panel. Treat the discovery edge as an upper bound.
 """
 from __future__ import annotations
 
