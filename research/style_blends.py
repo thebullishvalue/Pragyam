@@ -40,6 +40,22 @@ in ALL THREE eras on BOTH stock universes (every-name book); BETTER on risk-adju
 the same rule on return / volatility. The ETF book (1-30 funds from 2012) and the top-N books are
 reported, not ruled on. This is a measurement; no product change follows from it alone.
 
+ITERATION 2 (registered after iteration 1's numbers were seen — a sensitivity, not a new rule):
+the HRP blends trailed the mean of their members by 0.25 %/yr on Nifty 50. Averaging RAW weights
+lets HRP's uncapped low-volatility names keep more than the 10%-capped HRP book gives them. The
+other reading of "an average of two styles" — an equal share of each finished, capped book (·b) —
+is measured alongside on the every-name book; its gross return is exactly its members' mean, so
+its gap to them is the turnover the netting saves.
+
+DATA REPAIR (found in iteration 1, applied to every universe and style alike): yfinance carries
+NESTLEIND.NS as a flat line from Oct 2006 to Jan 2010 (786 unchanged closes) and BAJAJ-AUTO.NS
+flat for 45 sessions around its 2008 demerger relisting. A zero-variance name takes nearly all of
+an inverse-variance split — raw HRP held 100% NESTLEIND in 2009 — so iteration 1's HRP and ERC
+books on Nifty 50 before 2010 were reading the defect, not the method. A close that repeats the
+previous one inside a run of ≥ STALE_RUN sessions is now unpriced: no style holds the name on
+those days, and the covariance styles admit it once its window has real returns. Dow 30 and the
+ETF book have no such run; their books are unchanged.
+
 Run:  python research/style_blends.py [etf_book|nifty_50|dow_30]     (all three by default;
       snapshots cached to research/cvg_reweight_<universe>.pkl, shared with the other harnesses)
 """
@@ -61,14 +77,17 @@ sys.path.insert(0, os.path.dirname(HERE))
 import cvgrid                                     # noqa: E402
 import nco                                        # noqa: E402
 
-CAPITAL, CAP, MIN_NAMES, ROLL = 1e10, 0.10, 10, 36
+CAPITAL, CAP, MIN_NAMES, ROLL, STALE_RUN = 1e10, 0.10, 10, 36, 10
 START, END = datetime(2006, 1, 1), datetime(2026, 10, 2)
 assert cvgrid.STATE_UNITS["DISLOCATED"] == 4.0, "the shipped CVG units are the control"
 
 METHOD = {"EW": "EQUAL", "ERC": "ERC", "HRP": "HRP", "CVG": "CVG"}
 BLENDS = {"HRP+CVG": ("HRP", "CVG"), "HRP+EW": ("HRP", "EW"), "CVG+EW": ("CVG", "EW"),
           "HRP+CVG+EW": ("HRP", "CVG", "EW")}
+BOOK_BLENDS = {f"{k}·b": v for k, v in BLENDS.items()}       # iteration 2, every-name book only
+MEMBERS = {**BLENDS, **BOOK_BLENDS}
 KEYS = list(METHOD) + list(BLENDS)
+ALL_KEYS = KEYS + list(BOOK_BLENDS)
 UNIVERSES = {"etf_book": ("ETF book", 10.0), "nifty_50": ("Nifty 50", 10.0), "dow_30": ("Dow 30", 3.0)}
 SIZES = (("all", None), ("top30", 30), ("top15", 15))
 ERAS = (("E1", None, "2014-01-01"), ("E2", "2014-01-01", "2020-01-01"), ("E3", "2020-01-01", None),
@@ -87,11 +106,34 @@ def symbols(key: str) -> list:
 def snapshots(key: str) -> list:
     p = os.path.join(HERE, f"cvg_reweight_{key}.pkl")
     if os.path.exists(p):
-        return pickle.load(open(p, "rb"))
+        return unstale(pickle.load(open(p, "rb")))
     from backdata import generate_historical_data
     snaps = generate_historical_data(symbols(key), START, END)
     pickle.dump(snaps, open(p, "wb"))
-    return snaps
+    return unstale(snaps)
+
+
+def unstale(snaps: list) -> list:
+    """Unprice every close that repeats the one before it inside a run of >= STALE_RUN sessions."""
+    px = pd.DataFrame({pd.Timestamp(d): pd.to_numeric(s.drop_duplicates("symbol", keep="last")
+                                                      .set_index("symbol")["price"], errors="coerce")
+                       for d, s in snaps}).T.sort_index()
+    same = px.diff().eq(0)
+    run = same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
+    bad = same & (run >= STALE_RUN)
+    if not bad.to_numpy().any():
+        return snaps
+    out = []
+    for d, s in snaps:
+        row = bad.loc[pd.Timestamp(d)]
+        drop = set(row.index[row.to_numpy()])
+        if drop:
+            s = s.copy()
+            s.loc[s["symbol"].isin(drop), "price"] = np.nan
+        out.append((d, s))
+    print(f"   unpriced {int(bad.to_numpy().sum())} stale closes: "
+          + ", ".join(f"{c} {int(n)}" for c, n in bad.sum().items() if n), flush=True)
+    return out
 
 
 def raw(hist, method: str) -> pd.Series:
@@ -141,8 +183,10 @@ def backtest(snaps: list, sizes) -> dict:
         ret = px[b] / px[a] - 1.0
         for sz, n in sizes:
             rec = {"date": a}
-            for k in KEYS:
-                w = cut(w_raw[k], n)
+            books = {k: cut(w_raw[k], n) for k in KEYS}
+            if n is None:
+                books.update({k: cut(blend([books[m] for m in mem]), n) for k, mem in BOOK_BLENDS.items()})
+            for k, w in books.items():
                 r = ret.reindex(w.index).fillna(0.0)
                 rec[k] = float((w * r).sum())
                 if (sz, k) in prev:
@@ -159,7 +203,7 @@ def backtest(snaps: list, sizes) -> dict:
 
 def net(bt: pd.DataFrame, cost_bps: float) -> pd.DataFrame:
     out = pd.DataFrame(index=bt.index)
-    for k in KEYS:
+    for k in (k for k in ALL_KEYS if k in bt):
         out[k] = bt[k] - bt.get(f"to::{k}", pd.Series(0.0, index=bt.index)).fillna(0.0) * cost_bps / 1e4
         out[f"to::{k}"] = bt.get(f"to::{k}")
     return out
@@ -170,7 +214,7 @@ def _t(d: pd.Series) -> float:
 
 
 def _roll_hit(x: pd.DataFrame, k: str) -> tuple:
-    if len(x) < ROLL + 1:
+    if len(x) < ROLL + 1 or k == "EW":
         return np.nan, np.nan
     g = np.log1p(x[[k, "EW"]]).rolling(ROLL).sum().dropna() * 12 / ROLL
     d = np.expm1(g[k]) - np.expm1(g["EW"])
@@ -188,7 +232,7 @@ def summarise(nt: pd.DataFrame) -> pd.DataFrame:
         x = nt[m]
         if len(x) < 12:
             continue
-        for k in KEYS:
+        for k in (k for k in ALL_KEYS if k in nt):
             r = x[k]
             nav = np.concatenate([[1.0], (1.0 + r).cumprod().to_numpy()])
             d = r - x["EW"]
@@ -201,21 +245,22 @@ def summarise(nt: pd.DataFrame) -> pd.DataFrame:
                        turnover=x[f"to::{k}"].mean() * 12,
                        vs_ew=d.mean() * 12 * 100, t_ew=_t(d), ahead=(d > 0).mean() * 100,
                        roll36_hit=hit * 100 if np.isfinite(hit) else np.nan, roll36_med=roll_med)
-            if k in BLENDS:
-                dm = r - x[list(BLENDS[k])].mean(axis=1)
+            if k in MEMBERS:
+                dm = r - x[list(MEMBERS[k])].mean(axis=1)
                 rec.update(vs_members=dm.mean() * 12 * 100, t_members=_t(dm))
             out.append(rec)
     return pd.DataFrame(out)
 
 
 def report(name: str, sz: str, s: pd.DataFrame) -> None:
-    order = {k: i for i, k in enumerate(KEYS)}
+    keys = [k for k in ALL_KEYS if k in set(s["style"])]
+    order = {k: i for i, k in enumerate(keys)}
     print(f"\n══ {name} · {sz} book · net of costs ═══════════════════════════════════════════", flush=True)
     by_era = s[s.era != "FULL"].pivot_table(index="style", columns="era", values=["cagr", "vs_ew", "t_ew"])
     by_era = by_era.sort_index(key=lambda i: i.map(order))
     print("per era — CAGR %, vs EW %/yr, t vs EW", flush=True)
     print(by_era.round(2).to_string(), flush=True)
-    full = s[s.era == "FULL"].set_index("style").reindex(KEYS)
+    full = s[s.era == "FULL"].set_index("style").reindex(keys)
     cols = ["months", "cagr", "vol", "ret_vol", "maxdd", "turnover", "vs_ew", "t_ew", "ahead",
             "roll36_hit", "roll36_med", "vs_members", "t_members"]
     print("full span", flush=True)
@@ -230,7 +275,7 @@ def verdict(summ: dict) -> None:
         rows = []
         for bl in BLENDS:
             rec = {"blend": bl}
-            for ref in KEYS:
+            for ref in KEYS + [f"{bl}·b"]:
                 if ref == bl:
                     continue
                 wins, cells = 0, 0
@@ -260,7 +305,7 @@ if __name__ == "__main__":
         print(f"\n== {name}: {n_uni} symbols, {len(snaps)} snapshots "
               f"{pd.Timestamp(snaps[0][0]):%Y-%m-%d} → {pd.Timestamp(snaps[-1][0]):%Y-%m-%d}", flush=True)
         for sz, bt in backtest(snaps, sizes).items():
-            res[(name, sz)] = net(bt, cost).assign(**{f"n::{k}": bt[f"n::{k}"] for k in KEYS})
+            res[(name, sz)] = net(bt, cost).assign(**{f"n::{k}": bt[f"n::{k}"] for k in ALL_KEYS if k in bt})
     pickle.dump(res, open(res_path, "wb"))
     summ = {k: summarise(v) for k, v in res.items()}
     for (name, sz), s in summ.items():
