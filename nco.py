@@ -1,25 +1,42 @@
 """
-PRAGYAM — Hierarchical Risk Parity (HRP) / Equal Weight
+PRAGYAM — portfolio curation: Equal Weight · ERC · HRP · Conviction-Value Grid · Managed Momentum
 ══════════════════════════════════════════════════════════════════════════════
 
-Covariance-based portfolio curation — the system's only curation stack. It
-selects AND weights entirely from the return covariance structure, and makes no
-return forecast of any kind.
+The system's only curation stack. Five selectable styles (METHOD_ORDER), and every
+one travels the same pipeline — eligibility, weights over the allocation universe,
+top-N by weight, the per-position cap, integer units, the same risk diagnostics —
+so any difference on screen is the weight formula and nothing else:
 
-Why covariance rather than forecasts
-────────────────────────────────────
+    EQUAL   1/N. Reads nothing; the default and the bar.
+    ERC     equal risk contribution on a shrunk (Ledoit-Wolf) covariance.
+    HRP     hierarchical risk parity: recursive bisection on cluster variance.
+    CVG     the Conviction-Value Grid: each name sized by its state in the 3 × 3 of
+            the Pragati indicator's conviction and value tapes (cvgrid.py).
+    MMOM    Managed Momentum: the grid's weights plus a crash-managed 12-1 momentum
+            rank (mmom_overlay), read from a long close history (`price_history`,
+            backdata.fetch_close_history); without one it stands down to the grid.
+
+Equal Weight, ERC and HRP make no return forecast of any kind; ERC and HRP select
+and weight from the return covariance structure, Equal Weight from nothing. CVG
+and MMOM read the tape instead — the grid its two tapes, MMOM also a 12-1 momentum
+rank — and read no covariance. They are bets on what the tape says, so the
+forecasting ceiling below applies to them, and each is measured against Equal
+Weight and the other styles (METHOD_SPECS[...]["evidence"]; README).
+
+Why covariance rather than forecasts (the risk styles)
+──────────────────────────────────────────────────────
 Grinold's Fundamental Law bounds excess return from FORECASTING skill at
 IR = IC x sqrt(BR) x TC. Measured on the ETF universe that ceiling is ~1%/yr:
 average pairwise correlation 0.517 leaves only ~1.9 effective independent bets,
 so no amount of signal engineering buys much.
 
-That bound applies to alpha from prediction. It does not apply here, because NCO
-predicts nothing. It exploits the covariance structure, which is estimable from
-a few hundred observations in a way expected returns never are (López de Prado,
-"Building Diversified Portfolios that Outperform Out of Sample", 2016; "A Robust
-Estimator of the Efficient Frontier", 2019). That is why this stack can reduce
-RISK reliably where forecast-driven approaches cannot — but see the measured
-results below: it does not deliver excess return either.
+That bound applies to alpha from prediction. It does not apply to the risk styles,
+because they predict nothing. They exploit the covariance structure, which is
+estimable from a few hundred observations in a way expected returns never are
+(López de Prado, "Building Diversified Portfolios that Outperform Out of Sample",
+2016; "A Robust Estimator of the Efficient Frontier", 2019). That is why they can
+reduce RISK reliably where forecast-driven approaches cannot — but see the
+measured results below: they do not deliver excess return either.
 
 Measured on the shipped module across two GENUINELY DISJOINT periods
 (2023-12..2024-12 and 2025-01..2026-07, zero overlap):
@@ -38,8 +55,8 @@ An earlier nested-window test (2024+ was fully contained in 2023+) reported a
 small POSITIVE excess return. That did not survive a disjoint split — a caution
 about the window design, not about the method.
 
-HRP beats NCO on return, Sharpe and drawdown in both disjoint windows, and
-inverts no matrix. Prefer HRP.
+HRP beat full Nested Clustered Optimization (NCO) on return, Sharpe and drawdown
+in both disjoint windows, and inverts no matrix; NCO is not carried.
 
 Corroboration that the correlation structure carries information beyond
 variance alone: plain inverse-VOLATILITY weighting, which ignores correlation
@@ -56,11 +73,14 @@ bisection using only cluster variances. Ward clustering finds K ~= 3 here at
 silhouette ~0.24, independently matching the eigenvalue participation ratio of
 2.95 — three real risk clusters inside 30 tickers.
 
-Equal Risk Contribution (ERC) and full Nested Clustered Optimization (NCO) were
-both implemented and measured alongside HRP. ERC achieves perfect risk balance
-(1.00x against HRP's 1.5-1.7x) but matched HRP on return and Sharpe to within
-noise across both disjoint windows; NCO trailed HRP on return, Sharpe and
-drawdown in both. Neither is carried — see CHANGELOG for the figures.
+Equal Risk Contribution (ERC) and NCO were both implemented and measured
+alongside HRP. In those two windows ERC achieved perfect risk balance (1.00x
+against HRP's 1.5-1.7x) and matched HRP on return and Sharpe to within noise;
+NCO trailed HRP on return, Sharpe and drawdown in both. ERC has since shipped as
+the preferred risk-reduction style — it beats HRP on the any-date hit rate in 6
+of 6 cells across two stock universes at about a fifth of the turnover
+(METHOD_SPECS["ERC"]) — and neither beats Equal Weight reproducibly on return.
+See CHANGELOG for the figures.
 
 Author: @thebullishvalue
 """
@@ -484,8 +504,8 @@ METHOD_SPECS = {
     # negative, and shrinks while its own volatility runs above its long-run
     # median. Every name keeps at least MMOM_FLOOR of its CVG weight. Reads no
     # covariance, like the grid it is built on; reads a long close history for
-    # the overlay (backdata.fetch_close_history), falling back to the
-    # estimation panel when that fetch fails.
+    # the overlay (backdata.fetch_close_history), and stands down to the grid
+    # when that fetch fails (the estimation panel cannot read the gate).
     "MMOM": {
         "label": "Managed Momentum",
         "short": "MMOM",
@@ -501,21 +521,26 @@ METHOD_SPECS = {
         "needs_covariance": False,
         "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
                      "43 configurations, chosen on 2007-19, run once on 2020+) and re-measured "
-                     "as shipped, floor included (research/mmom_ship.py; monthly, net of 10bp "
-                     "India / 3bp US costs). Against the best of the eight earlier styles and "
-                     "blends in each era (2007-13 / 2014-19 / 2020+): Nifty 50 +1.02 / +1.66 / "
-                     "+1.58 %/yr, Dow 30 +0.25 / +0.39 / +0.25; +1.79 %/yr over Equal Weight on "
-                     "the 27-fund ETF book (19 months). Full-span CAGR: Nifty 22.26% vs CVG 20.48%, Dow "
-                     "16.15% vs 15.78%, at CVG's volatility and 1.2-1.3x its turnover. None of it "
-                     "is significant: the largest t is 1.13 (Nifty 2020+), Dow 2020+ is 0.15, and "
-                     "the shipped form is a post-holdout variant of one of 43 tries (family-wise "
-                     "p 1.0). The 2020+ edge comes from a few late index entrants (NVDA, AMZN, "
-                     "CRM; BSE, TRENT, BEL, ADANIENT); on a point-in-time Dow it trails CVG by "
-                     "0.19 %/yr (t -0.28), and no point-in-time Nifty was tested. Expect "
-                     "CVG-like results, not a reliable premium."),
+                     "as shipped, floor included (research/mmom_ship.py; monthly, every name held, "
+                     "net of 10bp India / 3bp US costs). Against the best of the eight earlier "
+                     "styles and blends in each era (2007-13 / 2014-19 / 2020+): Nifty 50 +1.02 / "
+                     "+1.66 / +1.58 %/yr, Dow 30 +0.25 / +0.39 / +0.25; +1.79 %/yr over Equal "
+                     "Weight on the 27-fund ETF book (19 months). Full-span CAGR: Nifty 22.26% vs "
+                     "CVG 20.48%, Dow 16.15% vs 15.78%, at CVG's volatility and 1.2-1.3x its "
+                     "turnover. None of it is significant: the largest per-era t over the best "
+                     "earlier style is 1.13 (Nifty 2020+); over the full span Nifty leads CVG by "
+                     "+1.78 %/yr (t 1.75) and Equal Weight by +2.57 (t 2.6), nominal. The shipped "
+                     "form is a post-holdout variant (λ, floor, month-to-date volatility) of one "
+                     "of 43 tries, so none of it survives a family-wise correction, nor the "
+                     "survivorship of today's constituents: the 2020+ edge sits in a few names, "
+                     "led by late index entrants (BSE, TRENT, BEL, ADANIENT; NVDA, AMZN, CRM). On "
+                     "a point-in-time Dow it trails CVG by 0.19 %/yr (t -0.28); no point-in-time "
+                     "Nifty was tested. Every figure is an every-name book; top-N books were "
+                     "never measured. Expect CVG-like results, not a reliable premium."),
         "long_run": ("vs the best of the eight earlier styles and blends, 2007-13 / 2014-19 / 2020+: "
                      "Nifty 50 +1.02% / +1.66% / +1.58%/yr, Dow 30 +0.25% / +0.39% / +0.25%/yr — "
-                     "none significant (largest t 1.13); -0.19%/yr vs CVG on a point-in-time Dow"),
+                     "none significant (largest per-era t 1.13; full-span Nifty vs CVG t 1.75, "
+                     "nominal), every-name books only; -0.19%/yr vs CVG on a point-in-time Dow"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -576,7 +601,8 @@ MMOM_SKIP = 21
 MMOM_GATE = 504            # bars of market return the bear gate reads (24 months)
 MMOM_VOL_WIN = 126         # bars of overlay return its volatility is measured over
 MMOM_FLOOR = 0.25          # no name below this share of its CVG weight: the grid's own floor
-                           # to neutral (Distribution 0.25 : Idle 1), so every name stays held
+                           # to neutral (Distribution 0.25 : Idle 1), so every weight stays positive
+                           # and the book always fills its count (held only if top-N reaches it)
 MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
 MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
 MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
@@ -948,11 +974,15 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                           lookback: int = 252,
                           price_history: Optional[pd.DataFrame] = None,
                           ) -> pd.DataFrame:
-    """Curate a portfolio purely from the return covariance structure.
+    """Curate a portfolio with one of the registered styles (METHOD_SPECS).
 
     Selection AND weighting both come from the allocator: weights are computed
     over every eligible symbol, the top `num_positions` by weight are kept, and
-    those are renormalized. No return forecast is involved at any stage.
+    those are renormalized. Equal Weight, ERC and HRP forecast nothing (ERC and
+    HRP weight from the covariance); the Conviction-Value Grid sizes by the
+    tape's state, and Managed Momentum adds a 12-1 momentum overlay to it,
+    reading `price_history` — a wide close panel, date × symbol, cut here to the
+    book's date — and standing down to the grid without it.
 
     ELIGIBILITY IS PER-STYLE, because it is a property of the weight formula.
     Styles that read the covariance (`needs_covariance` in METHOD_SPECS) can only
@@ -964,7 +994,9 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     of book weight they describe (1.0 for every covariance-driven style).
 
     A per-position cap is applied (relaxed to 1/n when n makes it infeasible),
-    but NO floor: a floor would fight the method. The entire point is that a
+    but NO book-level floor: a floor would fight the method. (Managed Momentum's
+    MMOM_FLOOR is inside its weight formula — no name below a quarter of its grid
+    weight — not a floor on the book.) The entire point is that a
     redundant asset — one whose risk is already carried by a cluster peer —
     SHOULD receive a small weight. Forcing it up to 1% would re-introduce the
     concentration the clustering exists to remove.
@@ -1083,7 +1115,8 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         # its strength set by the bear gate and the volatility scale, no name
         # below MMOM_FLOOR of its CVG weight. The overlay reads `price_history`
         # (the long close panel) when given, else the estimation panel — whose
-        # ~18 months cannot read the gate's 24 months; the attrs say which.
+        # ~400 sessions (~19 months) cannot read the gate's 24 months, so the
+        # overlay then stands down to the grid (nco_mmom_stood_down says why).
         _read = cvg_readings(history, alloc_names)
         _c, alloc_names = cvg_weights(_read)
         dh = _read.reindex(alloc_names)
@@ -1103,7 +1136,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         # The estimation panel (~400 sessions) cannot hold the gate's 24 months, nor the
         # volatility scale's month-start readings: an overlay that cannot read its own
         # crash guard stands down to the grid rather than run at full strength unguarded.
-        if not _from_close and _mmom["history_days"] < MMOM_GATE + 1 and _mmom["strength"] > 0:
+        if not _from_close and _mmom["history_days"] < MMOM_GATE + 1:
             _mmom.update(strength=0.0, stood_down="estimation panel too short for the 24-month gate")
         _cw = pd.Series(_c, index=alloc_names)
         _tilted = _cw + _mmom["strength"] * _rank / len(_cw)

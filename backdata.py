@@ -476,11 +476,27 @@ def fetch_macro_drivers(start_date: datetime, end_date: datetime) -> Optional[pd
 _DEAD_QUOTE_RUN = 10
 
 
+def mask_dead_quotes(close: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]:
+    """Unprice dead quotes: a close repeating the one before it, in a run of >= _DEAD_QUOTE_RUN
+    consecutive repeats, becomes NaN. Returns the masked frame and the count per column.
+    Causal only over the frame it is given — apply it to a frame that ends on the run date."""
+    if close is None or close.empty:
+        return close, {}
+    same = close.diff().eq(0)
+    run = same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
+    dead = same & (run >= _DEAD_QUOTE_RUN)
+    counts = {str(c): int(n) for c, n in dead.sum().items() if n}
+    return (close.mask(dead) if counts else close), counts
+
+
+_mask_dead = mask_dead_quotes
+
+
 def fetch_close_history(symbols: List[str], start_date: datetime,
-                        end_date: datetime) -> Optional[pd.DataFrame]:
+                        end_date: datetime, mask_dead_quotes: bool = True) -> Optional[pd.DataFrame]:
     """Daily closes of the universe over a long window — what Managed Momentum's overlay reads.
 
-    The estimation panel (generate_historical_data) carries ~18 months of snapshots, enough for
+    The estimation panel (generate_historical_data) carries ~400 sessions (~19 months), enough for
     every other style. Managed Momentum also needs the market's 24-month return for its bear
     gate and its overlay's volatility over all the history there is for the expanding median
     that scales it (nco.mmom_overlay) — closes only, no indicators, so one batch download.
@@ -489,8 +505,10 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     panel's `price` column carries; a symbol listed twice (an ADR and its NSE line both named
     INFY) keeps its last column, as the panel does. Symbols the batch missed get the panel's
     own second pass (_recover_missing_symbols). A close repeating the one before it in a run of
-    >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN. Returns None rather than raising: the
-    style then reads the estimation panel and says so.
+    >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN (mask_dead_quotes) — pass
+    mask_dead_quotes=False to mask later, after slicing to a run date, so that repeats after it
+    cannot decide what is masked before it. Returns None rather than raising: the overlay then
+    stands down to the grid, and the app says so.
     """
     if not symbols:
         return None
@@ -512,22 +530,20 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all", axis=1)
     except Exception as e:
         get_metrics().add_warning(f"Close history unavailable ({type(e).__name__}: {e}) — "
-                                  "Managed Momentum reads the estimation panel")
+                                  "Managed Momentum stands down to the grid")
         console.warning(f"Close history unavailable ({type(e).__name__}) — "
-                        "Managed Momentum reads the estimation panel")
+                        "Managed Momentum stands down to the grid")
         return None
     if close.empty:
         return None
     close.index = pd.DatetimeIndex(close.index).tz_localize(None).normalize()
     close = close[~close.index.duplicated(keep="last")].sort_index()
     close = close.loc[:pd.Timestamp(end_date).normalize()]
-    same = close.diff().eq(0)
-    run = same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
-    dead = same & (run >= _DEAD_QUOTE_RUN)
-    if dead.to_numpy().any():
-        close = close.mask(dead)
-        console.detail("close history · unpriced dead quotes: "
-                       + ", ".join(f"{c.replace('.NS', '')} {int(n)}" for c, n in dead.sum().items() if n))
+    if mask_dead_quotes:
+        close, _dead = _mask_dead(close)
+        if _dead:
+            console.detail("close history · unpriced dead quotes: "
+                           + ", ".join(f"{c.replace('.NS', '')} {n}" for c, n in _dead.items()))
     close.columns = [str(c).replace(".NS", "") for c in close.columns]
     close = close.loc[:, ~close.columns.duplicated(keep="last")]
     console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
