@@ -477,6 +477,40 @@ METHOD_SPECS = {
                      "Dow 30 -0.23% / +0.90%/yr — at 1.2-1.3x monthly turnover"),
         "sip_default": False,
     },
+    # ── Managed Momentum · the grid plus a crash-managed 12-1 overlay (v12.1) ─
+    # CVG's weights, plus λ · rank(12-1 momentum) / N. The overlay stands down
+    # (strength 0) while the equal-weighted market's 24-month return is
+    # negative, and shrinks while its own volatility runs above its long-run
+    # median. Every name keeps at least MMOM_FLOOR of its CVG weight. Reads no
+    # covariance, like the grid it is built on; reads a long close history for
+    # the overlay (backdata.fetch_close_history), falling back to the
+    # estimation panel when that fetch fails.
+    "MMOM": {
+        "label": "Managed Momentum",
+        "short": "MMOM",
+        "family": "accumulation",
+        "formula": ("CVG weights + λ · rank(12-1 momentum) / N, λ = 1 · off while the market's "
+                    "24-month return is negative · scaled by min(1, median / current) overlay "
+                    "volatility · no name below ¼ of its CVG weight"),
+        "tagline": "The grid plus a 12-1 momentum overlay that stands down in bear markets",
+        "uses_clusters": False,
+        "uses_momentum": True,
+        "uses_cvg": True,
+        "rc_target": "none",
+        "needs_covariance": False,
+        "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
+                     "43 configurations, chosen on 2007-19, run once on 2020+). It was the only "
+                     "style to beat the best of the eight earlier styles in all six cells "
+                     "(Nifty 50 and Dow 30 × three eras), and it beat Equal Weight on the "
+                     "27-fund ETF book. None of it is significant: the 2020+ gap to the best "
+                     "earlier style has t 1.2 (Nifty) and 0.3 (Dow), and nothing survives the "
+                     "43-try correction. The 2020+ edge comes from a few late index entrants "
+                     "(NVDA, AMZN; BSE, TRENT), and on a point-in-time Dow it trails CVG. "
+                     "Expect CVG-like results, not a reliable premium."),
+        "long_run": "beat the best earlier style in all six cells as tested; a tie with CVG on a "
+                    "point-in-time Dow — not significant",
+        "sip_default": False,
+    },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
     # ERC + momentum was carried as the lead ship candidate until a defect was
     # found in the ERC solver (it renormalised inside the descent loop, so it
@@ -508,9 +542,9 @@ METHOD_SPECS = {
 
 # Selectable styles, in display order: the default first, then the
 # risk-reduction family ordered by how well it does its job per unit of trading,
-# then the one style that reads the tape.
-# ERC_MOM is implemented but intentionally absent — see its spec above.
-METHOD_ORDER = ("EQUAL", "ERC", "HRP", "CVG")
+# then the styles that read the tape: the grid, and the grid with its momentum
+# overlay. ERC_MOM is implemented but intentionally absent — see its spec above.
+METHOD_ORDER = ("EQUAL", "ERC", "HRP", "CVG", "MMOM")
 METHODS = METHOD_ORDER
 
 # Momentum tilt strength. 0.5 is the measured setting; the parameter surface is
@@ -519,6 +553,123 @@ METHODS = METHOD_ORDER
 MOMENTUM_LAMBDA = 0.5
 MOMENTUM_LOOKBACK = 252
 MOMENTUM_SKIP = 21
+
+# ── Managed Momentum · the grid plus a crash-managed 12-1 momentum overlay ────
+# Found by the v12.1 style search (research/style_search*.py) and re-measured as
+# shipped in research/mmom_ship.py. The overlay is the literature's, at its own
+# defaults: 12-1 momentum (Jegadeesh & Titman 1993) added on top of CVG's
+# weights — value and momentum are negatively correlated everywhere (Asness,
+# Moskowitz & Pedersen 2013) — switched OFF while the equal-weighted market's
+# 24-month return is negative, the state in which momentum crashes (Daniel &
+# Moskowitz 2016), and scaled DOWN while the overlay's own six-month volatility
+# runs above its long-run median (Barroso & Santa-Clara 2015).
+MMOM_LAMBDA = 1.0          # overlay strength: weight_i = cvg_i + λ · rank_i / N
+MMOM_LOOK = 252            # 12-1: the total return from t-252 to t-21
+MMOM_SKIP = 21
+MMOM_GATE = 504            # bars of market return the bear gate reads (24 months)
+MMOM_VOL_WIN = 126         # bars of overlay return its volatility is measured over
+MMOM_FLOOR = 0.25          # no name below this share of its CVG weight: the grid's own floor
+                           # to neutral (Distribution 0.25 : Idle 1), so every name stays held
+MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
+MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
+MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
+
+
+def mmom_ranks(score: pd.Series, index) -> pd.Series:
+    """Centred cross-sectional rank in [-1, 1] over the names with a score; the rest sit at 0."""
+    s = pd.to_numeric(score.reindex(index), errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if len(s) < MMOM_MIN_RANKED:
+        return pd.Series(0.0, index=index)
+    r = s.rank(method="average")
+    return (2.0 * (r - 1.0) / (len(s) - 1.0) - 1.0).reindex(index).fillna(0.0)
+
+
+def mmom_momentum(closes: pd.DataFrame, names) -> pd.Series:
+    """12-1 total return as of the panel's last row. `closes` carried over gaps of <= 5 sessions."""
+    if closes is None or len(closes) < MMOM_LOOK + 1:
+        return pd.Series(np.nan, index=list(names))
+    p1 = closes.iloc[-1 - MMOM_SKIP].reindex(names)
+    p0 = closes.iloc[-1 - MMOM_LOOK].reindex(names)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return (p1 / p0 - 1.0).replace([np.inf, -np.inf], np.nan)
+
+
+def mmom_gate(prices: pd.DataFrame) -> Tuple[float, float]:
+    """(gate, market return): 0 while the equal-weighted market's 24-month return is negative.
+
+    The market is the mean daily return of every name priced that day. With less than a year
+    of history the gate cannot be read and stays open (1); with less than 24 months it reads
+    what there is — app.py logs the span either way.
+    """
+    mkt = prices.pct_change(fill_method=None).mean(axis=1).dropna()
+    n = min(MMOM_GATE, len(mkt))
+    if n < MMOM_LOOK:
+        return 1.0, float("nan")
+    ret = float(np.prod(1.0 + mkt.iloc[-n:].to_numpy()) - 1.0)
+    return (0.0 if ret < 0.0 else 1.0), ret
+
+
+def mmom_scale(prices: pd.DataFrame) -> Tuple[float, float, float, int]:
+    """(scale, current vol, median vol, months): Barroso & Santa-Clara's scale for the overlay.
+
+    The unit overlay — the rank / N weights re-formed at every month start and held to the next,
+    the current month to date included — is priced from the closes; its 126-day realised
+    volatility today is set against the median of that volatility at every month start so far
+    (an expanding median: the target is only ever what the history before today had). The
+    scale is min(1, median / today), so the overlay only ever shrinks. Below
+    MMOM_MIN_VOL_MONTHS readings it stays at 1.
+    """
+    idx = prices.index
+    starts = list(pd.Series(idx, index=idx).groupby([idx.year, idx.month]).first())
+    if not starts:
+        return 1.0, float("nan"), float("nan"), 0
+    pos = {d: i for i, d in enumerate(idx)}
+    carried = prices.ffill(limit=5)
+    rets = prices.pct_change(fill_method=None)
+    bounds = list(zip(starts[:-1], starts[1:]))
+    if idx[-1] > starts[-1]:
+        bounds.append((starts[-1], idx[-1]))                 # the month to date
+    pieces = []
+    for m0, m1 in bounds:
+        i0, i1 = pos[m0], pos[m1]
+        if i0 < MMOM_LOOK:
+            continue
+        row = prices.iloc[i0]
+        names = prices.columns[row.notna() & (row > 0)]
+        u = mmom_ranks(mmom_momentum(carried.iloc[: i0 + 1], names), names)
+        if not (u != 0).any():
+            continue
+        rr = rets.iloc[i0 + 1: i1 + 1].reindex(columns=names).fillna(0.0)
+        pieces.append(pd.Series(rr.to_numpy() @ (u.to_numpy() / len(names)), index=rr.index))
+    if not pieces:
+        return 1.0, float("nan"), float("nan"), 0
+    sig = pd.concat(pieces).rolling(MMOM_VOL_WIN).std(ddof=1) * np.sqrt(252.0)
+    at = sig.reindex([d for d in starts if d in sig.index]).dropna()
+    now = float(sig.iloc[-1])
+    if len(at) < MMOM_MIN_VOL_MONTHS or not np.isfinite(now) or now <= 0:
+        return 1.0, now, float(at.median()) if len(at) else float("nan"), int(len(at))
+    target = float(at.median())
+    return float(min(1.0, target / now)), now, target, int(len(at))
+
+
+def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dict]:
+    """(rank, 12-1 momentum, diagnostics) — the overlay Managed Momentum adds to CVG.
+
+    `prices` is a wide close panel, date × symbol, ending on the rebalance date: every name in
+    the universe (the gate's market), not only `names` (the ranks).
+    """
+    names = list(names)
+    mom = mmom_momentum(prices.ffill(limit=5), names)
+    rank = mmom_ranks(mom, names)
+    gate, mkt = mmom_gate(prices)
+    scale, vol, vol_med, vol_months = mmom_scale(prices) if gate > 0 else (1.0, float("nan"),
+                                                                          float("nan"), 0)
+    return rank, mom, {
+        "gate": gate, "market_24m": mkt, "scale": scale, "strength": MMOM_LAMBDA * gate * scale,
+        "overlay_vol": vol, "overlay_vol_median": vol_med, "vol_months": vol_months,
+        "ranked": int(mom.notna().sum()), "history_days": int(len(prices)),
+        "history_start": prices.index[0] if len(prices) else None,
+    }
 
 
 def method_spec(method: str) -> dict:
@@ -762,6 +913,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                           method: str = "HRP",
                           max_pos_pct: float = 0.10,
                           lookback: int = 252,
+                          price_history: Optional[pd.DataFrame] = None,
                           ) -> pd.DataFrame:
     """Curate a portfolio purely from the return covariance structure.
 
@@ -869,6 +1021,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # do NOT share is the eligibility rule above, which is a property of the
     # weight formula rather than a stylistic choice.
     mom = pd.Series(np.nan, index=alloc_names)
+    _mmom: Optional[dict] = None
     # The covariance the ALLOCATOR optimised against. The convergence diagnostic
     # below must be measured on this matrix, not on the sample covariance used
     # for reporting: ERC solves on the shrunk estimate, so scoring its solution
@@ -891,6 +1044,25 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         _read = cvg_readings(history, alloc_names)
         w, alloc_names = cvg_weights(_read)
         dh = _read.reindex(alloc_names)
+    elif _m == "MMOM":
+        # The grid's weights, then the momentum overlay on top: + λ · rank / N,
+        # its strength set by the bear gate and the volatility scale, no name
+        # below MMOM_FLOOR of its CVG weight. The overlay reads `price_history`
+        # (the long close panel) when given, else the estimation panel — whose
+        # ~18 months cannot read the gate's 24 months; the attrs say which.
+        _read = cvg_readings(history, alloc_names)
+        _c, alloc_names = cvg_weights(_read)
+        dh = _read.reindex(alloc_names)
+        _px = (price_history if price_history is not None and not price_history.empty
+               else build_price_matrix(history))
+        _rank, _mom, _mmom = mmom_overlay(_px, alloc_names)
+        _cw = pd.Series(_c, index=alloc_names)
+        _tilted = _cw + _mmom["strength"] * _rank / len(_cw)
+        _floored = _tilted < MMOM_FLOOR * _cw
+        w = np.maximum(_tilted, MMOM_FLOOR * _cw).to_numpy(dtype=float)
+        mom = _mom.reindex(alloc_names)
+        _mmom.update(floored=int(_floored.sum()),
+                     source="close history" if _px is price_history else "estimation panel")
     elif cov is None or corr is None:
         # Unreachable as the registry stands: every covariance-driven style
         # returned above when the covariance was not estimable. Kept as a hard
@@ -1114,10 +1286,22 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         else "universe" if len(alloc_names) <= num_positions or n_nonzero >= num_positions
         else "allocator_zeroed")
     out.attrs["nco_momentum_names"] = int(_mom_sel.notna().sum())
-    out.attrs["nco_momentum_lambda"] = (float(MOMENTUM_LAMBDA)
-                                        if _spec["uses_momentum"] else 0.0)
+    out.attrs["nco_momentum_lambda"] = (float(_mmom["strength"]) if _mmom is not None
+                                        else float(MOMENTUM_LAMBDA) if _spec["uses_momentum"]
+                                        else 0.0)
     out.attrs["nco_momentum_applied"] = bool(
-        _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2)
+        _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2
+        and (_mmom is None or _mmom["strength"] > 0))
+    # Managed Momentum's overlay, as applied today: the bear gate (1 open, 0 shut) and the
+    # market return it read, the volatility scale and the readings behind it, the strength
+    # that results (λ · gate · scale), how many names were ranked and how many sat at the
+    # floor, and which history the overlay read. Absent for every other style.
+    if _mmom is not None:
+        for _k, _v in _mmom.items():
+            out.attrs[f"nco_mmom_{_k}"] = _v
+        out.attrs["nco_mmom_lambda"] = float(MMOM_LAMBDA)
+        out.attrs["nco_mmom_floor"] = float(MMOM_FLOOR)
+        out.attrs["nco_mmom_history_short"] = bool(_mmom["history_days"] < MMOM_GATE + 1)
     # The grid, over the WHOLE allocation universe as well as the book: the states
     # every name sits in (the census), the readings behind them (for the conviction-value
     # map and the watchlist, which show names the book holds at the floor or not
@@ -1183,6 +1367,15 @@ __all__ = [
     "MOMENTUM_LAMBDA",
     "MOMENTUM_LOOKBACK",
     "MOMENTUM_SKIP",
+    "MMOM_LAMBDA",
+    "MMOM_FLOOR",
+    "MMOM_GATE",
+    "MMOM_HISTORY_START",
+    "mmom_overlay",
+    "mmom_gate",
+    "mmom_scale",
+    "mmom_momentum",
+    "mmom_ranks",
     "CVG_FIELDS",
     "CVG_TEXT",
     "correlation_distance",

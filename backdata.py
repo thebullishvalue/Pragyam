@@ -468,6 +468,63 @@ def fetch_macro_drivers(start_date: datetime, end_date: datetime) -> Optional[pd
     return pd.DataFrame(close)
 
 
+# Runs of identical closes at least this long are a dead quote, not a market: yfinance carries
+# NESTLEIND.NS flat from Oct 2006 to Jan 2010 (786 sessions) and BAJAJ-AUTO.NS flat for 45 around
+# its 2008 relisting. research/style_blends.py found them; the same rule repairs this panel.
+_DEAD_QUOTE_RUN = 10
+
+
+def fetch_close_history(symbols: List[str], start_date: datetime,
+                        end_date: datetime) -> Optional[pd.DataFrame]:
+    """Daily closes of the universe over a long window — what Managed Momentum's overlay reads.
+
+    The estimation panel (generate_historical_data) carries ~18 months of snapshots, enough for
+    every other style. Managed Momentum also needs the market's 24-month return for its bear
+    gate and its overlay's volatility over all the history there is for the expanding median
+    that scales it (nco.mmom_overlay) — closes only, no indicators, so one batch download.
+
+    Columns are named as the snapshots name them (".NS" dropped), the same adjusted closes the
+    panel's `price` column carries. A close repeating the one before it inside a run of
+    >= _DEAD_QUOTE_RUN sessions is set to NaN. Returns None rather than raising: the style then
+    reads the estimation panel and says so.
+    """
+    if not symbols:
+        return None
+    try:
+        @yfinance_circuit.protect
+        @RetryWithBackoff(max_retries=2, initial_delay=2.0, backoff_factor=2.0)
+        def _download():
+            return yf.download(list(symbols), start=start_date, end=end_date + timedelta(days=1),
+                               progress=False)
+
+        raw = _download()
+        close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].set_axis(
+            [symbols[0]], axis=1)
+        close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all", axis=1)
+    except Exception as e:
+        get_metrics().add_warning(f"Close history unavailable ({type(e).__name__}: {e}) — "
+                                  "Managed Momentum reads the estimation panel")
+        console.warning(f"Close history unavailable ({type(e).__name__}) — "
+                        "Managed Momentum reads the estimation panel")
+        return None
+    if close.empty:
+        return None
+    close.index = pd.DatetimeIndex(close.index).tz_localize(None).normalize()
+    close = close[~close.index.duplicated(keep="last")].sort_index()
+    close = close.loc[:pd.Timestamp(end_date).normalize()]
+    same = close.diff().eq(0)
+    run = same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
+    dead = same & (run >= _DEAD_QUOTE_RUN)
+    if dead.to_numpy().any():
+        close = close.mask(dead)
+        console.detail("close history · unpriced dead quotes: "
+                       + ", ".join(f"{c.replace('.NS', '')} {int(n)}" for c, n in dead.sum().items() if n))
+    close.columns = [str(c).replace(".NS", "") for c in close.columns]
+    console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
+                   f"{close.index[0]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d}")
+    return close
+
+
 def _unfetched_symbols(close: pd.DataFrame, symbols: List[str]) -> List[str]:
     """Symbols whose batch download returned nothing, or stopped early.
 
