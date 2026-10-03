@@ -11,6 +11,41 @@ Sep 2026, and the 27-fund ETF window — and applies the bar fixed in style_sear
                 adjusted for every configuration the search ran (TRIALS below).
 
 Run once:  python research/style_search_holdout.py
+
+RESULT (2026-10-03) — one style clears the bar on the panels as built; it does not survive a
+point-in-time Dow. Net CAGR %, margin over the best existing style in each cell:
+
+                                  Nifty 50                       Dow 30                     ETF (27)
+                          E1      E2      E3            E1      E2      E3                 Mar 25 →
+  best existing        20.21H  19.68C  22.59C        14.39EW 18.50C  15.06C                17.57EW
+  B managed_mom λ=2    +1.82   +2.68   +2.77         +0.46   +0.63   +0.23   6/6          +2.51
+  B managed_mom λ=1    +1.17   +1.77   +1.70         +0.22   +0.41   +0.39   6/6          +1.96
+  A capit_rev_cvg λ=2  +0.72   +0.62   −0.24         +0.52   +0.76   +0.10   5/6          −0.91
+  A capit_rev_cvg λ=1  +0.29   +0.49   −0.19         +0.36   +0.53   −0.07   4/6          −0.85
+  C kelly_egr λ=2      −1.44   +6.44   +5.03         −1.74   +4.59   −1.25   3/6          +5.96
+  D ivol_tilt λ=0.5    −1.63   −0.31   −0.98         −0.76   −1.02   −1.33   0/6          −2.18
+  E V_REGIME W=63      −0.41   −0.45   −0.60         −0.85   −0.66   −1.26   0/6          −0.81
+
+  · managed_mom — CVG plus a 12-1 momentum overlay switched off when the equal-weighted market's
+    24-month return is negative (Daniel & Moskowitz 2016) — beats all eight in all six cells at
+    both λ, and EW on the ETF window. Full span: Nifty 23.26 / 22.39% vs CVG 20.48, Dow 16.29 /
+    16.20% vs 15.78, at CVG's volatility and ~1.4x its turnover.
+  · Not significant: E3 t over the best existing style is +1.21 / +1.15 (Nifty) and +0.07 / +0.25
+    (Dow); Bonferroni over 43 configurations leaves every adjusted p at 1.0.
+  · The E3 edge is a few late index entrants. Summed E3 active contribution vs CVG (λ=1): Nifty
+    +10.3 pts, of which BSE +5.1, TRENT +3.7, BEL +2.4, ADANIENT +1.9; Dow +2.0 pts, of which NVDA
+    +5.8, AMZN +1.0, CRM +0.8. The panels are today's constituents, so momentum held these names
+    through runs that preceded their joining the index — an investor in the index could not.
+  · research/style_search_pit.py rebuilds the Dow on point-in-time membership for E3: managed_mom
+    then trails CVG (λ=1 −0.06 %/yr, t −0.15; λ=2 −0.63) — a tie at best. No point-in-time Nifty
+    panel exists here (needs NSE's constituent history), so the Nifty E3 margin is unverified and
+    rests on the same kind of names.
+  · The bear gate fired twice in 20 years (Nifty 2008-11 → 2009-05 and 2020-04 → 06; Dow 2008-11 →
+    2009-11): the E1 margin is one avoided momentum crash. At λ=2 the additive overlay zeroes up to
+    6 Nifty names (10 on the point-in-time Dow) — a shipped version would need a multiplicative
+    tilt to keep the position-count contract.
+  · Verdict: no style found here reliably beats all eight. managed_mom is the one worth a
+    point-in-time Nifty test before any product decision; CVG stays the best existing style.
 """
 from __future__ import annotations
 
