@@ -394,10 +394,11 @@ METHOD_SPECS = {
         "uses_cvg": False,
         "rc_target": "none",
         "needs_covariance": False,
-        "evidence": ("The default because nothing beat it. Across 36 candidate allocators "
+        "evidence": ("The default because nothing beat it reproducibly. Across 36 candidate allocators "
                      "on three universes, no method delivered a reproducible return "
                      "improvement: ERC gave up 0.51%/yr on Nifty 50 and 1.48% on Dow 30. "
-                     "Lowest turnover of any style."),
+                     "Managed Momentum (v12.1) led it in every era tested, not significantly "
+                     "and partly on late index entrants. Lowest turnover of any style."),
         # The evidence above in one line, against Equal Weight — the form the
         # Analytics tab's Style Comparison quotes under a one-window table.
         "long_run": "the bar: no allocator tested on three universes beat it reproducibly on return",
@@ -499,16 +500,22 @@ METHOD_SPECS = {
         "rc_target": "none",
         "needs_covariance": False,
         "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
-                     "43 configurations, chosen on 2007-19, run once on 2020+). It was the only "
-                     "style to beat the best of the eight earlier styles in all six cells "
-                     "(Nifty 50 and Dow 30 × three eras), and it beat Equal Weight on the "
-                     "27-fund ETF book. None of it is significant: the 2020+ gap to the best "
-                     "earlier style has t 1.2 (Nifty) and 0.3 (Dow), and nothing survives the "
-                     "43-try correction. The 2020+ edge comes from a few late index entrants "
-                     "(NVDA, AMZN; BSE, TRENT), and on a point-in-time Dow it trails CVG. "
-                     "Expect CVG-like results, not a reliable premium."),
-        "long_run": "beat the best earlier style in all six cells as tested; a tie with CVG on a "
-                    "point-in-time Dow — not significant",
+                     "43 configurations, chosen on 2007-19, run once on 2020+) and re-measured "
+                     "as shipped, floor included (research/mmom_ship.py; monthly, net of 10bp "
+                     "India / 3bp US costs). Against the best of the eight earlier styles and "
+                     "blends in each era (2007-13 / 2014-19 / 2020+): Nifty 50 +1.02 / +1.66 / "
+                     "+1.58 %/yr, Dow 30 +0.25 / +0.39 / +0.25; +1.79 %/yr over Equal Weight on "
+                     "the 27-fund ETF book (19 months). Full-span CAGR: Nifty 22.26% vs CVG 20.48%, Dow "
+                     "16.15% vs 15.78%, at CVG's volatility and 1.2-1.3x its turnover. None of it "
+                     "is significant: the largest t is 1.13 (Nifty 2020+), Dow 2020+ is 0.15, and "
+                     "the shipped form is a post-holdout variant of one of 43 tries (family-wise "
+                     "p 1.0). The 2020+ edge comes from a few late index entrants (NVDA, AMZN, "
+                     "CRM; BSE, TRENT, BEL, ADANIENT); on a point-in-time Dow it trails CVG by "
+                     "0.19 %/yr (t -0.28), and no point-in-time Nifty was tested. Expect "
+                     "CVG-like results, not a reliable premium."),
+        "long_run": ("vs the best of the eight earlier styles and blends, 2007-13 / 2014-19 / 2020+: "
+                     "Nifty 50 +1.02% / +1.66% / +1.58%/yr, Dow 30 +0.25% / +0.39% / +0.25%/yr — "
+                     "none significant (largest t 1.13); -0.19%/yr vs CVG on a point-in-time Dow"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -614,11 +621,13 @@ def mmom_scale(prices: pd.DataFrame) -> Tuple[float, float, float, int]:
 
     The unit overlay — the rank / N weights re-formed at every month start and held to the next,
     the current month to date included — is priced from the closes; its 126-day realised
-    volatility today is set against the median of that volatility at every month start so far
-    (an expanding median: the target is only ever what the history before today had). The
-    scale is min(1, median / today), so the overlay only ever shrinks. Below
-    MMOM_MIN_VOL_MONTHS readings it stays at 1.
+    volatility today is set against the median of that volatility at every month start up to
+    and including today (an expanding median: nothing after today enters it). The scale is
+    min(1, median / today), so the overlay only ever shrinks. Below MMOM_MIN_VOL_MONTHS
+    readings it stays at 1.
     """
+    if prices is None or len(prices) == 0 or not isinstance(prices.index, pd.DatetimeIndex):
+        return 1.0, float("nan"), float("nan"), 0
     idx = prices.index
     starts = list(pd.Series(idx, index=idx).groupby([idx.year, idx.month]).first())
     if not starts:
@@ -652,6 +661,23 @@ def mmom_scale(prices: pd.DataFrame) -> Tuple[float, float, float, int]:
     return float(min(1.0, target / now)), now, target, int(len(at))
 
 
+def _close_panel(prices: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """A caller's close panel made safe to slice by date: a naive DatetimeIndex, sorted, one row
+    per day and one column per symbol (the last of each, as the snapshot panel keeps). None when
+    it is empty or its index is not dates."""
+    if prices is None or len(prices) == 0:
+        return None
+    try:
+        ix = pd.DatetimeIndex(pd.to_datetime(prices.index))
+    except (TypeError, ValueError):
+        return None
+    if ix.tz is not None:
+        ix = ix.tz_localize(None)
+    p = prices.set_axis(ix, axis=0)
+    p = p.loc[:, ~p.columns.duplicated(keep="last")]
+    return p[~p.index.duplicated(keep="last")].sort_index()
+
+
 def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dict]:
     """(rank, 12-1 momentum, diagnostics) — the overlay Managed Momentum adds to CVG.
 
@@ -659,6 +685,13 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
     the universe (the gate's market), not only `names` (the ranks).
     """
     names = list(names)
+    if prices is None:
+        prices = pd.DataFrame()
+    if len(prices) and not isinstance(prices.index, pd.DatetimeIndex):
+        try:
+            prices = prices.set_axis(pd.DatetimeIndex(pd.to_datetime(prices.index)), axis=0)
+        except (TypeError, ValueError):
+            prices = pd.DataFrame()
     mom = mmom_momentum(prices.ffill(limit=5), names)
     rank = mmom_ranks(mom, names)
     gate, mkt = mmom_gate(prices)
@@ -1022,6 +1055,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # weight formula rather than a stylistic choice.
     mom = pd.Series(np.nan, index=alloc_names)
     _mmom: Optional[dict] = None
+    _floored_names: set = set()
     # The covariance the ALLOCATOR optimised against. The convergence diagnostic
     # below must be measured on this matrix, not on the sample covariance used
     # for reporting: ERC solves on the shrunk estimate, so scoring its solution
@@ -1053,16 +1087,31 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         _read = cvg_readings(history, alloc_names)
         _c, alloc_names = cvg_weights(_read)
         dh = _read.reindex(alloc_names)
-        _px = (price_history if price_history is not None and not price_history.empty
-               else build_price_matrix(history))
+        # Never past the book's own date: a close history cached to a later day
+        # must not lend the overlay tomorrow's market.
+        _ph = _close_panel(price_history)
+        if _ph is not None and not _ph.empty and history:
+            _ph = _ph.loc[:pd.Timestamp(history[-1][0]).normalize()]
+        _from_close = _ph is not None and not _ph.empty
+        _px = _ph if _from_close else build_price_matrix(history)
         _rank, _mom, _mmom = mmom_overlay(_px, alloc_names)
+        _last = (_px.ffill(limit=5).iloc[-1] if len(_px) else pd.Series(dtype=float))
+        _mmom["coverage"] = float(np.mean([np.isfinite(float(_last.get(s, np.nan)))
+                                           for s in alloc_names])) if alloc_names else 0.0
+        _mmom["source"] = "close history" if _from_close else "estimation panel"
+        _mmom["stood_down"] = None
+        # The estimation panel (~400 sessions) cannot hold the gate's 24 months, nor the
+        # volatility scale's month-start readings: an overlay that cannot read its own
+        # crash guard stands down to the grid rather than run at full strength unguarded.
+        if not _from_close and _mmom["history_days"] < MMOM_GATE + 1 and _mmom["strength"] > 0:
+            _mmom.update(strength=0.0, stood_down="estimation panel too short for the 24-month gate")
         _cw = pd.Series(_c, index=alloc_names)
         _tilted = _cw + _mmom["strength"] * _rank / len(_cw)
         _floored = _tilted < MMOM_FLOOR * _cw
+        _floored_names = set(_floored.index[_floored.to_numpy()])
         w = np.maximum(_tilted, MMOM_FLOOR * _cw).to_numpy(dtype=float)
         mom = _mom.reindex(alloc_names)
-        _mmom.update(floored=int(_floored.sum()),
-                     source="close history" if _px is price_history else "estimation panel")
+        _mmom["floored"] = int(len(_floored_names))
     elif cov is None or corr is None:
         # Unreachable as the registry stands: every covariance-driven style
         # returned above when the covariance was not estimable. Kept as a hard
@@ -1136,6 +1185,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     cap_eff = max(max_pos_pct, 1.0 / n)
 
     sel = list(chosen.index)
+    if _mmom is not None:
+        # The floor is counted over the universe before top-N; this is how many of those the
+        # book actually holds (below the universe size the floored names are the first cut).
+        _mmom["floored_held"] = int(sum(s in _floored_names for s in sel))
     # Which HOLDINGS carry a covariance estimate. Identical to `sel` for every
     # covariance-driven style. On an equal-weight book it can be a strict subset,
     # and the diagnostics below are then reported over that subset with the share
@@ -1219,6 +1272,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out["weightage_pct"] = out["weightage_pct"] / out["weightage_pct"].sum() * 100.0
     out["units"] = np.floor((capital * out["weightage_pct"] / 100.0) / out["price"])
     out["value"] = out["units"] * out["price"]
+    # Rows whose weight buys less than one share at this capital: in the book, unfunded. Any
+    # style can produce them (a small weight on an expensive name); the grid's floor and
+    # Managed Momentum's make them likelier. Recorded so the app can say so, never hidden.
+    _unfunded = out.loc[out["units"] <= 0, "symbol"].astype(str).tolist()
 
     out.attrs["nco_method"] = _m
     out.attrs["nco_method_label"] = _spec["label"]
@@ -1281,6 +1338,8 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out.attrs["nco_positions_delivered"] = int(len(out))
     out.attrs["nco_positions_nonzero"] = int(n_nonzero)
     out.attrs["nco_positions_short"] = max(0, int(num_positions) - int(len(out)))
+    out.attrs["nco_positions_unfunded"] = int(len(_unfunded))
+    out.attrs["nco_unfunded_symbols"] = list(_unfunded)
     out.attrs["nco_short_cause"] = (
         "none" if len(out) >= num_positions
         else "universe" if len(alloc_names) <= num_positions or n_nonzero >= num_positions
@@ -1291,7 +1350,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                                         else 0.0)
     out.attrs["nco_momentum_applied"] = bool(
         _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2
-        and (_mmom is None or _mmom["strength"] > 0))
+        and (_mmom is None or (_mmom["strength"] > 0 and _mmom["ranked"] >= MMOM_MIN_RANKED)))
     # Managed Momentum's overlay, as applied today: the bear gate (1 open, 0 shut) and the
     # market return it read, the volatility scale and the readings behind it, the strength
     # that results (λ · gate · scale), how many names were ranked and how many sat at the

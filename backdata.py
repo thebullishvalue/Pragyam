@@ -468,9 +468,11 @@ def fetch_macro_drivers(start_date: datetime, end_date: datetime) -> Optional[pd
     return pd.DataFrame(close)
 
 
-# Runs of identical closes at least this long are a dead quote, not a market: yfinance carries
-# NESTLEIND.NS flat from Oct 2006 to Jan 2010 (786 sessions) and BAJAJ-AUTO.NS flat for 45 around
-# its 2008 relisting. research/style_blends.py found them; the same rule repairs this panel.
+# A close that repeats the one before it, in a run of at least this many consecutive repeats
+# (11 identical closes), is a dead quote, not a market: yfinance carries NESTLEIND.NS flat from
+# the start of its history to Jan 2010 (986 repeats from Jan 2006; 786 inside the research
+# panels, which start Oct 2006) and BAJAJ-AUTO.NS flat for 45 around its 2008 relisting.
+# research/style_blends.py found them; the same rule (style_blends.unstale) repairs this panel.
 _DEAD_QUOTE_RUN = 10
 
 
@@ -484,9 +486,11 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     that scales it (nco.mmom_overlay) — closes only, no indicators, so one batch download.
 
     Columns are named as the snapshots name them (".NS" dropped), the same adjusted closes the
-    panel's `price` column carries. A close repeating the one before it inside a run of
-    >= _DEAD_QUOTE_RUN sessions is set to NaN. Returns None rather than raising: the style then
-    reads the estimation panel and says so.
+    panel's `price` column carries; a symbol listed twice (an ADR and its NSE line both named
+    INFY) keeps its last column, as the panel does. Symbols the batch missed get the panel's
+    own second pass (_recover_missing_symbols). A close repeating the one before it in a run of
+    >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN. Returns None rather than raising: the
+    style then reads the estimation panel and says so.
     """
     if not symbols:
         return None
@@ -498,6 +502,11 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
                                progress=False)
 
         raw = _download()
+        if isinstance(raw.columns, pd.MultiIndex) and len(symbols) > 1:
+            raw, _rec = _recover_missing_symbols(raw, list(symbols), start_date, end_date)
+            if _rec.get("recovered"):
+                console.detail(f"close history · re-fetched {len(_rec['recovered'])} symbol(s) "
+                               f"the batch missed: {', '.join(_rec['recovered'][:12])}")
         close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].set_axis(
             [symbols[0]], axis=1)
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all", axis=1)
@@ -520,6 +529,7 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
         console.detail("close history · unpriced dead quotes: "
                        + ", ".join(f"{c.replace('.NS', '')} {int(n)}" for c, n in dead.sum().items() if n))
     close.columns = [str(c).replace(".NS", "") for c in close.columns]
+    close = close.loc[:, ~close.columns.duplicated(keep="last")]
     console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
                    f"{close.index[0]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d}")
     return close
