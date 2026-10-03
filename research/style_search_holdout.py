@@ -28,9 +28,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import style_search as ss                         # noqa: E402
 
-# family file, candidate name, fixed parameters, factory? — filled in from the agents' reports
-FINALISTS: list = []
-TRIALS = 0                                         # configurations run across the whole search
+# family file, candidate name, fixed parameters, factory? — from the agents' reports (2026-10-03).
+# Families A and B each had two configurations clear all four discovery cells; C, D and E had none
+# and name their best by the fallback rule (they cannot pass: the bar includes E1 and E2).
+FINALISTS: list = [
+    ("a_reversal.py", "A3_capit_rev_cvg", {"lam": 2.0}, False),
+    ("a_reversal.py", "A3_capit_rev_cvg", {"lam": 1.0}, False),
+    ("b_momentum.py", "managed_mom", {"lam": 2.0}, False),
+    ("b_momentum.py", "managed_mom", {"lam": 1.0}, False),
+    ("c_weighting.py", "kelly_egr", {"lam": 2.0}, False),
+    ("d_anomaly.py", "ivol_tilt", {"lam": 0.5}, False),
+    ("e_ensemble.py", "V_REGIME", {"W": 63}, False),
+]
+TRIALS = 43            # A 10 (incl. the harness demo) · B 9 · C 9 · D 6 · E 9 configurations
 
 
 def _load(path: str):
@@ -38,6 +48,10 @@ def _load(path: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _label(path: str, name: str, params: dict) -> str:
+    return f"{path.split('_')[0].upper()}:{name}(" + ",".join(f"{k}={v}" for k, v in params.items()) + ")"
 
 
 def build_fn(path: str, name: str, params: dict, factory: bool, data: dict):
@@ -55,8 +69,7 @@ def main() -> None:
         base = ss.baselines(d)
         cands = {}
         for path, name, params, factory in FINALISTS:
-            label = f"{path.split('_')[0].upper()}:{name}"
-            cands[label] = ss.run(build_fn(path, name, params, factory, d), d)
+            cands[_label(path, name, params)] = ss.run(build_fn(path, name, params, factory, d), d)
         out = ss.report(cands, d, base, show_base=True)
         out["universe"] = d["name"]
         rows.append(out)
@@ -64,7 +77,7 @@ def main() -> None:
         print(pd.DataFrame(full).T[["months", "cagr", "vol", "ret_vol", "maxdd", "turnover"]].round(2).to_string(), flush=True)
     res = pd.concat(rows)
     print("\n══ THE BAR · six stock cells (E1, E2, E3 × Nifty 50, Dow 30) ═══════════════════════", flush=True)
-    labels = [f"{p.split('_')[0].upper()}:{n}" for p, n, _, _ in FINALISTS]
+    labels = [_label(p, n, q) for p, n, q, _ in FINALISTS]
     for lab in labels:
         x = res[(res["style"] == lab) & res["universe"].isin(["Nifty 50", "Dow 30"]) & res["era"].isin(["E1", "E2", "E3"])]
         wins = int((x["vs_best"] > 0).sum())
