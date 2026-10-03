@@ -23,9 +23,10 @@ from ui.components import (
     render_table_panel,
 )
 from ui.shared import (CVG_CHIP, CVG_TONE, NCO_STYLES, REGIME_FACTOR_ORDER,
-                       STYLE_LABELS, num, style_spec)
+                       STYLE_LABELS, holds_universe, mmom_state, num, style_spec)
 from ui.components import render_kpi_strip
 from cvgrid import STATE_LABEL, STATE_UNITS, STATES
+from nco import MMOM_GATE, MMOM_MIN_VOL_MONTHS
 from pragati import INNER_ZONE
 from samanvaya import THETA_OSC
 import html as html_module
@@ -105,8 +106,11 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
     # On a Conviction-Value Grid run the weight IS the state, so the readings that placed each
     # holding sit right after its weight — before the risk columns, which for
     # this style are a mirror, not a target. "Value tape" rather than "Value":
-    # that header is already the position's rupee value.
+    # that header is already the position's rupee value. Managed Momentum's
+    # weight is the state's plus its momentum overlay, so its 12-1 return joins
+    # them, after the map units it moves the weight away from.
     _uses_dh = bool((portfolio.attrs or {}).get("nco_uses_cvg", False))
+    _mm = mmom_state(portfolio.attrs)
     if _uses_dh:
         for c in ("state", "conviction", "value_tape", "state_days", "push_tier", "held_row",
                   "cvg_units", "state_units"):
@@ -124,14 +128,17 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
             ("Days", pd.to_numeric(df["state_days"], errors="coerce").to_numpy()),
         )):
             view.insert(_at_w + off, col, vals)
+        if _mm is not None and "momentum" in df.columns:
+            view.insert(view.columns.get_loc("Map units") + 1, "12-1 %",
+                        pd.to_numeric(df["momentum"], errors="coerce").to_numpy() * 100.0)
     render_table_panel(
         view, "holdings", context=f"{n} holdings · sorted by weight",
         show_index=False,
         label_col="Symbol",
         col_precision={"Units": 0, "Price": 2, "Weight %": 2, "Value": 0,
                        "Risk Share %": 2, "Risk − Wt": 2, "Vol %": 1, "Indep": 2,
-                       "Conv": 0, "Value tape": 0, "Days": 0, "Map units": 2},
-        sign_color_cols={"Conv"} if _uses_dh else None,
+                       "Conv": 0, "Value tape": 0, "Days": 0, "Map units": 2, "12-1 %": 1},
+        sign_color_cols=({"Conv", "12-1 %"} if _mm is not None else {"Conv"}) if _uses_dh else None,
         lower_is_better_cols={"Risk − Wt", "Value tape"} if _uses_dh else {"Risk − Wt"},
         max_height=520,
     )
@@ -147,7 +154,16 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         + (" **State** is the holding's cell in the Conviction-Value Grid — conviction × value — and "
            "**Map units** its weight on the graded map: the cell's units, shaded toward the "
            "neighbouring cell by how intensely each tape is drawn, exactly as the Pine grades "
-           "its colours. **held** means the histogram is holding its row against the tape "
+           "its colours."
+           + (" On this book that is the weight **before** the momentum overlay: **12-1 %** is "
+              "the return from twelve months to one month ago that the overlay ranks, and "
+              + ("**Weight** is the grid's share plus the overlay's tilt toward the higher ranks."
+                 if _mm["tilted"] else
+                 (f"today the overlay stood down ({_mm['stood_down']}), so **Weight** is the "
+                "grid's share." if _mm["stood_down"] else
+                "today the overlay is off, so **Weight** is the grid's share."))
+              if _mm is not None else "")
+           + " **held** means the histogram is holding its row against the tape "
            "because the push is not yet behind the change. **Push** is the pane's histogram "
            "as drawn: which way conviction is being pushed, and whether that push is an impulse, "
            "building, decelerating or turning (\"quiet\" when the reading is an amplified calm). "
@@ -157,6 +173,8 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
            "this style does not read the covariance." if _uses_dh else "")
     )
 
+    if _mm is not None:
+        _render_mmom_overlay(portfolio, _mm)
     if _uses_dh:
         _render_cvg_map(portfolio)
 
@@ -187,7 +205,15 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
            "between the Weight and Risk rows is the risk this method leaves unbalanced."
            + (" The **Conviction** and **Value** rows are the two tapes the weights were sized "
               "from — green where buyers control, and where price is cheap."
-              if _at.get("nco_uses_cvg") else ""))
+              if _at.get("nco_uses_cvg") else "")
+           + ((" The **Momentum** row is each holding's 12-1 return, ranked — what the overlay "
+               "tilts toward, green for the strongest." if _mm["tilted"] else
+               " There is no **Momentum** row today: "
+               + (f"the overlay stood down ({_mm['stood_down']})" if _mm["stood_down"]
+                  else "the bear gate is shut" if _mm["gate"] == 0
+                  else "too few names carry a 12-1 return to rank")
+               + ", so the weights are the grid's.")
+              if _mm is not None else ""))
     )
     render_section_header(
         "Risk Contribution", "Capital share vs variance share, on one scale",
@@ -239,6 +265,121 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
         )
 
 
+def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
+    """Managed Momentum's overlay as applied to this book: one strip, one note.
+
+    The book is the grid plus this overlay, so the overlay's state is read
+    before the grid's — whether it is on (the gate), how hard (the scale and
+    the strength that results), and how far it reached (names ranked, names it
+    pushed down to the floor). Sits where the census does, and in its form.
+    """
+    at = portfolio.attrs or {}
+    n_uni = mm["universe"]
+    req = int(at.get("nco_positions_requested", 0) or 0)
+    gate, mkt, scale, vol, med = mm["gate"], mm["market"], mm["scale"], mm["vol"], mm["vol_median"]
+    down = mm["stood_down"]
+    gate_shut = gate == 0 and not down
+    held, floored = mm["floored_held"], mm["floored"]
+    render_section_header(
+        "Momentum Overlay",
+        (f"Stood down · {down} · the book is the grid's" if down else
+         f"Strength {mm['strength']:.2f} = λ {mm['lam']:g} × gate × scale")
+        + f" · added as strength × rank / N, N = the {n_uni} names allocated over · "
+        + mm["source"],
+        icon="trending", accent="cyan")
+    render_kpi_strip([
+        {"label": "Strength",
+         "value": ("0.00" if down else f"{mm['strength']:.2f}" if mm["ranks_enough"] else "—"),
+         "subtext": ("stood down · the grid's weights" if down else
+                     f"λ {mm['lam']:g} × gate × scale" if mm["ranks_enough"]
+                     else "nothing to rank · no tilt"),
+         "color_class": "warning" if down else "info" if mm["tilted"] else "neutral",
+         "tooltip": (f"N = the {n_uni} names allocated over"
+                     + (f", not the {req} positions" if 0 < req < n_uni else "")
+                     + ". At 1.00 "
+                     f"the strongest 12-1 name gains up to 1/N ({1.0 / max(n_uni, 1):.2%}) over its "
+                     "grid weight before top-N and the cap renormalise, and the weakest gives up "
+                     "as much, down to the floor; at 0 the book is the grid's.")},
+        {"label": "Bear Gate",
+         "value": "—" if down or mkt is None else "Shut" if gate_shut else "Open",
+         "subtext": (f"not read · {mm['days']} sessions, {mm['gate_needs']} needed" if down else
+                     "under a year of history · held open" if mkt is None else
+                     f"market {mkt:+.1%} over {mm['window']}"),
+         "color_class": "warning" if gate_shut or down else "neutral",
+         "tooltip": "Shut while the equal-weighted market's 24-month return is negative — "
+                    "the state in which momentum crashes (Daniel & Moskowitz)."},
+        {"label": "Volatility Scale",
+         "value": "—" if gate_shut or down else f"{scale if scale is not None else 1.0:.2f}",
+         "subtext": ("not read — stood down" if down else
+                     "not read — gate shut" if gate_shut else
+                     f"{mm['months']} of {MMOM_MIN_VOL_MONTHS} readings before it acts"
+                     if not mm["scale_acts"] else
+                     "no current reading" if vol is None else
+                     f"median {med or 0.0:.1%} / now {vol:.1%}"),
+         "color_class": ("info" if not gate_shut and not down and scale is not None
+                         and scale < 0.999 else "neutral"),
+         "tooltip": "min(1, median / current) of the overlay's own six-month volatility "
+                    "(Barroso & Santa-Clara): it only ever shrinks the overlay."},
+        {"label": "Ranked", "value": str(mm["ranked"]),
+         "subtext": f"of {n_uni} names carry a 12-1 return"
+                    + (" · not applied (stood down)" if mm.get("stood_down")
+                       else "" if mm["ranks_enough"] else " · too few, no overlay"),
+         "color_class": "neutral" if mm["ranks_enough"] else "warning"},
+        {"label": "At the Floor",
+         "value": f"{held if held is not None else '—'} held",
+         "subtext": (f"of {n_uni} names · at {mm['floor']:.0%} of grid weight" if mm["whole"]
+                     else f"{floored} of {n_uni} before top-N"),
+         "color_class": "neutral",
+         "tooltip": (f"Names pushed down to {mm['floor']:.0%} of their grid weight. The floor "
+                     "keeps every weight positive, so the book always fills its positions"
+                     + ("; at the full universe every name stays held."
+                        if mm["whole"] else
+                        f", but floored names are the lowest weights: at {req} of {n_uni} "
+                        "they are the first cut, and the count before top-N covers the "
+                        "whole universe."))},
+        {"label": "History", "value": f"{mm['days']:,}d",
+         "subtext": (mm["source"]
+                     + (f" · from {mm['start']:%Y}" if mm["start"] is not None else "")
+                     + (f" · {mm['coverage']:.0%} with a close"
+                        if mm["coverage"] is not None and mm["coverage"] < 1 else "")),
+         "color_class": ("warning" if down or mm["fell_back"] or mm["short"]
+                         or mm["no_close"] else "neutral"),
+         "tooltip": (f"The 24-month gate needs {MMOM_GATE + 1} sessions; this history "
+                     + ("is short of that." if mm["short"] else "covers it."))},
+    ], max_cols=3, key="mmom-overlay")
+    render_note(
+        "Each name's weight is its grid weight plus **strength × rank / N**, N the "
+        f"{n_uni} names allocated over and the rank running from −1 for the weakest 12-1 "
+        "return to +1 for the strongest, and no name below "
+        f"{mm['floor']:.0%} of its grid weight"
+        + (" — so every name stays held."
+           if mm["whole"] else
+           f" — so every weight stays positive and the book always fills its {req} positions, "
+           f"the top {req} of {n_uni} by weight."
+           + (" With the overlay on, momentum can also change which names make that cut, and "
+              "floored names, the lowest weights, go first"
+              + (f" ({held} of {floored} held)." if held is not None and floored else ".")
+              if mm["tilted"] else ""))
+        + " The **gate** shuts "
+        "the overlay while the equal-weighted market has lost money over 24 months; the "
+        "**scale** shrinks it while its own volatility runs above its long-run median."
+        + (f" Today the overlay **stood down** — {down} — so this book's weights are the grid's."
+           if down else
+           " Today the gate is shut, so this book's weights are the grid's."
+           if gate_shut else
+           " Today too few names carry a 12-1 return to rank, so no tilt was applied and "
+           "this book's weights are the grid's." if not mm["ranks_enough"] else "")
+        + (" The overlay read less history than the gate asks for — see the notice above."
+           if not down and (mm["fell_back"] or mm["short"]) else "")
+        + " Measured, its edge over the earlier styles is not significant, and on a "
+          "point-in-time Dow it does no better than the grid: read the book as the grid with a "
+          "tilt, not as a momentum fund."
+        + ("" if mm["whole"] else
+           f" Every measured figure is a book holding every name; a top-{req} book like this "
+           "one was never measured.")
+    )
+
+
 def _render_cvg_map(portfolio: pd.DataFrame) -> None:
     """The grid's view of the universe: the state census, the map, the watchlist.
 
@@ -283,8 +424,16 @@ def _render_cvg_map(portfolio: pd.DataFrame) -> None:
         f"point coloured for a region it does not sit in is a row being held. The map is "
         f"**graded**: inside its cell a name's weight moves toward the neighbouring cell by how "
         f"intensely its tapes are drawn — a tape just past its knee sits partway, a solid one "
-        f"earns the full cell — so marker size varies within a region. Every name is held: the "
-        f"reading sets how much, never whether."
+        f"earns the full cell — so marker size varies within a region. "
+        + ("Every name is held: the reading sets how much, never whether."
+           if holds_universe(at) else
+           f"The floor keeps every weight positive, so the book always fills its "
+           f"{int(at.get('nco_positions_requested', 0) or 0)} positions; at that count of "
+           f"{int(at.get('nco_universe', 0) or 0)} names the reading also sets which names make "
+           f"the book — the lowest weights are cut first, and show as rings.")
+        + (" On this book the momentum overlay, while it is on, then moves each weight, so a "
+           "marker's size is the held weight with the overlay in it, not the cell's alone."
+           if "nco_mmom_strength" in at else "")
     )
 
     if uni is None or getattr(uni, "empty", True):
@@ -327,4 +476,8 @@ def _render_cvg_map(portfolio: pd.DataFrame) -> None:
         f"v8), capitulation was followed by gains in both eras, so it is not waiting to be bought. "
         f"**To turn** is how far the conviction tape still has to travel; **Push** is whether the "
         f"histogram is behind it yet."
+        + (" On this book those are grid weights: while the overlay is on it moves each by its "
+           "12-1 rank, so a name with a weak 12-1 return can sit well below its cell, down to the "
+           "floor — **Weight %** is what it holds."
+           if "nco_mmom_strength" in at else "")
     )

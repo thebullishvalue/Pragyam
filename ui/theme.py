@@ -35,7 +35,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v12.0.1"
+VERSION = "v12.1.0"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -646,7 +646,7 @@ def inject_css(theme: str = "dark") -> None:
 # console prints (`log.section(..., phase="PHASE 1")` in app.py). Without it
 # the bar showed a percentage and a free-text label with no way to tell which
 # phase of the run you were in, while the terminal beside it printed
-# "PHASE 2: Covariance Curation" — the same run described two different ways.
+# "PHASE 2: Curation" — the same run described two different ways.
 #
 # The bands are closed intervals and must not overlap, because the phase is
 # DERIVED from the percentage: that keeps every call site free of a phase
@@ -655,7 +655,7 @@ def inject_css(theme: str = "dark") -> None:
 # 20 (its "Phase 1 Complete" milestone) and Phase 2 opens at 21.
 RUN_PHASES = (
     (1, 0, 20, "Data & Regime"),
-    (2, 21, 100, "Covariance Curation"),
+    (2, 21, 100, "Curation"),
 )
 
 

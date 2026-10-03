@@ -9,6 +9,7 @@ Author: @thebullishvalue
 
 from __future__ import annotations
 
+import html as html_module
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -20,8 +21,12 @@ from ui.components import (
     render_note,
     render_section_header,
 )
-from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
+from ui.shared import (NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, holds_universe,
+                       mmom_coverage_caveat, mmom_floor_text, mmom_history_caveat, mmom_state,
+                       num, style_spec, unfunded_symbols)
 from cvgrid import STATE_LABEL, STATE_UNITS, STATES
+from nco import (MMOM_FLOOR, MMOM_HISTORY_START, MMOM_LAMBDA, MMOM_LOOK, MMOM_MIN_VOL_MONTHS,
+                 MMOM_SKIP)
 
 # The CVG units as the allocator applies them, read from cvgrid so this text cannot drift.
 _CVG_UNITS_HTML = ' &middot; '.join(
@@ -30,6 +35,48 @@ _CVG_UNITS_HTML = ' &middot; '.join(
                 ("DISLOCATED", "FADING", "DISTRIBUTION")))
 from samanvaya import DEFAULT_BASKET
 from ui.theme import VERSION
+
+
+def _mmom_rows(at: Dict[Any, Any], n_alloc: int) -> Dict[str, str]:
+    """Run Settings rows for Managed Momentum's overlay, as applied to this book."""
+    s = mmom_state(at)
+    if s is None:
+        return {}
+    gate, mkt, vol = s["gate"], s["market"], s["vol"]
+    down = s["stood_down"]
+    return {
+        "Momentum Overlay": (
+            (f"strength 0.00 — stood down: {down}; the book is the grid's" if down else
+             f"strength {s['strength']:.2f} = λ {s['lam']:g} × gate "
+             + (f"{gate:.0f}" if gate is not None else "—")
+             + " × scale " + (f"{s['scale']:.2f}" if s["scale"] is not None else "—"))
+            + f" · added as strength × rank / N, N = the {n_alloc} names allocated over"),
+        "Bear Gate": (
+            f"not read — {s['days']} sessions, {s['gate_needs']} needed; overlay stood down"
+            if down else
+            "not read — under a year of history, held open" if mkt is None else
+            f"shut — equal-weighted market {mkt:+.1%} over {s['window']}; overlay off"
+            if gate == 0 else
+            f"open — equal-weighted market {mkt:+.1%} over {s['window']}"),
+        "Volatility Scale": (
+            "not read — overlay stood down" if down else
+            "not read — gate shut" if gate == 0 else
+            f"1.00 — {s['months']} month-start readings, {MMOM_MIN_VOL_MONTHS} needed"
+            if not s["scale_acts"] else
+            "1.00 — no current volatility reading" if vol is None else
+            f"{s['scale'] or 1.0:.2f} — median {s['vol_median'] or 0.0:.1%} vs current "
+            f"{vol:.1%} overlay volatility · {s['months']} month-start readings"),
+        "Momentum Ranks": (
+            f"{s['ranked']} of {n_alloc} names carry a 12-1 return"
+            + ("" if s["ranks_enough"] else " — too few to rank, no overlay")),
+        "Momentum Floor": mmom_floor_text(s),
+        "Overlay History": (
+            f"{s['source']} · "
+            + (f"from {s['start']:%Y-%m-%d} · " if s["start"] is not None else "")
+            + f"{s['days']} sessions" + (" — short of the gate's 24 months" if s["short"] else "")
+            + (f" · {s['no_close']} of {n_alloc} names with no close"
+               if s["no_close"] else "")),
+    }
 
 
 def _render_system_tab(training_window: List):
@@ -88,7 +135,9 @@ def _render_system_tab(training_window: List):
                else f" - {_at['nco_positions_short']} short ("
                     + ("eligible universe exhausted"
                        if _at.get("nco_short_cause") == "universe"
-                       else "allocator zeroed names") + ")")),
+                       else "allocator zeroed names") + ")")
+            + (f" · {len(unfunded_symbols(_at))} below one share (0 units)"
+               if unfunded_symbols(_at) else "")),
         "Universe": (
             f"{_n_alloc} eligible"
             + (f" of {_at['nco_universe_requested']} in universe"
@@ -115,12 +164,15 @@ def _render_system_tab(training_window: List):
     }
     if _at.get("nco_uses_cvg"):
         # What the weights were read from, over the whole allocation universe.
-        # Only on a Conviction-Value Grid run — no other style reads these, and a row for them
-        # would imply otherwise.
+        # Only on a style built on the grid (the Conviction-Value Grid, and
+        # Managed Momentum on top of it) — no other style reads these, and a row
+        # for them would imply otherwise.
         _census = _at.get("nco_cvg_census") or {}
         details["Grid Readings"] = (
             f"{_at.get('nco_cvg_names', 0)} of {_n_alloc} names read on both tapes"
-            + ("" if _at.get("nco_cvg_applied") else " · NONE — every name unread, book is 1/N"))
+            + ("" if _at.get("nco_cvg_applied") else
+               " · NONE — every name unread, book is 1/N"
+               + (" before the momentum overlay" if "nco_mmom_strength" in _at else "")))
         details["Grid States"] = " · ".join(
             f"{STATE_LABEL[c]} {_census[c]}" for c, *_ in STATES if _census.get(c))
         details["Histogram"] = (
@@ -137,11 +189,35 @@ def _render_system_tab(training_window: List):
             f"{DEFAULT_BASKET} basket · median hedge applied "
             + (f"{_hm:.0%}" if _hm is not None else "—")
             + " (weighed by its own out-of-sample skill)")
+    # Managed Momentum's overlay as applied: strength is λ × gate × scale, and
+    # each row says what its factor read. Only on a Managed Momentum run.
+    _mm = mmom_state(_at)
+    details.update(_mmom_rows(_at, _n_alloc))
     render_kv_table(details)
+    _cav = mmom_history_caveat(_mm)
+    if _cav is not None:
+        render_note(f"**{_cav[0]}.** {_cav[1]}")
+    _cov = mmom_coverage_caveat(_mm)
+    if _cov is not None:
+        render_note(f"**{_cov[0]}.** {_cov[1]}")
+    _unf = unfunded_symbols(_at)
+    if _unf:
+        render_note(
+            f"**{len(_unf)} holding(s) below one share at this capital** — "
+            + ", ".join(_unf)
+            + (". Its weight buys less than one share, so it holds 0 units: Broker Sync "
+               "writes no quantity for it (any quantity already in the template is left as "
+               "it was)" if len(_unf) == 1 else
+               ". Each weight buys less than one share, so they hold 0 units: Broker Sync "
+               "writes no quantity for them (any quantity already in the template is left "
+               "as it was)")
+            + "; raise capital or lower positions.")
     if _at.get("nco_uses_cvg") and not _at.get("nco_cvg_applied"):
         render_note(
             "No name carried a calibrated reading on both tapes, so every name is UNREAD at "
-            "the neutral unit and this book is Equal Weight. Each tape needs about a year of "
+            "the neutral unit and this book is Equal Weight"
+            + (" with the momentum overlay on top" if _mm is not None else "")
+            + ". Each tape needs about a year of "
             "daily history per name; a panel cached before the grid's columns existed also "
             "reads this way until it is refetched."
         )
@@ -175,29 +251,70 @@ def _render_system_tab(training_window: List):
     render_section_header("Curation Method", "How a portfolio is built, and what it targets",
                           icon="target", accent="emerald")
     _m_spec = style_spec(st.session_state.get("run_context") or {})
-    # The Conviction-Value Grid is the one style that reads the tape, so the statements every other
+    # The styles built on the grid — the Conviction-Value Grid, and Managed
+    # Momentum on top of it — read the tape, so the statements every other
     # style can make — "allocated from the covariance", "nothing here
-    # forecasts", "why not forecast" — are not true of it, and the card says
-    # what IS true instead.
+    # forecasts", "why not forecast" — are not true of them, and the card says
+    # what IS true instead. Managed Momentum also reads 12-1 momentum, so its
+    # card adds the overlay wherever the grid's says "and nothing else".
     _reads_tape = bool(_m_spec.get("uses_cvg", False))
+    _overlay = _reads_tape and bool(_m_spec.get("uses_momentum", False))
+    # "Every name is held" is true only when the positions requested cover the
+    # universe. Below that, top-N runs after the weights: the floor keeps every
+    # weight positive, so the book fills its count, but the lowest weights —
+    # floored names first — are cut, and the reading decides which names stay.
+    _whole = holds_universe(_at)
+    _req = int(_at.get("nco_positions_requested", 0) or 0)
+    _held_html = (
+        'Every name is held.' if _whole else
+        f'Every weight stays positive, so the book always fills its {_req} positions; at '
+        f'{_req} of {_n_alloc} names the lowest weights are cut first, so the reading also '
+        'sets which names are held.')
     _lede = (
+        'Capital is allocated from three readings of every name: '
+        'Pragati&rsquo;s conviction tape &mdash; who controls, and how firmly &mdash; its '
+        'value tape &mdash; rich or cheap against what the macro drivers and the home market '
+        'explain &mdash; and its 12-1 momentum. The two tapes place the name in a state, and '
+        'the state sets its grid weight; a momentum overlay is then added on top, standing '
+        'down while the equal-weighted market&rsquo;s 24-month return is negative and '
+        'shrinking while its own volatility runs above its median. The covariance is not '
+        'read; the risk panels are its mirror.'
+        if _overlay else
         'Capital is allocated from two readings of every name, and nothing else: '
         'Pragati&rsquo;s conviction tape &mdash; who controls, and how firmly &mdash; and '
         'its value tape &mdash; rich or cheap against what the macro drivers and the home '
         'market explain. Together they place the name in a state, and the state sets its '
         'weight. The covariance is not read; the risk panels are its mirror.'
         if _reads_tape else
+        'Capital is split equally, <code>1/N</code>, and nothing is read to do it &mdash; no '
+        'covariance, no tape, no forecast. The covariance is estimated only for the risk '
+        'panels, so the risk an equal split leaves unbalanced is visible.'
+        if not _m_spec.get("needs_covariance", True) else
         'Capital is allocated from the return covariance structure. Nothing here '
         'forecasts returns &mdash; the book is built to spread risk across genuinely '
         'distinct exposures, not to predict which holding will win.'
     )
     _bound_label = "The honest bound" if _reads_tape else "Why not forecast"
     _bound_body = (
+        'Reading the tape is forecasting, and so is ranking momentum; Grinold\'s Fundamental '
+        'Law caps what any forecast can earn here: <code>IR = IC &times; &radic;BR &times; '
+        'TC</code>, ~1%/yr on ~1.9 independent bets. Every weight is therefore kept positive '
+        f'&mdash; no name below {MMOM_FLOOR:.0%} of its grid weight &mdash; so '
+        + ('a wrong reading costs weight, never a position. ' if _whole else
+           f'at the full universe a wrong reading costs weight, never a position; at {_req} of '
+           f'{_n_alloc} names it can also cost a place in the top {_req}. ')
+        + 'The overlay came out of a search over many '
+        'configurations and its edge is not significant: read the measured sentence above as '
+        'the most it might carry, not as what to expect.'
+        if _overlay else
         'Reading the tape is forecasting, and Grinold\'s Fundamental Law caps what any '
         'forecast can earn here: <code>IR = IC &times; &radic;BR &times; TC</code>, ~1%/yr on '
-        '~1.9 independent bets. The book is therefore held whole &mdash; every name at no less '
-        'than the floor, core at 12&times; it &mdash; so a wrong reading costs weight, never a '
-        'position. Read the measured sentence above as the size of what the tapes carry.'
+        '~1.9 independent bets. Every weight is therefore kept positive &mdash; no name below '
+        'the floor, core at 12&times; it &mdash; so '
+        + ('a wrong reading costs weight, never a position. ' if _whole else
+           f'at the full universe a wrong reading costs weight, never a position; at {_req} of '
+           f'{_n_alloc} names it can also cost a place in the top {_req}. ')
+        + 'Read the measured sentence above as the size of what the tapes carry.'
         if _reads_tape else
         'Grinold\'s Fundamental Law caps forecast-driven excess return at '
         '<code>IR = IC &times; &radic;BR &times; TC</code>. At &rho; 0.52 these '
@@ -210,7 +327,9 @@ def _render_system_tab(training_window: List):
             '<div class="intel-method-header">'
                 '<div class="intel-method-title">Curation Pipeline</div>'
                 '<div class="intel-method-pill">'
-                    + ('read &rarr; confirm &rarr; classify &rarr; size' if _reads_tape
+                    + ('read &rarr; confirm &rarr; classify &rarr; overlay &rarr; size'
+                       if _overlay else
+                       'read &rarr; confirm &rarr; classify &rarr; size' if _reads_tape
                        else 'cluster &rarr; allocate &rarr; size')
                 + '</div>'
             '</div>'
@@ -230,7 +349,11 @@ def _render_system_tab(training_window: List):
                            'and seven market-strength views, the hedge fitted on up to three '
                            'drivers and applied only as far as it has earned out of sample. '
                            'Weekly rungs are rebuilt from the forming week.'
-                       '</div>'
+                           + (' <b>Momentum</b>: the 12-1 total return &mdash; the close '
+                              f'{MMOM_SKIP} sessions ago over the close {MMOM_LOOK} ago &mdash; '
+                              'ranked across the priced names, from daily closes since '
+                              f'{MMOM_HISTORY_START[:4]}.' if _overlay else '')
+                       + '</div>'
                        if _reads_tape else
                        '<div class="tile-label">Cluster</div>'
                        '<div class="tile-body">'
@@ -274,17 +397,34 @@ def _render_system_tab(training_window: List):
                                        '<b>graded</b>: inside its cell a name&rsquo;s weight moves toward '
                                        'the neighbouring cell by the tapes&rsquo; drawn intensity, as the '
                                        'Pine shades them; a held row keeps between half and all of its '
-                                       'cell, by how intensely the push holding it is drawn. Every name '
-                                       'is held.'),
-                          }.get(_m_spec["short"] if _m_spec["short"] in ("ERC", "HRP", "EQUAL", "CVG")
-                                else "EQUAL", _m_spec["formula"])
+                                       'cell, by how intensely the push holding it is drawn. '
+                                       + _held_html),
+                            "MMOM": ('Managed Momentum: the Conviction-Value Grid&rsquo;s weights '
+                                     '&mdash; units ' + _CVG_UNITS_HTML + ', graded and '
+                                     'row-confirmed exactly as on a grid run &mdash; plus '
+                                     '<code>s &middot; rank<sub>i</sub> / N</code>, the rank '
+                                     f'centred in [&minus;1, 1] and N = the {_n_alloc} names '
+                                     'allocated over (the universe, not the position count). '
+                                     'The strength is <code>s = '
+                                     f'&lambda; &times; gate &times; scale</code>, &lambda; = {MMOM_LAMBDA:g}: '
+                                     'the <b>gate</b> is 0 while the equal-weighted market&rsquo;s '
+                                     '24-month return is negative, the state in which momentum '
+                                     'crashes (Daniel &amp; Moskowitz), and the <b>scale</b> is '
+                                     '<code>min(1, median / current)</code> of the overlay&rsquo;s '
+                                     'own six-month volatility (Barroso &amp; Santa-Clara), so it only '
+                                     f'ever shrinks. No name falls below {MMOM_FLOOR:.0%} of its grid '
+                                     'weight. ' + _held_html),
+                          }.get(_m_spec["short"], html_module.escape(str(_m_spec["formula"])))
                     + '</div>'
                 '</div>'
 
                 '<div class="intel-method-tile">'
                     '<div class="tile-label">What it targets</div>'
                     '<div class="tile-body">'
-                        + _m_spec["evidence"].replace("--", "&mdash;")
+                        # Escaped: the registry's evidence is prose, and a "<"
+                        # in a quoted t-statistic must not open a tag.
+                        + html_module.escape(str(_m_spec["evidence"]), quote=False)
+                              .replace("--", "&mdash;")
                     + '</div>'
                 '</div>'
 

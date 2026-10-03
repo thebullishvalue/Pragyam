@@ -7,6 +7,291 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [12.1.0] - 2026-10-03
+
+A fifth style, **Managed Momentum (MMOM)**: the Conviction-Value Grid plus a crash-managed
+12-1 momentum overlay. It came out of a style search (finalists and bar fixed before the holdout) and led the best of the
+eight earlier styles and blends in every era on Nifty 50 and Dow 30 — by +0.25 to +1.66 %/yr,
+none of it significant (largest per-era t over the best earlier style 1.13; over the full span
+Nifty +1.78 %/yr against CVG at t 1.75 and +2.57 against EW at t 2.6, nominal — none survives
+the 43-configuration correction or the survivorship caveat) — but not on a point-in-time Dow
+(−0.19 %/yr against CVG). Every figure is an every-name book; top-N books were never measured
+for it. Read it as the grid with a tilt.
+
+### ✨ Added — Managed Momentum, the grid plus a crash-managed 12-1 overlay
+
+- **Managed Momentum (MMOM)** — `nco.METHOD_SPECS["MMOM"]`: family accumulation, `uses_cvg`
+  and `uses_momentum`, reads no covariance (`needs_covariance: False`, `rc_target: "none"`).
+  `METHOD_ORDER` is now EQUAL · ERC · HRP · CVG · MMOM. The grid's weights, exactly as on a CVG
+  run, with a momentum overlay added on top:
+
+  ```
+  weight_i = max( cvg_i + λ · gate · scale · rank_i / N ,  ¼ · cvg_i ),   λ = 1
+
+  N        the names the book is allocated over (every priced name: the universe, not the
+           position count)
+  rank_i   centred cross-sectional rank in [−1, 1] of the 12-1 return
+           (close t−21 / close t−252 − 1) over the priced names; < 10 scored → 0
+  gate     0 while the equal-weighted market's 24-month (504-bar) return is negative,
+           else 1; under a year of history it is not read and stays open
+  scale    min(1, median / today's) of the unit overlay's 126-day realised volatility,
+           the median expanding over month starts, from 7 readings; it only shrinks
+  ```
+
+  Then the usual last step: top-N by weight, the 10% cap, integer units. At strength 1 the
+  strongest 12-1 name gains one equal share (1/N) over its grid weight and the weakest gives
+  up as much. The overlay is the literature's: 12-1 momentum (Jegadeesh & Titman 1993), added
+  to a book whose heaviest cells are its cheap ones, value and momentum being negatively
+  correlated in every market studied (Asness, Moskowitz & Pedersen 2013); off in the state in
+  which momentum crashes, a negative two-year market return (Daniel & Moskowitz 2016); and
+  scaled by its own recent volatility (Barroso & Santa-Clara 2015). The windows are the
+  papers'; the median target, capped at 1, is this style's. Constants `MMOM_LAMBDA`,
+  `MMOM_LOOK` / `MMOM_SKIP`, `MMOM_GATE`, `MMOM_VOL_WIN`, `MMOM_FLOOR`, `MMOM_MIN_RANKED`,
+  `MMOM_MIN_VOL_MONTHS`, `MMOM_HISTORY_START`.
+- **The floor: no name below ¼ of its grid weight** (`MMOM_FLOOR`, the grid's own
+  Distribution-to-Idle ratio, 0.25 : 1). The form the search tested clipped at 0, so even a
+  book meant to hold every name held as few as 37 Nifty, 24 Dow and 25 ETF names — a style that
+  re-decides how many positions you hold breaks the position-count contract. The floor keeps
+  every weight positive, so the book always fills the position count requested; in the
+  every-name books measured, every priced name is held (39-50 Nifty, 28-30 Dow, 27 ETF). It
+  does not keep a name in a smaller book: below the universe size the floored names are the
+  first cut (Nifty 50 at 30 positions: 5-9 names floored a month over the past year, none
+  held). The floor binds on 0-10 Nifty names a month (mean 5.4), 0-7 Dow (3.0), 0-4 ETF
+  (1.9) — counted over the universe before top-N (`nco_mmom_floored`;
+  `nco_mmom_floored_held` is how many of them the book holds) — and costs about 0.1 %/yr
+  (below).
+- **`backdata.fetch_close_history(symbols, start_date, end_date)`** — one yfinance batch of
+  daily closes, the same adjusted closes as the snapshots' `price`, columns named as the
+  snapshots name them (`.NS` dropped). Symbols the batch missed get the snapshot panel's own
+  second pass (`_recover_missing_symbols`), and a symbol listed twice (an ADR and its NSE
+  line both named INFY) keeps its last column, as the panel does. A close that repeats the
+  one before it, in a run of ≥ 10 consecutive repeats (11 identical closes), is unpriced —
+  dead quotes: NESTLEIND from the start of yfinance's history to Jan 2010 (986 repeats from
+  Jan 2006 in the app's fetch; 786 sessions inside the research panels, which start Oct
+  2006), BAJAJ-AUTO for 45 sessions around its 2008 relisting (`backdata.mask_dead_quotes`).
+  Behind the circuit breaker; returns None rather than raising. The app reads it from
+  `nco.MMOM_HISTORY_START` (2006-01-01), fetched to today with `mask_dead_quotes=False` and
+  masked only after slicing to the run date, so a quote's repeats after that date cannot
+  unprice a close before it.
+- **`compute_nco_portfolio(..., price_history=None)`** — a wide close panel (date × symbol).
+  Only MMOM reads it; every other style ignores it. nco normalises it (a naive, sorted
+  DatetimeIndex, one row per day and one column per symbol) and cuts it to the book's own
+  date, so a history cached to a later day cannot lend the overlay a later market. Without it
+  the overlay could only read the estimation panel (`build_price_matrix(history)`, about 19
+  months, ~400 sessions), which cannot hold the 24-month gate, so it **stands down**: strength 0, the book
+  is the grid's, `nco_mmom_stood_down` = "estimation panel too short for the 24-month gate",
+  `nco_mmom_source` = `"estimation panel"`, `nco_mmom_history_short` set.
+- **Book attrs** — `nco_mmom_gate`, `_market_24m`, `_scale`, `_strength` (λ × gate × scale),
+  `_overlay_vol`, `_overlay_vol_median`, `_vol_months`, `_ranked`, `_floored` (over the
+  universe, before top-N), `_floored_held` (how many of those the book holds), `_coverage`
+  (share 0-1 of the allocated names with a close in the history; a name without one ranks 0),
+  `_stood_down` (why the overlay stood down, else None), `_history_days`, `_history_start`,
+  `_source`, `_lambda`, `_floor`, `_history_short`; the `momentum` (12-1) and `momentum_z`
+  columns; `nco_momentum_lambda` (= strength) and `nco_momentum_applied` (True only when the
+  strength is above 0 and at least 10 names are ranked, so it agrees with
+  `ui.shared.mmom_state()["tilted"]`); and the grid's attrs (`nco_cvg_census`, …), as on a
+  CVG book. For **every** style, `nco_positions_unfunded` / `nco_unfunded_symbols`: rows whose
+  weight buys less than one share at this capital (an expensive name such as MARUTI on a
+  50-name Nifty book at ₹10L).
+- **Run flow (`app.py`)** — a **Close history** step: the cached loader
+  `_load_close_history` (1-hour TTL, the same symbol resolution as the panel loader, keyed by
+  universe: fetched to today and sliced to the run date, so another analysis date reuses it)
+  and a log of who reads the closes (this book or a comparison book), the span requested and
+  received, cache hit or miss, and the symbol count. Every style's comparison book is built
+  on every run, so the closes are always fetched: one cached batch per universe, about 5s for
+  Nifty 50. A failed download is not cached; the step warns that the overlay stands down to
+  the grid. The Allocate step logs the overlay: strength, the gate with the 24-month market
+  return it read, the volatility scale (current vs median and the month-start readings),
+  names ranked, names at the floor and how many the book holds, the history read. The
+  execution summary gains a **Momentum Overlay** row; a comparison MMOM book logs a one-line
+  readout.
+- **Portfolio tab, on an MMOM run** — the grid's columns, map, census and watchlist, plus a
+  **12-1 %** column after Map units (Map units is the weight *before* the overlay) and a
+  **Momentum Overlay** strip: Strength, Bear Gate, Volatility Scale, Ranked, At the Floor
+  (with how many of the floored names the book holds), History. The risk heatmap carries a
+  Momentum row only while the overlay actually tilts the weights; when it does not, the notes
+  say the weights are the grid's and why (gate shut, stood down, too few names ranked).
+- **System tab** — Run Settings rows for the overlay, gate, scale, ranks, floor and history;
+  the methodology's Allocate text for MMOM, built from the `nco` constants; the pipeline pill
+  reads read → confirm → classify → overlay → size.
+- **Notices** — the notice rail, the strip's History tile and a System-tab note warn when an
+  MMOM book stood down (no close history) or read under 24 months of history; a
+  missing-closes notice when part of the universe has no close in the history
+  (`nco_mmom_coverage` < 1); and, for any style, an unfunded-positions notice naming the rows
+  that buy no whole share (`nco_positions_unfunded`). In Analytics, a comparison book built
+  on less history is named under the Style Comparison table ("Built on less history").
+
+### 🔬 Research — how it was found (`research/`, not imported by the app)
+
+- **`research/style_blends.py`** — every shipped style head to head, plus four blends
+  (HRP+CVG, HRP+EW, CVG+EW, HRP+CVG+EW); every name held, Nov 2006 – Sep 2026, three eras,
+  net of costs. No blend beat Equal Weight or CVG on return; HRP+CVG beat ERC on return /
+  volatility in 6 of 6 cells. It found the **dead-quote defect**: yfinance carries
+  NESTLEIND.NS flat from the start of its history to Jan 2010 (786 sessions inside these
+  panels, which start Oct 2006; 986 repeats from Jan 2006 in the app's fetch) and
+  BAJAJ-AUTO.NS for 45 sessions around its 2008 relisting. A zero-variance name takes nearly
+  all of an inverse-variance split — raw HRP put 100% on NESTLEIND in 2009. Repaired by
+  unpricing closes in runs of ≥ 10 consecutive repeats, the rule `fetch_close_history` now
+  applies; the repair moved Nifty HRP from 18.75% to 19.31% CAGR (E1 18.60 → 20.21) and EW
+  from 19.45% to 19.69%.
+- **`research/etf_blends.py`** — the 27 funds priced since Feb 2025, daily-marked, Mar 2025 –
+  Oct 2026. Nothing beat Equal Weight on return and no style held up across the two
+  sub-windows: every style trailed EW through the 2025 rally and led it through the flat 2026.
+- **`research/style_search.py`** — the search (protocol, finalists and bar fixed before the holdout) for a style that beats all
+  eight (the four earlier styles and four blends). Five agent families — A reversal /
+  capitulation, B momentum, C return-seeking weighting, D anomaly tilts, E ensembles /
+  rotation — and 43 configurations in all (A 10, B 9, C 9, D 6, E 9;
+  `research/candidates/*.py`). Discovery on 2007-19 (E1 < 2014, E2 2014-19), Nifty 50 and
+  Dow 30; holdout 2020+ and the 27-fund ETF window, run once on the finalists. The bar: net
+  CAGR above the best of the eight in all six stock cells. The count: every configuration
+  tried, for a family-wise haircut.
+- **`research/style_search_holdout.py`** — the one holdout run. Only managed_mom
+  (`research/candidates/b_momentum.py`) cleared the bar, at λ = 1 and λ = 2. λ = 2 led by more
+  but zeroed up to 6 Nifty names and trailed CVG by 0.63 %/yr on the point-in-time Dow; λ = 1
+  ships — a choice made after the holdout (see Caveats). Bonferroni over 43 configurations
+  leaves every adjusted p at 1.0. Its verdict recommended a point-in-time Nifty test before any
+  product decision; that test was not run. New: **`--attribution`** prints the per-name E3
+  active contribution of the tested managed_mom (λ = 1 and 2) over CVG — the source of the
+  late-entrant figures under Caveats, which it reproduces; it also showed the old Dow quote
+  had skipped NKE and WMT, the Dow's second and third names, now listed.
+- **`research/style_search_pit.py`** — the Dow rebuilt on point-in-time membership for 2020+,
+  registered after the holdout was seen, as a check on it. managed_mom λ = 1 trailed CVG by
+  0.06 %/yr (t −0.15). The ranks are over each day's members; the bear gate and the
+  volatility scale read the full panel, non-members included (as `mmom_ship.py`'s
+  point-in-time books also do). No point-in-time Nifty panel exists (it needs NSE's
+  constituent history).
+- **`research/mmom_ship.py`** — the shipped code re-measured: `nco.compute_nco_portfolio(method="MMOM")`
+  on the same panels, book, costs and eras as every other style, every name held. Its weights
+  match the tested form plus the floor to max |Δw| 4.2e-17 over 584 month-books (236 Nifty,
+  236 Dow, 19 ETF, 93 point-in-time Dow).
+
+### 📏 Measured — the shipped code (`research/mmom_ship.py`)
+
+Monthly, every name held, net of 10bp India / 3bp US costs; E1 2007-13, E2 2014-19, E3 2020+.
+Net CAGR %; margin = MMOM minus the best of the eight earlier styles and blends in that cell
+(H = HRP, C = CVG, EW = Equal Weight), paired t in brackets:
+
+```
+                         Nifty 50                   Dow 30               ETF (27)
+                   E1      E2      E3         E1      E2      E3        Mar 2025 →
+best of eight    20.21H  19.68C  22.59C     14.39EW 18.50C  15.06C       17.57EW
+CVG              19.16   19.68   22.59      14.17   18.50   15.06        17.09
+EW               17.93   18.83   22.31      14.39   18.32   14.23        17.57
+MMOM shipped     21.23   21.34   24.17      14.63   18.88   15.31        19.35
+  margin         +1.02   +1.66   +1.58      +0.25   +0.39   +0.25        +1.79
+  (t)            (0.75)  (0.84)  (1.13)     (0.28)  (0.41)  (0.15)       (0.53)
+tested form      21.38   21.44   24.28      14.61   18.90   15.45        19.53
+  margin         +1.17   +1.77   +1.70      +0.22   +0.41   +0.39        +1.96
+
+Full span (Feb 2007 → Sep 2026; ETF from Mar 2025), net
+              CAGR    vol   ret/vol   maxDD   turnover/yr
+Nifty  MMOM   22.26  22.40   1.02    −57.2     1.89
+       CVG    20.48  22.65   0.94    −58.5     1.48
+       EW     19.69  22.25   0.93    −58.4     0.37
+Dow    MMOM   16.15  16.91   0.98    −39.1     1.83
+       CVG    15.78  16.73   0.97    −39.3     1.41
+       EW     15.52  16.48   0.96    −39.9     0.27
+ETF    MMOM   19.35  12.68   1.47     −7.5     1.71
+       CVG    17.09  13.05   1.28     −7.2     1.39
+       EW     17.57  13.70   1.25     −8.0     0.20
+
+Point-in-time Dow, E3 (that day's members, 29-30 names)
+       MMOM 11.28 · CVG 11.47 (best of eight) · EW 11.00 · tested form 11.41
+       → −0.19 vs CVG (t −0.28), +0.28 vs EW
+```
+
+Shipped beats the best of the eight in 6 of 6 stock cells, as the tested form did. The floor's
+cost, shipped − tested: Nifty −0.15 / −0.10 / −0.12, Dow +0.02 / −0.02 / −0.14, ETF −0.18,
+point-in-time Dow E3 −0.13 %/yr, at about 0.1x/yr less turnover. Over the full span MMOM leads
+CVG by +1.78 %/yr on Nifty (paired monthly t 1.75) and +0.37 on the Dow (t 0.56) at the
+grid's volatility and 1.2-1.3x its turnover, and Equal Weight by +2.57 on Nifty (t 2.64; E1
+alone t 2.12) and +0.63 on the Dow (t 0.97) — nominal t's, computed in review from the monthly
+net returns `mmom_ship.py` builds (it does not print them). Every figure here is an every-name
+book (`num_positions` = the universe); top-N books were never measured for MMOM. The bear gate
+shut 10 Nifty months (2008-11 → 2009-05, 2020-04 → 06) and 13 Dow months (2008-11 → 2009-11),
+never on the ETF window. The volatility scale averaged 0.96 Nifty / 0.90 Dow
+/ 0.86 ETF (minimum 0.61 / 0.39 / 0.57), 0.74 on the point-in-time Dow in E3.
+
+### ⚠️ Caveats — stated plainly
+
+- **Not significant.** The largest per-era paired t over the best of the eight is 1.13 (Nifty
+  E3); Dow E3 is 0.15. Over the full span, Nifty against CVG +1.78 %/yr at t 1.75 and against
+  EW +2.57 at t 2.6 (E1 against EW t 2.1) — nominal. The shipped form is a post-holdout
+  variant of one of 43 configurations, so none of it survives a family-wise correction (any
+  family-wise p is 1.0), nor the survivorship caveat below.
+- **Every-name books only.** Every figure holds every priced name (`num_positions` = the
+  universe). Top-N books — the app's default whenever the universe is larger than the
+  position count, e.g. Nifty 50 at 30 — were never measured for MMOM; there momentum also
+  picks which names are held, and the floored names are the first cut.
+- **The 2020+ edge sits in a few names, led by late index entrants.** The stock panels are
+  today's constituents. The tested form's summed E3 active contribution over CVG (gross, every
+  name held; `python research/style_search_holdout.py --attribution`): Nifty +10.3 pts — BSE
+  +5.1, TRENT +3.7, BEL +2.4, ADANIENT +1.9, JSWSTEEL +1.5, M&M +1.4; BAJAJFINSV −2.2,
+  SBILIFE −1.9 — the top five carrying 143% of the total; Dow +2.0 pts, the net of larger bets
+  — NVDA +5.8, NKE +2.0, WMT +1.3, AMZN +1.0, CAT +0.8, CRM +0.8; DOW −2.4, DIS −2.1 — the top
+  five carrying 533%. Momentum held the late entrants (BSE, TRENT, BEL, ADANIENT; NVDA, AMZN,
+  CRM) through runs that came before they joined the index; a book confined to the index's
+  members could not have.
+- **On a point-in-time Dow it does not lead:** −0.19 %/yr against CVG (t −0.28), +0.28 against
+  EW — a tie at best. The ranks there are over each day's members; the bear gate and the
+  volatility scale read the full panel, non-members included, as the research reference did.
+- **The Nifty is untested on point-in-time membership.** Its E3 margin rests on the same kind
+  of names and is unverified.
+- **Three decisions made after the holdout.** λ = 1 over the discovery-ranked λ = 2, chosen
+  on the point-in-time Dow (λ = 2 −0.63 %/yr against CVG) and the position-count result (λ = 2
+  zeroed up to 6 Nifty names); the ¼ floor, measured above at about −0.1 %/yr; and the
+  month-to-date volatility reading — on a first-of-month rebalance that piece is empty, so
+  this calendar cannot test it, and a book built mid-month in the app can differ from the
+  books measured. The holdout's own verdict recommended a point-in-time Nifty test before any
+  product decision, and it was not run (`research/style_search_holdout.py`, RESULT).
+- **The gate rarely shuts:** two episodes on Nifty and one on the Dow in twenty years, so
+  E1's margin rests on few events. The research panels' closes start in Oct 2006, so for the first
+  22 Nifty and 21 Dow rebalances (to late 2008) the gate read under its 24 months; the app
+  reads from 2006-01-01.
+- **It trades more:** 1.2-1.3x the grid's turnover, 5-7x Equal Weight's on the stock panels.
+- **The ETF book is 19 months** (t 0.53). Nothing there can be ruled on.
+
+### 🔧 Changed
+
+- The Style Comparison builds four comparison books per run (was three). The long-run note
+  under its table reads "against Equal Weight unless the line names another bar": MMOM's
+  `long_run` names the best of the eight earlier styles and blends. MMOM's comparison line is
+  dashed (`PEER_DASH`).
+- The masthead tagline is built from `METHOD_ORDER`, as the selector already was.
+- The cold-start PORTFOLIO panel no longer says "Nothing forecasts a return": it names which
+  styles forecast nothing and what the grid and MMOM read.
+- The System tab HTML-escapes the registry's evidence sentence.
+- `METHOD_SPECS["EQUAL"]["evidence"]` reads "The default because nothing beat it
+  reproducibly" (was "nothing beat it") and adds that Managed Momentum led it in every era
+  tested, not significantly and partly on late index entrants; the README's style table says
+  the same.
+- The `pyproject.toml` description and `nco.py`'s module docstring describe five styles:
+  Equal Weight, ERC and HRP forecast nothing; the grid and Managed Momentum read the tape, and
+  Managed Momentum also a 12-1 momentum rank. The description had Equal Weight selecting
+  "from the return covariance structure", which it does not read; the docstring said the
+  stack "makes no return forecast of any kind".
+- README: a Managed Momentum section; every list of styles updated for five; the intro no
+  longer says every book is built only to spread risk; the data-flow paragraph describes the
+  close history, its cache and the stand-down.
+- Version 12.0.1 → 12.1.0 (`ui/theme.py`, `pyproject.toml`, `requirements.txt`, README).
+
+### 🐞 Known issues — recorded, not fixed
+
+- **The README's Nifty 50 ERC and HRP long-run figures may have read the NESTLEIND dead
+  quote.** They come from the 36-candidate allocator harness ("Why Equal Weight is the
+  default"; also the ERC, HRP and Equal Weight `evidence` / `long_run` text in `METHOD_SPECS`),
+  which is not in this repository, so it cannot be re-run to check. In `style_blends.py`'s
+  first iteration the same defect understated Nifty HRP's CAGR by 0.56 %/yr over the full
+  span (1.61 in E1). On repaired data `style_blends.py` measures ERC −0.75 and HRP −1.03 %/yr
+  against EW on Nifty 50 (−1.33 and −2.70 on Dow 30, which has no such run) — a different
+  harness and span, not like for like.
+- The close history is fetched on every run, whatever the style, because every comparison
+  book is built. One cached batch per universe and day (fetched to today, sliced to each run
+  date, kept for the hour); on Nifty 500 or S&P 500 it is a 500-symbol, 20-year batch (about
+  a minute on Nifty 500).
+- The README cites `research/README.md` and `research/conviction_value_grid.py`; neither is in
+  this repository.
+
 ## [12.0.1] - 2026-09-28
 
 ### Fixed

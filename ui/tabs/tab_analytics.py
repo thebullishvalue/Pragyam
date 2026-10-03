@@ -27,7 +27,8 @@ from ui.components import (
     render_section_header,
     render_table_panel,
 )
-from ui.shared import NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec
+from ui.shared import (NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, mmom_state, num,
+                       style_spec)
 from nco import METHOD_ORDER, METHOD_SPECS
 import html as html_module
 from datetime import date, datetime
@@ -53,7 +54,8 @@ SHADOW_LABEL = "EW Shadow"
 
 # The dash each style's book is drawn with as a comparison line. Fixed per
 # style rather than by position, so a style looks the same whichever one ran.
-PEER_DASH = {"EQUAL": "solid", "ERC": "dashdot", "HRP": "longdash", "CVG": "longdashdot"}
+PEER_DASH = {"EQUAL": "solid", "ERC": "dashdot", "HRP": "longdash", "CVG": "longdashdot",
+             "MMOM": "dash"}
 
 # Below this many daily returns the gap between two books is not read for
 # noise at all: a t-statistic over a couple of weeks is itself mostly noise.
@@ -179,7 +181,7 @@ def _render_style_comparison(
     port_returns: pd.Series, bench_returns: Optional[pd.Series], rf: float,
     peer_books: Dict[str, pd.DataFrame], peer_out: Dict[str, Dict[str, Any]],
     has_peers_key: bool, peer_notes: Dict[str, str], has_shadow: bool,
-    requested: int,
+    requested: int, peer_caveats: Optional[Dict[str, str]] = None,
 ) -> None:
     """Style Comparison — this book against the book each OTHER style builds
     from the same run.
@@ -231,6 +233,7 @@ def _render_style_comparison(
     }]
     left_out: List[str] = []
     partial: List[str] = []
+    caveats: List[str] = []
     for code in METHOD_ORDER:
         if code == method:
             continue
@@ -263,6 +266,10 @@ def _render_style_comparison(
             "Overlap": sum(min(w_book.get(s, 0.0), w) for s, w in w_peer.items()) * 100.0,
             "Shared": f"{len(set(w_book) & set(w_peer))}/{len(w_peer)}",
         })
+        if code in (peer_caveats or {}):
+            # Built and compared, on less input than the style asks for — said
+            # beside the row rather than left for the run log to carry.
+            caveats.append(f"**{label}** — {html_module.escape(peer_caveats[code])}")
         if entry.get("unpriced"):
             partial.append(f"**{label}** without "
                            + html_module.escape(", ".join(entry["unpriced"][:6]))
@@ -313,6 +320,7 @@ def _render_style_comparison(
         + (f" **Equal Weight** is the style as it would have run, so it holds different "
            f"names from the **{SHADOW_LABEL}**, which splits this book's own names 1/N: "
            f"{_ew_why}." if _ew_why else "")
+        + (" Built on less history: " + "; ".join(caveats) + "." if caveats else "")
         + (" Valued on the priced remainder: " + "; ".join(partial) + "." if partial else "")
         + (" Not compared: " + "; ".join(left_out) + "." if left_out else "")
     )
@@ -320,8 +328,9 @@ def _render_style_comparison(
     # chosen or rejected on is the long run, and it belongs beside the window
     # so the window is not read as a ranking.
     render_note(
-        "**One window from one date ranks nothing.** The long-run record against Equal "
-        "Weight, from monthly rebalancing over years on three universes:"
+        "**One window from one date ranks nothing.** The long-run record, from monthly "
+        "rebalancing over years on three universes — against Equal Weight unless the line "
+        "names another bar:"
         + "".join(f"<br>**{html_module.escape(str(METHOD_SPECS[c]['label']))}** · "
                   f"{html_module.escape(str(METHOD_SPECS[c].get('long_run', '')))}"
                   for c in METHOD_ORDER if METHOD_SPECS[c].get("long_run"))
@@ -563,12 +572,23 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         # What to expect of the gap depends on what the style's weights are
         # FOR. A risk allocator gives up return for the volatility it removes;
         # the grid sizes by state, and measured over years its weighting ran
-        # within half a percent a year of 1/N either way.
+        # within half a percent a year of 1/N either way. Managed Momentum adds
+        # a momentum tilt to the grid, whose measured edge is not significant.
         _sspec = style_spec(_run_ctx)
+        _mmx = mmom_state(portfolio.attrs)
         _expect = (
             "Expect this to be negative as often as not: the allocator targets risk, and the "
             "return it gives up is the price of the volatility it removes."
             if _sspec.get("needs_covariance", True) else
+            "Expect this to swing either way: the grid sizes by state and the overlay tilts "
+            "toward the stronger 12-1 returns, neither by risk, and the overlay's measured "
+            "edge is not significant — over a window it reads as the grid's gap plus noise."
+            if _sspec.get("uses_cvg") and _sspec.get("uses_momentum")
+            and (_mmx is None or _mmx["tilted"]) else
+            "Expect this to swing either way: today the overlay "
+            + ("stood down" if _mmx and _mmx["stood_down"] else "is off")
+            + ", so this book's weights are the grid's, which sizes by state, not risk."
+            if _sspec.get("uses_cvg") and _sspec.get("uses_momentum") else
             "Expect this to be small and to swing either way: the grid sizes by state, not "
             "risk, and over years of monthly rebalancing its weighting ran within half a "
             "percent a year of 1/N."
@@ -708,6 +728,7 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         peer_books=_peer_books, peer_out=peer_out, has_peers_key="peers" in _run_ctx,
         peer_notes=_run_ctx.get("peer_notes") or {}, has_shadow=_has_alt,
         requested=int(_run_ctx.get("num_positions") or len(portfolio)),
+        peer_caveats=_run_ctx.get("peer_caveats") or {},
     )
 
     # ── Relationship to benchmark ─────────────────────────────────────────────

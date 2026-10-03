@@ -17,6 +17,7 @@ import numpy as np
 
 from ui.theme import (chart_color, chart_layout, chart_rgba, diverging_scale,
                       panel_bg, style_axes)
+from ui.shared import mmom_state
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -178,12 +179,18 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
       Risk Share    share of PORTFOLIO VARIANCE this holding contributes
       Volatility    its own annualized volatility
       Independence  1 - |correlation to the finished book|
-      Momentum      the 12-1 rank score (only for methods that tilt on it)
+      Momentum      the 12-1 rank score (only for methods that tilt on it, and
+                    only while the tilt is applied — a Managed Momentum book
+                    whose bear gate is shut reads none)
       Conviction    Pragati's conviction tape — green where buyers control
       Value         Pragati's value tape — green where price is cheap
       Push          Pragati's histogram as drawn — green where conviction is
                     being pushed up
-                    (all three only on a Conviction-Value Grid book, which reads them)
+                    (all three only on a book built on the grid — the
+                    Conviction-Value Grid or Managed Momentum — which reads them)
+
+    A Managed Momentum book carries both blocks: the Momentum row, then the
+    three tape rows.
 
     Colour is a within-row percentile, so each dimension is read against its own
     peers rather than on incompatible absolute scales.
@@ -215,7 +222,15 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
 
     attrs = getattr(portfolio, "attrs", {}) or {}
     rc_target = attrs.get("nco_rc_target", "none")
-    uses_momentum = bool(attrs.get("nco_uses_momentum", False))
+    # A style that reads momentum but did not apply it today is drawn without
+    # the row: its weights are the grid's, and a Momentum row would imply a
+    # tilt the book lacks. For Managed Momentum that is a shut bear gate, or
+    # too few names with a 12-1 return to rank (the ranks are then all 0) —
+    # read through mmom_state so this chart and the tab's caption agree.
+    _mm = mmom_state(attrs)
+    uses_momentum = (bool(attrs.get("nco_uses_momentum", False))
+                     and (bool(attrs.get("nco_momentum_applied", True)) if _mm is None
+                          else _mm["tilted"]))
     uses_cvg = bool(attrs.get("nco_uses_cvg", False))
 
     df = portfolio.copy()
@@ -475,7 +490,8 @@ def create_cluster_correlation_heatmap(corr: "pd.DataFrame | None",
 
 
 def create_conviction_value_map(universe: "pd.DataFrame | None") -> go.Figure:
-    """Every name placed by Pragati's two tapes — what the Conviction-Value Grid sized.
+    """Every name placed by Pragati's two tapes — what the Conviction-Value Grid sized,
+    and what Managed Momentum's overlay is added to.
 
     Conviction across, value up (+ rich). The dotted lines are each tape's own
     knee — the inner zone at ±30, θ at ±42.9 — and they cut the plane into the
