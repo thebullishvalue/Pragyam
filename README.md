@@ -145,8 +145,8 @@ streamlit run app.py
 | Style | Family | Behaviour |
 |---|---|---|
 | **Equal Weight** *(default)* | baseline | Identical `1/N` per holding. The default because nothing beat it reproducibly — Managed Momentum led it in every era tested, not significantly; see below. Lowest turnover of any style. |
-| **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes while trading ~5× less. |
-| **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. Same job as ERC at five times the turnover; kept for continuity. |
+| **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style on return: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes, at about a third of its turnover. In-repo (every name held, net, 2007-26): −0.39 %/yr against Equal Weight on Nifty 50 and −1.27 on Dow 30, at volatility 20.1 / 15.3 against 22.3 / 16.5. |
+| **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. The deepest volatility and drawdown cut of the styles (volatility 18.6 / 14.3, max drawdown −50.6% / −36.3% on Nifty 50 / Dow 30), at a larger return cost than ERC (−0.56 / −2.70 %/yr against Equal Weight) and about 3× its turnover. Measured holding every name: at 30 of 50 positions it is the 30 lowest-variance names (18.48 %/yr against 19.13). |
 | **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction on Ladder down (the intraday frames inside each day; D · W before intraday history), value on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
 | **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return is negative and scaled down while the overlay's own volatility runs above its median; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped, every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +1.02 / +1.66 / +1.58 %/yr, Dow 30 +0.25 / +0.39 / +0.25), none significant (largest per-era t 1.13; full-span Nifty vs CVG +1.78 %/yr at t 1.75, nominal); −0.19 %/yr against CVG on a point-in-time Dow. Top-N books never measured. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
 
@@ -169,7 +169,9 @@ method with a reproducible return improvement over `1/N`**:
 
 What *does* reproduce is the ordering **among the risk-reduction styles**: ERC
 beats HRP on the any-date hit rate in every cell tested, on both stock
-universes, at a fifth of the turnover. That is a real improvement to the risk
+universes, at a fifth of the turnover in that search (about a third on the
+in-repo harness, `research/style_search.py`, where HRP is the deeper volatility
+and drawdown cut). That is a real improvement to the risk
 leg — which the rest of this README has always said is the leg that reproduces.
 
 The v12.1 style search did not overturn this. Managed Momentum led Equal Weight

@@ -77,9 +77,10 @@ Equal Risk Contribution (ERC) and NCO were both implemented and measured
 alongside HRP. In those two windows ERC achieved perfect risk balance (1.00x
 against HRP's 1.5-1.7x) and matched HRP on return and Sharpe to within noise;
 NCO trailed HRP on return, Sharpe and drawdown in both. ERC has since shipped as
-the preferred risk-reduction style — it beats HRP on the any-date hit rate in 6
-of 6 cells across two stock universes at about a fifth of the turnover
-(METHOD_SPECS["ERC"]) — and neither beats Equal Weight reproducibly on return.
+the preferred risk-reduction style on return — it beats HRP on the any-date hit
+rate in 6 of 6 cells across two stock universes, at about a third of its turnover
+on the in-repo harness (METHOD_SPECS["ERC"]); HRP is the deeper volatility and
+drawdown cut — and neither beats Equal Weight reproducibly on return.
 See CHANGELOG for the figures.
 
 Author: @thebullishvalue
@@ -466,12 +467,17 @@ METHOD_SPECS = {
         "uses_cvg": False,
         "rc_target": "equal",
         "needs_covariance": True,
-        "evidence": ("The preferred risk-reduction style: it beats HRP on the any-date hit "
-                     "rate in 6 of 6 cells across both stock universes while trading about "
-                     "FIVE TIMES less (0.26x/yr vs 1.31x on Nifty 50). It does NOT beat "
-                     "equal weight on return (-0.51%/yr Nifty, -1.48% Dow) — it delivers "
-                     "near-equal-weight returns at beta 0.92 and lower volatility."),
-        "long_run": "-0.51%/yr on Nifty 50 and -1.48% on Dow 30, at beta 0.92 and lower volatility",
+        "evidence": ("The preferred risk-reduction style on return: it beats HRP on the "
+                     "any-date hit rate in 6 of 6 cells across both stock universes (the "
+                     "36-candidate search, not in this repository). On the in-repo harness "
+                     "(research/style_search.py: monthly, every name held, net of costs, "
+                     "2007-26) it does NOT beat equal weight on return (-0.39%/yr Nifty 50, "
+                     "-1.27% Dow 30), at lower volatility (20.1 vs 22.3, 15.3 vs 16.5) and "
+                     "about a third of HRP's turnover (0.42x/yr vs 1.23x on Nifty 50). "
+                     "Shrinkage: Ledoit-Wolf (2004) constant correlation, with its rho term "
+                     "since v12.2."),
+        "long_run": ("-0.39%/yr on Nifty 50 and -1.27% on Dow 30 (2007-26, every name held), "
+                     "at volatility 20.1 / 15.3 against Equal Weight's 22.3 / 16.5"),
         "sip_default": False,
     },
     "HRP": {
@@ -488,11 +494,19 @@ METHOD_SPECS = {
         "uses_cvg": False,
         "rc_target": "cluster",
         "needs_covariance": True,
-        "evidence": ("Cuts volatility and drawdown against equal weight but loses to it on "
-                     "return in all three universes (-1.08% Nifty, -2.94% Dow) and won 0 of "
-                     "115 five-year SIP streams. ERC does the same job with a fifth of the "
-                     "turnover and beats HRP on any-date in every cell tested."),
-        "long_run": "-1.08%/yr on Nifty 50 and -2.94% on Dow 30, at lower volatility and drawdown",
+        "evidence": ("The deepest volatility and drawdown cut of the styles on the in-repo "
+                     "harness (research/style_search.py: monthly, every name held, net of "
+                     "costs, 2007-26): volatility 18.6 against Equal Weight's 22.3 and ERC's "
+                     "20.1 on Nifty 50, 14.3 against 16.5 / 15.3 on Dow 30; max drawdown "
+                     "-50.6% vs -58.4% and -36.3% vs -39.9%. It pays on return (-0.56%/yr "
+                     "Nifty 50, -2.70% Dow 30 against Equal Weight) at about three times "
+                     "ERC's turnover, and won 0 of 115 five-year SIP streams. Measured "
+                     "holding every name: at the default 30 positions on Nifty 50 the book "
+                     "is the 30 lowest-variance names (18.48%/yr against 19.13, turnover "
+                     "1.67x)."),
+        "long_run": ("-0.56%/yr on Nifty 50 and -2.70% on Dow 30 (2007-26, every name held), "
+                     "the deepest volatility and drawdown cut: volatility 18.6 / 14.3, "
+                     "max drawdown -50.6% / -36.3%"),
         "sip_default": False,
     },
     # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
