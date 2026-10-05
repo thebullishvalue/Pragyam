@@ -335,9 +335,9 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
                      "keeps every weight positive, so the book always fills its positions"
                      + ("; at the full universe every name stays held."
                         if mm["whole"] else
-                        f", but floored names are the lowest weights: at {req} of {n_uni} "
-                        "they are the first cut, and the count before top-N covers the "
-                        "whole universe."))},
+                        f"; at {req} of {n_uni} floored names usually fall outside the book "
+                        "(a floored Dislocated name can still outweigh an unfloored Idle "
+                        "one), and the count before top-N covers the whole universe."))},
         {"label": "History", "value": f"{mm['days']:,}d",
          "subtext": (mm["source"]
                      + (f" · from {mm['start']:%Y}" if mm["start"] is not None else "")
@@ -377,8 +377,9 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
           "point-in-time Dow it does no better than the grid: read the book as the grid with a "
           "tilt, not as a momentum fund."
         + ("" if mm["whole"] else
-           f" Every measured figure is a book holding every name; a top-{req} book like this "
-           "one was never measured.")
+           f" In a top-{req} book like this one momentum mostly picks the names held: "
+           "measured ahead of the grid on Nifty 50 at 30 positions, but 1.8-5.0 %/yr behind "
+           "it on the Dow since 2020.")
     )
 
 

@@ -115,6 +115,35 @@ point-in-time Dow. Net CAGR %, margin over the best of the eight in each cell (p
     The honest description is a momentum tilt on the grid that led all eight styles in every cell
     on today's constituents, by margins indistinguishable from noise, and tied CVG on the Dow's
     members of the day. It is not evidence that the style reliably beats CVG or Equal Weight.
+
+RE-MEASURED (2026-10-05) on the v12.2 code and data — the audit's fixes: the overlay stands down
+below 505 rows whatever its history (MM-B5), carried gate and scale returns (MM-B1), closes <= 0
+unpriced (MM-B7), calendar windows (MM-B2; no change on these panels), the HRP / ERC input fixes,
+and the research panels repaired for yfinance's unadjusted corporate actions (style_blends.repair;
+BAJAJFINSV 2008 x2, ADANIENT 2015, TMPV 2025, TRENT 2026). Pickles rebuilt.
+
+  --app-history (the overlay reads backdata.fetch_close_history from 2006, as the app does):
+                                  Nifty 50                       Dow 30                     ETF (27)
+                          E1      E2      E3            E1      E2      E3                 Mar 25 →
+  best of the eight    20.08H+C 19.89C  22.97C        14.39EW 18.50C  15.06C                17.57EW
+  MMOM shipped         20.51   21.46   24.33         15.11   18.88   15.31                 19.37
+    margin             +0.43   +1.57   +1.37         +0.72   +0.39   +0.24   6/6           +1.80
+    (t)                (0.57)  (0.80)  (0.98)        (0.70)  (0.41)  (0.14)                (0.54)
+  Full span: Nifty 22.10 vs CVG 20.95 (+1.15, t 1.03) and EW 20.10 (+2.01, t 1.98); Dow 16.32 vs
+  15.78 (+0.53, t 0.81) and 15.52 (+0.80, t 1.23). Point-in-time Dow E3, the overlay reading that
+  day's members only (MM-B8): MMOM 11.06 · CVG 11.47 · EW 11.00 → −0.42 vs CVG (t −0.49).
+  Gate shut 9 Nifty months (2008-11 → 2009-04, 2020-04 → 06), 13 Dow; overlay off before 2008-01
+  (history under 505 rows). Scale mean 0.96 / 0.90 / 0.86 (min 0.58 / 0.39 / 0.54).
+
+  default (the research panel's own closes from Oct 2006): Nifty 20.74 / 21.45 / 24.33, Dow
+  14.58 / 18.88 / 15.31, ETF 19.35, point-in-time 11.05; margins +0.66 / +1.56 / +1.36, +0.19 /
+  +0.39 / +0.25 — 6/6.
+
+  · The Nifty E1 cell is won because the HRP fixes lowered HRP's E1 (20.21 → 19.99 on the repaired
+    panel; best is now HRP+CVG 20.08). Against v12.1's HRP on the repaired panel (20.81) the cell is
+    lost by 0.07 (research path) to 0.30 (app path) — the audit's skeptic, scratch skep/combo.py.
+  · Exactness no longer holds by construction: the shipped form stands down before 505 rows and,
+    with --app-history, reads a different history from managed_mom (max |Δw| 3.4e-02).
 """
 from __future__ import annotations
 

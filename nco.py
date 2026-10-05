@@ -471,13 +471,13 @@ METHOD_SPECS = {
                      "any-date hit rate in 6 of 6 cells across both stock universes (the "
                      "36-candidate search, not in this repository). On the in-repo harness "
                      "(research/style_search.py: monthly, every name held, net of costs, "
-                     "2007-26) it does NOT beat equal weight on return (-0.39%/yr Nifty 50, "
-                     "-1.27% Dow 30), at lower volatility (20.1 vs 22.3, 15.3 vs 16.5) and "
+                     "2007-26) it does NOT beat equal weight on return (-0.49%/yr Nifty 50, "
+                     "-1.27% Dow 30), at lower volatility (20.1 vs 22.2, 15.3 vs 16.5) and "
                      "about a third of HRP's turnover (0.42x/yr vs 1.23x on Nifty 50). "
                      "Shrinkage: Ledoit-Wolf (2004) constant correlation, with its rho term "
                      "since v12.2."),
-        "long_run": ("-0.39%/yr on Nifty 50 and -1.27% on Dow 30 (2007-26, every name held), "
-                     "at volatility 20.1 / 15.3 against Equal Weight's 22.3 / 16.5"),
+        "long_run": ("-0.49%/yr on Nifty 50 and -1.27% on Dow 30 (2007-26, every name held), "
+                     "at volatility 20.1 / 15.3 against Equal Weight's 22.2 / 16.5"),
         "sip_default": False,
     },
     "HRP": {
@@ -496,17 +496,17 @@ METHOD_SPECS = {
         "needs_covariance": True,
         "evidence": ("The deepest volatility and drawdown cut of the styles on the in-repo "
                      "harness (research/style_search.py: monthly, every name held, net of "
-                     "costs, 2007-26): volatility 18.6 against Equal Weight's 22.3 and ERC's "
+                     "costs, 2007-26): volatility 18.7 against Equal Weight's 22.2 and ERC's "
                      "20.1 on Nifty 50, 14.3 against 16.5 / 15.3 on Dow 30; max drawdown "
-                     "-50.6% vs -58.4% and -36.3% vs -39.9%. It pays on return (-0.56%/yr "
+                     "-50.1% vs -56.5% and -36.3% vs -39.9%. It pays on return (-0.78%/yr "
                      "Nifty 50, -2.70% Dow 30 against Equal Weight) at about three times "
                      "ERC's turnover, and won 0 of 115 five-year SIP streams. Measured "
                      "holding every name: at the default 30 positions on Nifty 50 the book "
-                     "is the 30 lowest-variance names (18.48%/yr against 19.13, turnover "
+                     "is the 30 lowest-variance names (18.58%/yr against 19.32, turnover "
                      "1.67x)."),
-        "long_run": ("-0.56%/yr on Nifty 50 and -2.70% on Dow 30 (2007-26, every name held), "
-                     "the deepest volatility and drawdown cut: volatility 18.6 / 14.3, "
-                     "max drawdown -50.6% / -36.3%"),
+        "long_run": ("-0.78%/yr on Nifty 50 and -2.70% on Dow 30 (2007-26, every name held), "
+                     "the deepest volatility and drawdown cut: volatility 18.7 / 14.3, "
+                     "max drawdown -50.1% / -36.3%"),
         "sip_default": False,
     },
     # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
@@ -569,26 +569,34 @@ METHOD_SPECS = {
         "needs_covariance": False,
         "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
                      "43 configurations, chosen on 2007-19, run once on 2020+) and re-measured "
-                     "as shipped, floor included (research/mmom_ship.py; monthly, every name held, "
-                     "net of 10bp India / 3bp US costs). Against the best of the eight earlier "
-                     "styles and blends in each era (2007-13 / 2014-19 / 2020+): Nifty 50 +1.02 / "
-                     "+1.66 / +1.58 %/yr, Dow 30 +0.25 / +0.39 / +0.25; +1.79 %/yr over Equal "
-                     "Weight on the 27-fund ETF book (19 months). Full-span CAGR: Nifty 22.26% vs "
-                     "CVG 20.48%, Dow 16.15% vs 15.78%, at CVG's volatility and 1.2-1.3x its "
-                     "turnover. None of it is significant: the largest per-era t over the best "
-                     "earlier style is 1.13 (Nifty 2020+); over the full span Nifty leads CVG by "
-                     "+1.78 %/yr (t 1.75) and Equal Weight by +2.57 (t 2.6), nominal. The shipped "
-                     "form is a post-holdout variant (λ, floor, month-to-date volatility) of one "
-                     "of 43 tries, so none of it survives a family-wise correction, nor the "
+                     "as shipped after the v12.2 audit (research/mmom_ship.py --app-history: the "
+                     "app's close history from 2006, monthly, every name held, net of 10bp "
+                     "India / 3bp US costs, yfinance's unadjusted demergers repaired). Against "
+                     "the best of the eight earlier styles and blends in each era (2007-13 / "
+                     "2014-19 / 2020+): Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / "
+                     "+0.39 / +0.24; +1.80 %/yr over Equal Weight on the 27-fund ETF book (19 "
+                     "months). Full span: Nifty 22.10% vs CVG 20.95%, Dow 16.32% vs 15.78%, at "
+                     "CVG's volatility and 1.3x its turnover. None of it is significant: the "
+                     "largest per-era t over the best earlier style is 0.98; over the full span "
+                     "Nifty leads CVG by +1.15 %/yr (t 1.03) and Equal Weight by +2.01 (t 1.98), "
+                     "nominal. The Nifty 2007-13 lead holds only because the v12.2 HRP fixes "
+                     "lowered HRP's; on the v12.1 HRP code it is lost. The shipped form is a "
+                     "post-holdout variant (λ, floor, month-to-date volatility) of one of 43 "
+                     "tries, so none of it survives a family-wise correction, nor the "
                      "survivorship of today's constituents: the 2020+ edge sits in a few names, "
                      "led by late index entrants (BSE, TRENT, BEL, ADANIENT; NVDA, AMZN, CRM). On "
-                     "a point-in-time Dow it trails CVG by 0.19 %/yr (t -0.28); no point-in-time "
-                     "Nifty was tested. Every figure is an every-name book; top-N books were "
-                     "never measured. Expect CVG-like results, not a reliable premium."),
+                     "a point-in-time Dow, its overlay reading only that day's members, it "
+                     "trails CVG by 0.42 %/yr (t -0.49); no point-in-time Nifty was tested. Its "
+                     "crash gate reads today's constituents, a laxer market than an index (an "
+                     "index gate measured worse). In a book cut below the universe the names "
+                     "held are mostly the 12-1 leaders: ahead of the grid on Nifty 50 at 30 "
+                     "positions, 1.8-4.3 %/yr behind it on the Dow 2020+ at 25-10 positions and "
+                     "1.9-5.0 behind on a point-in-time Dow (measured on v12.1). In a full book "
+                     "expect CVG-like results, not a reliable premium."),
         "long_run": ("vs the best of the eight earlier styles and blends, 2007-13 / 2014-19 / 2020+: "
-                     "Nifty 50 +1.02% / +1.66% / +1.58%/yr, Dow 30 +0.25% / +0.39% / +0.25%/yr — "
-                     "none significant (largest per-era t 1.13; full-span Nifty vs CVG t 1.75, "
-                     "nominal), every-name books only; -0.19%/yr vs CVG on a point-in-time Dow"),
+                     "Nifty 50 +0.43% / +1.57% / +1.37%/yr, Dow 30 +0.72% / +0.39% / +0.24%/yr — "
+                     "none significant (largest per-era t 0.98; full-span Nifty vs CVG t 1.03), "
+                     "every-name books; -0.42%/yr vs CVG on a point-in-time Dow"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -1335,7 +1343,8 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     sel = list(chosen.index)
     if _mmom is not None:
         # The floor is counted over the universe before top-N; this is how many of those the
-        # book actually holds (below the universe size the floored names are the first cut).
+        # book actually holds: usually none below the universe size, though a floored
+        # Dislocated name can outweigh an unfloored Idle one and make the cut.
         _mmom["floored_held"] = int(sum(s in _floored_names for s in sel))
     # Which HOLDINGS carry a covariance estimate. Identical to `sel` for every
     # covariance-driven style. On an equal-weight book it can be a strict subset,

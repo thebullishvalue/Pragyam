@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [12.2.0] - 2026-10-05
+
+An audit release. CVG, HRP and Managed Momentum were each audited by a committee (three readers,
+a chair, a skeptic who tried to refute every bug on real data, a tester who ran the
+pre-registered opportunities through the product code: `research/audit_cvg.py`,
+`research/audit_hrp.py`, `research/audit_mmom.py`). Every reported bug reproduced. Fixes ship
+here; changes to a style's behaviour are listed under *Found, not shipped* and wait on the owner.
+
+### 🐛 Fixed — data every style reads
+
+- **Unadjusted corporate actions** (MM-B3). yfinance leaves some Indian demergers and mis-dated
+  splits raw: BAJAJFINSV −64% (2008-03-14) and −93% (2008-05-26), ADANIENT −39% (2015-06-03),
+  TMPV −40% (2025-10-14), TRENT −33% (2026-01-01). `backdata.corporate_action_gaps` reads an
+  Indian listing's ≥ 30% move on a ≥ 30% overnight gap as one, and `back_adjust` rescales the
+  bars before it (causal: no other return changes), in `fetch_close_history` and in
+  `generate_historical_data`. Not applied to other listings, where a real 30% earnings gap is
+  common. The research panels get the same repair (`style_blends.repair` / `unsplit`): every
+  style had been scored on those losses — Nifty 50 Equal Weight 19.69 → 20.10 %/yr full span,
+  CVG 20.48 → 20.95.
+- **The forming bar** (CVG-B2). A run before a market's close dropped nothing, so today's
+  half-formed bar (partial volume, a moving close) was read as a session; it moved the Nifty
+  book 2-5% by the hour. Each name's bar for today is dropped until its market closes.
+- **Holiday prints** (CVG-B8): flat, zero-volume NSE rows dropped before the tapes (hygiene;
+  −0.04 %/yr measured).
+- **Idle cash** (CVG-B3). Whole-share flooring left up to ~14% of a ₹5L, 50-name book in cash —
+  −1.6 %/yr on CVG since 2020. The leftover is spent a share at a time on the holding furthest
+  below target, never past the cap; `nco_cash`, `nco_topup_shares`.
+
+### 🐛 Fixed — HRP and ERC (the estimation inputs)
+
+- Closes ≤ 0 and dead quotes (≥ 10 repeats) unpriced before returns; `pct_change(fill_method=None)`
+  so gaps are not padded into zero returns; a column whose variance is under 1% of the median
+  left out (B1, B3). A frozen J&KBANK (NIFTY SMLCAP 250, 2016-17) took HRP's 10% cap and
+  flattened the rest of the book.
+- `MIN_COVERAGE` 0.8 → 0.95 (B2): with `dropna(how="any")`, one late listing cut every name's
+  window by up to 20%, and NIFTY SMLCAP 250 got no HRP or ERC book.
+- `hrp_weights` raises on non-finite input instead of switching method silently; an unknown
+  method name raises (B4, B6).
+- `ledoit_wolf` gains the ρ term of Ledoit & Wolf (2004) (B7, ERC): it had over-shrunk, fully in
+  12 Nifty and 39 Dow month-starts.
+- T/n, dead quotes and exclusions in the run log; the empty-book message gives T and n and stops
+  advising a larger universe (D4).
+- Measured on the unrepaired panel: HRP Nifty 50 2007-13 −0.69 %/yr (t −1.7), other cells
+  within ±0.3, ETF +0.46; ERC within ±0.25, +0.61 (t 2.0) at 30 positions on Nifty 50.
+- Docs (D1-D3, D5, D6): HRP is the deepest volatility and drawdown cut (Nifty vol 18.7 vs EW
+  22.2 / ERC 20.1), at −0.78 / −2.70 %/yr against Equal Weight (Nifty / Dow) and ~3x ERC's
+  turnover — not "ERC's job at five times the turnover"; the Ward panel is a diagnostic for HRP
+  too; the hrp_weights docstring; the 30-of-50 HRP book is the low-volatility subset; the cap's
+  headroom rule.
+
+### 🐛 Fixed — the Conviction-Value Grid
+
+- `nco_flat_by_cap` and a run-log note when the cap forces 1/N (B6).
+- Ladder-down flag and tape only on bars with an intraday rung (B5).
+- Driver pool (B9): 1482.T (a yen-hedged US Treasury fund) and CBON out of Global 10Y,
+  SETF10GILT read from 2021, EXX6.DE at duration 14. `DRIVER_LATE` 0 (B10): European drivers
+  were read for NSE names 5½-6½ h after the NSE close. Each within ±0.04 %/yr.
+- Docs (B11-B14): units history, UNREAD's underweight beside read names, held-row grading.
+
+### 🐛 Fixed — Managed Momentum
+
+- Gate and scale returns on closes carried over gaps of ≤ 5 sessions (MM-B1).
+- `mmom_windows`: > 300 rows in the trailing year reads 365 / 30 / 730 / 183-row windows
+  (MM-B2); the Crypto gate had read shut at −22% on a +26% market. `nco_mmom_windows`.
+- The overlay stands down below 24 months of history whatever history it read (MM-B5;
+  `MMOM_MIN_HISTORY`); closes ≤ 0 unpriced (MM-B7); one listing per stripped name (MM-B11).
+- Re-measured as shipped with the app's close history (`mmom_ship.py --app-history`): margins
+  over the best earlier style Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / +0.39 / +0.24
+  (v12.1: +1.02 / +1.66 / +1.58, +0.25 / +0.39 / +0.25), still 6/6, none significant (largest t
+  0.98); full span Nifty +1.15 vs CVG (t 1.03). The Nifty 2007-13 cell holds only because the
+  HRP fixes lowered HRP's E1. Point-in-time Dow with members-only history (MM-B8): −0.42 vs CVG
+  (v12.1 quoted −0.19, letting the overlay read non-members).
+- Docs (MM-B4, B10, B12): a cut book is mostly momentum's pick — Nifty 50 at 30 positions ahead
+  of the grid, the Dow 2020+ 1.8-5.0 %/yr behind it; "floored names are the first cut" was not
+  always true; the crash gate reads today's constituents, a laxer market than an index.
+
+### 🔬 Found, not shipped (each a product decision)
+
+- **CVG-B1, Ladder down.** The live conviction tape averages the daily rung with every intraday
+  frame and restores no variance: its cross-sectional sd falls from ~30 (D · W) to ~14 with seven
+  rungs, so the ±30 knee shifts bar to bar, and no rebalance scored today's tape. `LADDER = "up"`:
+  CVG 2020+ +0.18 Nifty / +0.06 Dow, MMOM +0.20 / +0.09 %/yr (not significant). Reverses 12.0.0's
+  decision.
+- **HRP O1-A**, a staggered-window average (0/21/42 sessions): CAGR up in all six cells (+0.12 to
+  +0.38, none significant), turnover −40%, ETF −0.25. **HRP-B5**, a data-derived dendrogram
+  orientation, ends the book's dependence on universe-file order at a per-era cost within noise.
+- **MMOM MM-O1**, a two-sided volatility scale capped at 1.5: ahead in every cell, thinly
+  (Nifty full span +0.27, t 2.6 nominal; Dow near identity), measured on v12.1. **MM-B6**, the
+  gate read at the month start: stops mid-month whipsaws (36.5% one-day turnover, 2026-09-28).
+  MM-O2 (overlapping formations) failed.
+- **CVG-B4**, a longer tape window: 1 name in 8 sits in a different state than full-history
+  tapes; performance-neutral, costs run time. **CVG-B7**: every backtest rebalances on the first
+  trading day; CVG's Nifty margin over EW spans ±0.35 across rebalance days.
+
+---
+
 ## [12.1.0] - 2026-10-03
 
 A fifth style, **Managed Momentum (MMOM)**: the Conviction-Value Grid plus a crash-managed

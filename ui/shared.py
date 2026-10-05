@@ -136,7 +136,8 @@ def mmom_state(attrs) -> Optional[dict]:
         "ranks_enough": ranked >= MMOM_MIN_RANKED,
         # The floor is counted over the universe BEFORE top-N; `floored_held` is
         # how many of those the book holds (None on a book built before nco
-        # recorded it). Below the universe size floored names are the first cut.
+        # recorded it). Below the universe size floored names usually fall outside the
+        # book, though a floored Dislocated name can outweigh an unfloored Idle one.
         "floored": int(at.get("nco_mmom_floored", 0) or 0),
         "floored_held": int(held) if held is not None else None,
         "floor": num(at.get("nco_mmom_floor")) or MMOM_FLOOR,

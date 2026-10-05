@@ -1,6 +1,6 @@
 [project]
 name = "pragyam"
-version = "12.1.0"
+version = "12.2.0"
 description = "Portfolio curation over a fixed ETF universe in five styles: three that forecast nothing — Equal Weight (1/N), and Equal Risk Contribution and Hierarchical Risk Parity, which weight from the return covariance structure — and two that read the tape: a Conviction-Value Grid that sizes each name by its cell in the 3 × 3 of the Pragati indicator's conviction and value tapes, with the pane's histogram deciding when a name changes row, and Managed Momentum, the grid plus a 12-1 momentum overlay switched off while the market's 24-month return is negative and scaled down while the overlay's own volatility runs above its median; with an eight-factor market-regime read for context, a Broker Sync step that writes curated units into broker order JSONs, and an Analytics tab tracking the book against a universe-matched benchmark, an equal-weight shadow of the same holdings, and the book each other style builds from the same run — @thebullishvalue"
 requires-python = ">=3.10"
 dependencies = [
