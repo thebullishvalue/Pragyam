@@ -112,7 +112,7 @@ from universe import (
     resolve_universe,
     render_universe_selector,
 )
-from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec,
+from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec, MIN_OBS,
                  MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP,
                  MMOM_GATE, MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS)
 from cvgrid import STATE_LABEL as CVG_STATE_LABEL, STATES as CVG_STATES
@@ -719,7 +719,7 @@ def _render_landing_page() -> None:
                         + " — every one travels the identical pipeline"},
             {"label": "Estimation Window", "value": f"{_CALIBRATION_LOOKBACK_FILES}d",
              "subtext": "Daily observations behind the covariance, over a universe that "
-                        "must carry 80% of it to be estimated"},
+                        f"must carry {MIN_COVERAGE:.0%} of it to be estimated"},
             {"label": "Position Cap", "value": "10%",
              "subtext": "Per holding, relaxed only where it and full allocation are not "
                         "simultaneously satisfiable"},
@@ -1428,7 +1428,8 @@ def _run_analysis(
                             _t.ok(f"{len(_price_history)} trading days · "
                                   f"{_price_history.shape[1]} symbols")
 
-                _stage60 = ("Allocating Across Clusters" if _spec["uses_clusters"]
+                _stage60 = ("Bisecting by Cluster Variance" if _method == "HRP"
+                            else "Allocating Across Clusters" if _spec["uses_clusters"]
                             else "Balancing Risk Contributions" if _spec["rc_target"] == "equal"
                             else "Sizing by Grid State and Momentum"
                             if _spec.get("uses_cvg") and _spec.get("uses_momentum")
@@ -1486,6 +1487,20 @@ def _run_analysis(
                                            if "nco_mmom_strength" in _ba else ""))
                         if "nco_mmom_strength" in _book.attrs:
                             _log_mmom_overlay(_t, _book.attrs)
+                        _ba = _book.attrs
+                        if _spec.get("needs_covariance", True):
+                            # What the covariance was estimated on: T rows over n names, so a
+                            # book estimated near T/n = 1 is visibly noise-bound, and what the
+                            # estimation builder unpriced or left out (nco.build_returns_matrix).
+                            _t.item("Estimation", f"T {_ba.get('nco_obs', 0)} rows · "
+                                    f"T/n {_ba.get('nco_obs_per_asset', float('nan')):.2f}")
+                            if _ba.get("nco_dead_quotes"):
+                                _t.detail("dead quotes unpriced (≥ 10 repeated closes): " + ", ".join(
+                                    f"{c.replace('.NS', '')} {n}" for c, n in _ba["nco_dead_quotes"].items()))
+                            if _ba.get("nco_degenerate"):
+                                _t.note("left out — near-zero return variance: " + ", ".join(
+                                    f"{c.replace('.NS', '')} ({r:.1e}× median)"
+                                    for c, r in _ba["nco_degenerate"].items()))
                         _t.ok(f"{len(_book)} positions from "
                               f"{_book.attrs.get('nco_universe', 0)} eligible names")
 
@@ -1518,9 +1533,11 @@ def _run_analysis(
                     "carries the step it failed on."
                     if _curation_error is not None else
                     f"{investment_style} could not build a portfolio — the return "
-                    "covariance was not estimable (too few overlapping observations "
-                    "for this universe and date). Try an earlier analysis date, a "
-                    "larger universe, or a later analysis date."
+                    f"covariance was not estimable: {_book.attrs.get('nco_obs', 0)} overlapping "
+                    f"daily returns for {_book.attrs.get('nco_n_est', 0)} names with enough "
+                    f"history, and it needs at least {MIN_OBS} rows and one per name. A larger "
+                    "universe makes this worse; a smaller one, or Equal Weight / the "
+                    "Conviction-Value Grid (which read no covariance), will build."
                     if _needs_cov else
                     f"{investment_style} could not build a portfolio — no symbol in this "
                     "universe returned a usable price for the selected date. Check the "
@@ -1626,6 +1643,9 @@ def _run_analysis(
                            f"{st.session_state.max_pos_pct*100:.0f}% — infeasible at this "
                            "position count)"
                            if abs(_cap_eff - st.session_state.max_pos_pct) > 1e-9 else ""))
+                if _at.get("nco_flat_by_cap"):
+                    _t.note(f"at {len(_book)} positions the {_cap_eff*100:.0f}% cap holds every name at "
+                            "exactly 1/N — the style chose which names, not their weights")
                 _t.item("Weights", f"min {_w.min():.2f}% · max {_w.max():.2f}% · "
                                    f"equal share {100.0/len(_book):.2f}%")
                 _t.item("Deployed", f"₹{_deployed:,.0f} ({_deployed/capital:.1%}) · "

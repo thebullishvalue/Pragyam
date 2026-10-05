@@ -26,7 +26,7 @@ Author: @thebullishvalue
 
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import warnings
 import os
@@ -35,7 +35,7 @@ from typing import List, Tuple, Dict, Any, Optional, cast
 # Import circuit breaker, metrics and the console
 from circuit_breaker import yfinance_circuit, RetryWithBackoff
 from cvgrid import COLUMNS as CVG_COLUMNS, compute_readings
-from samanvaya import DRIVER_TICKERS
+from samanvaya import DRIVER_TICKERS, _close_utc
 from logger_config import console
 from metrics import get_metrics
 
@@ -899,6 +899,16 @@ def generate_historical_data(
     
     # 2. --- Pre-calculate all indicators for all symbols ---
     ticker_indicator_cache = {}
+    # A run before a market's close receives TODAY's bar still forming (partial volume, a
+    # moving close). Read as a finished session it moved the Nifty book 2.3-4.5% and the
+    # state of 2-18% of names depending on the hour (CVG-B2). Each name's bar for today is
+    # therefore dropped until its own market has closed (samanvaya._close_utc; 24h markets
+    # never close, so their today is always forming); the calendar carry below fills that
+    # date from the last completed session, so readings and price are as of that close.
+    _now = datetime.now(timezone.utc)
+    _today, _hour = pd.Timestamp(_now.date()), _now.hour + _now.minute / 60.0
+    _forming: List[str] = []
+    _holiday_rows = 0
     for i, ticker in enumerate(symbols_to_process):
         try:
             if len(symbols_to_process) > 1:
@@ -913,6 +923,19 @@ def generate_historical_data(
                     symbol_df[col] = pd.to_numeric(symbol_df[col], errors='coerce')
             
             symbol_df = symbol_df.dropna(subset=['close', 'volume'])
+            # Exchange holiday prints: a flat (high == low), zero-volume row on a day the
+            # exchange was shut, which yfinance emits for NSE names. Not a session, so not a
+            # bar for the tape engines (CVG-B8; data hygiene, measured -0.04%/yr on Nifty).
+            # Only for instruments that report volume at all: FX and most indices never do.
+            if {'high', 'low'}.issubset(symbol_df.columns) and (symbol_df['volume'] > 0).any():
+                _flat = (symbol_df['volume'] <= 0) & (symbol_df['high'] == symbol_df['low'])
+                if _flat.any():
+                    _holiday_rows += int(_flat.sum())
+                    symbol_df = symbol_df[~_flat]
+            if (len(symbol_df) and symbol_df.index[-1].normalize() == _today
+                    and _hour < _close_utc(ticker)):
+                symbol_df = symbol_df.iloc[:-1]
+                _forming.append(ticker)
             symbol_df.name = ticker
             
             if not symbol_df.empty:
@@ -936,6 +959,11 @@ def generate_historical_data(
                 f"Skipping {ticker}: indicator computation failed ({type(e).__name__}: {e})")
             continue
 
+    if _forming:
+        console.warning(f"intraday run · today's bar is still forming for {len(_forming)} symbol(s) — "
+                        "their readings and prices are as of the last completed close")
+    if _holiday_rows:
+        console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) before the tapes")
     _skipped_indicators = [s for s in symbols_to_process if s not in ticker_indicator_cache]
     console.detail(
         f"indicators computed for {len(ticker_indicator_cache)} of "

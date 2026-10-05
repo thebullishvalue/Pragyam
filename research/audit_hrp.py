@@ -316,7 +316,7 @@ def cov_ok(R: pd.DataFrame) -> bool:
     """The shipped estimability rule in nco.compute_nco_portfolio."""
     n = R.shape[1]
     return (not R.empty and n >= 2 and len(R) >= nco.MIN_OBS
-            and len(R) >= nco.MIN_OBS_PER_ASSET * n / 4.0)
+            and len(R) >= nco.MIN_OBS_PER_ASSET * n)          # T >= n, before and after MIN_OBS_PER_ASSET 4 -> 1
 
 
 def sample(R: pd.DataFrame):

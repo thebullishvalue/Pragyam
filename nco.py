@@ -94,12 +94,14 @@ import pandas as pd
 
 from cvgrid import STATE_ORDER, STATE_UNITS, graded_units
 
-# Minimum return observations before a covariance estimate is trusted. Below
-# roughly 4x the asset count the sample covariance is too noisy to cluster on,
-# and the whole premise of this module is that the covariance is the reliable
-# input.
+# Minimum return observations before a covariance estimate is trusted: MIN_OBS
+# outright, and at least one observation per asset (T >= n). One per asset is a
+# floor, not a comfort level: HRP inverts nothing and ERC solves on the
+# Ledoit-Wolf-shrunk matrix, so both can run at T/n near 1, but a book estimated
+# there is mostly sample noise. compute_nco_portfolio records T/n in
+# `nco_obs_per_asset` so the run log can say so.
 MIN_OBS = 60
-MIN_OBS_PER_ASSET = 4.0
+MIN_OBS_PER_ASSET = 1.0
 
 # Cluster-count search range for the silhouette selection.
 MAX_CLUSTERS = 8
@@ -107,8 +109,23 @@ MAX_CLUSTERS = 8
 # Fraction of the lookback a symbol must have data for to be eligible. A symbol
 # present for only part of the window would otherwise force a choice between
 # dropping every date it is missing (which collapses the sample) or imputing
-# returns it never had.
-MIN_COVERAGE = 0.8
+# returns it never had. Every admitted name's gaps are then dropped for ALL names
+# (dropna(how="any")), so this is also the most one late listing can cost the
+# whole estimation window: at 0.8 a name listed 50 sessions ago cut every name's
+# sample by 20% and left NIFTY SMLCAP 250 with T < n (no HRP or ERC book).
+MIN_COVERAGE = 0.95
+
+# A close repeating the one before it in a run of at least this many sessions is
+# a dead quote: the same rule as backdata.mask_dead_quotes, copied here so that
+# nco does not import yfinance.
+_DEAD_QUOTE_RUN = 10
+
+# A return column whose variance is non-finite or below this share of the
+# universe's median variance is degenerate (a frozen or broken series that the
+# dead-quote rule did not catch) and is left out of the estimation universe. Clean
+# data sits far above it: the lowest ratio over 494 research month-starts is 0.18,
+# today's live universes 0.12; a frozen J&KBANK (2017) sits at 8.7e-4.
+_DEGENERATE_VAR_RATIO = 0.01
 
 
 def correlation_distance(corr: np.ndarray) -> np.ndarray:
@@ -195,14 +212,18 @@ def ledoit_wolf(R: np.ndarray) -> np.ndarray:
     estimator noise it did not have to carry.
     """
     T, N = R.shape
-    S = np.cov(R, rowvar=False)
+    # Ledoit & Wolf (2004), constant-correlation target, as their covCor.m: the
+    # 1/T sample matrix, and shrinkage (phi - rho) / (T gamma). The rho term was
+    # missing, which over-shrank (median intensity 0.43 vs 0.31 on Nifty 50, and
+    # fully shrunk in 12 Nifty / 39 Dow month-starts).
+    X = R - R.mean(axis=0) if T > 0 else R
+    S = (X.T @ X) / T if T > 0 else np.zeros((N, N))
     var = np.diag(S)
     sd = np.sqrt(np.clip(var, 1e-20, None))
     C = S / np.outer(sd, sd)
     rbar = (C.sum() - N) / (N * (N - 1)) if N > 1 else 0.0
     F = rbar * np.outer(sd, sd)
     np.fill_diagonal(F, var)
-    X = R - R.mean(axis=0)
     # φ = (1/T) Σ_t ‖x_t x_tᵀ − S‖², expanded so it needs two matrix products
     # rather than T outer products:
     #     Σ_t Σ_ij (x_ti x_tj − s_ij)²
@@ -214,7 +235,15 @@ def ledoit_wolf(R: np.ndarray) -> np.ndarray:
     phi = (float((X2.T @ X2).sum() - 2.0 * (S * (X.T @ X)).sum() + T * (S * S).sum()) / T
            if T > 0 else 0.0)
     gamma = ((F - S) ** 2).sum()
-    shrink = float(np.clip(phi / (T * gamma), 0.0, 1.0)) if gamma > 1e-20 else 0.0
+    # ρ = Σ_i π_ii + r̄ Σ_{i≠j} (σ_j/σ_i) ϑ_ij,  ϑ_ij = (1/T) Σ_t (x_ti² − s_ii)(x_ti x_tj − s_ij)
+    if T > 0 and N > 1:
+        pi_diag = (X2 * X2).sum(axis=0) / T - 2.0 * var * var + var * var
+        theta = ((X ** 3).T @ X) / T - var[:, None] * S
+        np.fill_diagonal(theta, 0.0)
+        rho = float(pi_diag.sum() + rbar * (np.outer(1.0 / sd, sd) * theta).sum())
+    else:
+        rho = 0.0
+    shrink = float(np.clip((phi - rho) / (T * gamma), 0.0, 1.0)) if gamma > 1e-20 else 0.0
     return shrink * F + (1.0 - shrink) * S
 
 
@@ -322,29 +351,30 @@ def apply_momentum_tilt(base: np.ndarray, scores: pd.Series,
 
 
 def hrp_weights(cov: np.ndarray, corr: np.ndarray) -> np.ndarray:
-    """Hierarchical Risk Parity (López de Prado 2016).
+    """Hierarchical Risk Parity (López de Prado 2016), as commonly implemented.
 
-    Quasi-diagonalizes the covariance via single-linkage order, then splits
-    capital by recursive bisection, allocating between each pair of sub-clusters
-    in inverse proportion to their cluster variance. Inverts nothing at all,
-    which is why it is the most robust member of this family and the default
-    here — it also produced the best drawdown and the strongest t-statistics of
-    the schemes tested.
+    Single linkage on the condensed correlation distance d = sqrt(0.5(1 - rho))
+    itself (the PyPortfolioOpt convention), not the paper's d~ (the distance
+    between columns of D): d~ was measured and is not better (Nifty -0.24%/yr
+    t -0.83, Dow +0.19 t 1.10, ETF -1.75 t -1.56; research/audit_hrp.py). The
+    leaf order is split in halves recursively, and capital goes between the
+    halves in inverse proportion to their cluster variance. Inverts nothing.
+    Measured performance: METHOD_SPECS["HRP"]["evidence"].
     """
     n = cov.shape[0]
     if n == 1:
         return np.ones(1)
-    try:
-        from scipy.cluster.hierarchy import linkage
-        from scipy.spatial.distance import squareform
-    except Exception:
-        return inverse_variance(cov)
+    # Non-finite input used to change the method without a trace: a NaN variance
+    # turned every split on that name's path into 50/50, a NaN correlation made
+    # linkage raise and the bare except return plain inverse variance.
+    # build_returns_matrix now drops such columns; reaching here with one is a bug.
+    if not (np.isfinite(cov).all() and np.isfinite(corr).all()):
+        raise ValueError("hrp_weights: non-finite covariance or correlation")
+    from scipy.cluster.hierarchy import linkage
+    from scipy.spatial.distance import squareform
 
-    try:
-        d = correlation_distance(corr)
-        Z = linkage(squareform(d, checks=False), method="single").astype(int)
-    except Exception:
-        return inverse_variance(cov)
+    d = correlation_distance(corr)
+    Z = linkage(squareform(d, checks=False), method="single").astype(int)
 
     # Quasi-diagonal ordering: unwind the linkage tree into leaf order.
     srt = pd.Series([Z[-1, 0], Z[-1, 1]])
@@ -390,8 +420,9 @@ def hrp_weights(cov: np.ndarray, corr: np.ndarray) -> np.ndarray:
 # `uses_cvg` whether the weights read Pragati's two tapes (the grid-state columns)
 # `rc_target`   the risk-contribution pattern the method AIMS for, which is what
 #               the risk charts must be scored against. "equal" means the method
-#               targets identical risk shares; "cluster" balances across
-#               clusters; "none" means it does not manage risk contribution at
+#               targets identical risk shares; "cluster" balances between the
+#               halves of a correlation-ordered list (HRP's bisection); "none"
+#               means it does not manage risk contribution at
 #               all.
 # `needs_covariance`  whether the WEIGHTS are computed from the covariance. This
 #               is an eligibility rule, not a description: a style that reads the
@@ -449,7 +480,10 @@ METHOD_SPECS = {
         "family": "preservation",
         "formula": "recursive bisection on cluster variance",
         "tagline": "Clusters by correlation, splits capital by cluster variance",
-        "uses_clusters": True,
+        # False: HRP bisects its own single-linkage leaf order, which the Ward panel is
+        # not (its first split cuts a Ward cluster every month), so the panel is a
+        # diagnostic for HRP too.
+        "uses_clusters": False,
         "uses_momentum": False,
         "uses_cvg": False,
         "rc_target": "cluster",
@@ -746,9 +780,13 @@ def _apply_cap(w: np.ndarray, cap: float) -> np.ndarray:
     before the fix: a min-variance solution concentrated in 8 names came out at
     12.50% each against a 10% cap.
 
-    The correct procedure fixes capped names at the cap and redistributes the
-    remaining mass among the UNCAPPED names only, repeating until no name
-    exceeds it. Feasibility is checked first: capping n names at `cap` can only
+    The procedure here fixes capped names at the cap and fills the shortfall into
+    the HEADROOM (cap - w) of the uncapped names, not pro rata to their weight:
+    the smallest weights gain the most, which pulls the uncapped tail toward
+    equal weight ([0.5, 0.3, 0.2] at a 0.4 cap gives [0.4, 0.333, 0.267], where
+    pro rata gives [0.4, 0.36, 0.24]). Pro rata was measured within noise (|Δ| <=
+    0.12%/yr on any style or era, top-15 to every name; research/audit_cvg.py
+    CVG-B11, audit_hrp.py D6), so the headroom rule is kept. Feasibility is checked first: capping n names at `cap` can only
     reach 100% when n * cap >= 1, so when the allocator concentrates into too
     few names the cap is relaxed to the tightest value that is satisfiable.
     """
@@ -811,7 +849,21 @@ def build_returns_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     if px.empty or px.shape[1] == 0:
         return pd.DataFrame()
 
-    rets = px.pct_change().tail(lookback)
+    # A close <= 0 is not a price, and a dead quote (>= _DEAD_QUOTE_RUN repeats of
+    # the same close) is not a return series: both are unpriced BEFORE returns are
+    # taken. The live estimation panel arrives unmasked (generate_historical_data);
+    # a frozen name otherwise enters the covariance with variance ~0, and HRP gave
+    # it ~100% of raw weight (J&KBANK, NIFTY SMLCAP 250, Oct 2016 - Feb 2017).
+    px = px.where(px > 0)
+    _same = px.diff().eq(0)
+    _run = _same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
+    _dead = _same & (_run >= _DEAD_QUOTE_RUN)
+    dead_counts = {str(c): int(k) for c, k in _dead.sum().items() if k}
+    if dead_counts:
+        px = px.mask(_dead)
+    # fill_method=None: the pandas default pads every interior gap into zero
+    # returns, which re-carries a masked or suspended name at a frozen price.
+    rets = px.pct_change(fill_method=None).tail(lookback)
     if rets.empty:
         return pd.DataFrame()
     cover = rets.notna().sum()
@@ -819,6 +871,17 @@ def build_returns_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     if not keep:
         return pd.DataFrame()
     out = rets[keep].dropna(how="any")
+    # Degenerate columns (non-finite or near-zero variance over the rows kept) are
+    # left out of the estimation universe rather than floored: a floor hands the
+    # frozen name 37-87% of HRP's raw weight, and ERC solves it to the cap too.
+    _v = out.var(ddof=1)
+    _fin = np.isfinite(_v.to_numpy(dtype=float))
+    _med = float(np.median(_v.to_numpy(dtype=float)[_fin])) if _fin.any() else 0.0
+    degenerate = {str(c): (float(_v[c] / _med) if _med > 0 and np.isfinite(_v[c]) else float("nan"))
+                  for c in out.columns
+                  if not np.isfinite(_v[c]) or _v[c] <= 0 or _v[c] < _DEGENERATE_VAR_RATIO * _med}
+    if degenerate:
+        out = out.drop(columns=list(degenerate))
     # Record WHAT was dropped and by how much, so a book built on fewer names
     # than the declared universe can be explained rather than guessed at. A
     # recently listed ETF cannot have a 252-day covariance estimate; excluding
@@ -830,6 +893,8 @@ def build_returns_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     }
     out.attrs["coverage_window"] = int(len(rets))
     out.attrs["coverage_required"] = float(MIN_COVERAGE)
+    out.attrs["dead"] = dead_counts              # dead quotes unpriced, per symbol
+    out.attrs["degenerate"] = degenerate         # symbol -> variance / median variance
     return out
 
 
@@ -1013,6 +1078,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         return empty
 
     _m = str(method).upper()
+    if _m not in METHOD_SPECS:
+        # method_spec() degrades an unknown name to Equal Weight's spec for the UI;
+        # here that ran HRP under EQUAL's eligibility and crashed or mislabelled.
+        raise ValueError(f"unknown method {method!r}; registered: {', '.join(METHOD_SPECS)}")
     _spec = method_spec(_m)
     # Does this style's WEIGHT FORMULA read the covariance? The answer decides
     # which names it is allowed to hold — see the eligibility split below.
@@ -1021,20 +1090,23 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     rets = build_returns_matrix(history, symbols=list(prices.keys()), lookback=lookback)
     est_names = list(rets.columns)
     n_est = len(est_names)
-    # Is the covariance trustworthy? Enough observations outright, and enough per
-    # asset: below roughly 4x the asset count the sample covariance is singular
-    # or close to it, and clustering on it produces arbitrary groupings.
+    # Is the covariance estimable? Enough observations outright, and at least
+    # MIN_OBS_PER_ASSET (one) per asset. Behaviour is unchanged from the old
+    # `4.0 * n / 4.0`; T/n is recorded so a book estimated near 1 is visible.
     cov_ok = (
         not rets.empty
         and n_est >= 2
         and len(rets) >= MIN_OBS
-        and len(rets) >= MIN_OBS_PER_ASSET * n_est / 4.0
+        and len(rets) >= MIN_OBS_PER_ASSET * n_est
     )
     # A style that allocates FROM the covariance cannot proceed without one. A
     # style that does not, can — and must: refusing to build an equal-weight book
     # because a matrix it never looks at was not estimable is a defect dressed as
     # a safeguard.
     if _needs_cov and not cov_ok:
+        # Say WHY, with the numbers: the app's empty-book message reads these.
+        empty.attrs.update(nco_obs=int(len(rets)), nco_n_est=int(n_est),
+                           nco_coverage_window=int(rets.attrs.get("coverage_window", 0)))
         return empty
 
     # ── Two universes, not one ────────────────────────────────────────────────
@@ -1166,7 +1238,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
             # book falls back to plain ERC rather than tilting on noise. The
             # caller can see this happened via the `nco_momentum_names` attr.
     else:
-        w = hrp_weights(cov, corr)
+        raise ValueError(f"no weight rule for registered method {_m!r}")
 
     w = np.nan_to_num(w, nan=0.0)
     if w.sum() <= 1e-12:
@@ -1304,8 +1376,28 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         return empty
     out["weightage_pct"] = out["weightage_pct"] / out["weightage_pct"].sum() * 100.0
     out["units"] = np.floor((capital * out["weightage_pct"] / 100.0) / out["price"])
+    # Flooring to whole shares alone left up to ~14% of capital idle on a Rs 5L, 50-name
+    # book (91.6% invested on average 2020-26, a -1.6%/yr cash drag on CVG); every
+    # measured figure assumes a fully invested book. The leftover is spent one share at a
+    # time on the holding furthest below its target value, never past the position cap,
+    # until no further share is affordable (research/audit_cvg.py, CVG-B3).
+    _units, _px_u = out["units"].to_numpy(dtype=float), out["price"].to_numpy(dtype=float)
+    _target = capital * out["weightage_pct"].to_numpy(dtype=float) / 100.0
+    _cap_value = max(cap_eff, 1.0 / len(out)) * capital + 1e-9
+    _cash = float(capital - (_units * _px_u).sum())
+    _topped = 0
+    while _topped < 200_000:
+        _ok = (_px_u <= _cash + 1e-9) & ((_units + 1.0) * _px_u <= _cap_value)
+        if not _ok.any():
+            break
+        _i = int(np.argmax(np.where(_ok, _target - _units * _px_u, -np.inf)))
+        _units[_i] += 1.0
+        _cash -= _px_u[_i]
+        _topped += 1
+    out["units"] = _units
     out["value"] = out["units"] * out["price"]
-    # Rows whose weight buys less than one share at this capital: in the book, unfunded. Any
+    # Rows that hold no share even after the top-up (the price exceeds the cash left or the
+    # cap): in the book, unfunded. Any
     # style can produce them (a small weight on an expensive name); the grid's floor and
     # Managed Momentum's make them likelier. Recorded so the app can say so, never hidden.
     _unfunded = out.loc[out["units"] <= 0, "symbol"].astype(str).tolist()
@@ -1322,6 +1414,9 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out.attrs["nco_clusters"] = int(k)
     out.attrs["nco_silhouette"] = float(sil)
     out.attrs["nco_obs"] = int(len(rets))
+    out.attrs["nco_obs_per_asset"] = float(len(rets) / n_est) if n_est else float("nan")
+    out.attrs["nco_dead_quotes"] = dict(rets.attrs.get("dead", {}))
+    out.attrs["nco_degenerate"] = dict(rets.attrs.get("degenerate", {}))
     # The set the ALLOCATOR worked over, and the (possibly smaller) set the risk
     # numbers were estimated on. They differ only when a style that needs no
     # covariance holds a name that has none.
@@ -1372,6 +1467,11 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out.attrs["nco_positions_nonzero"] = int(n_nonzero)
     out.attrs["nco_positions_short"] = max(0, int(num_positions) - int(len(out)))
     out.attrs["nco_positions_unfunded"] = int(len(_unfunded))
+    out.attrs["nco_cash"] = float(max(_cash, 0.0))
+    # n x cap <= 1: the cap pins every holding at exactly 1/n (10 positions at 10%, or any
+    # count where the cap was relaxed to 1/n), so the style chose the names, not the weights.
+    out.attrs["nco_flat_by_cap"] = bool(len(out) * max(cap_eff, 1.0 / len(out)) <= 1.0 + 1e-9)
+    out.attrs["nco_topup_shares"] = int(_topped)
     out.attrs["nco_unfunded_symbols"] = list(_unfunded)
     out.attrs["nco_short_cause"] = (
         "none" if len(out) >= num_positions
@@ -1398,8 +1498,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # every name sits in (the census), the readings behind them (for the conviction-value
     # map and the watchlist, which show names the book holds at the floor or not
     # at all), and how far the value tape's macro hedge was earned. `applied` is
-    # False when no name had a reading — every name is then UNREAD at the
-    # neutral unit, the book is 1/N, and the UI must say so.
+    # False when no name had a reading — every name is then UNREAD at the same unit
+    # (1), the book is 1/N, and the UI must say so. Beside read names 1 unit is BELOW
+    # the read average (~1.29 graded units on Nifty and Dow, 1.34 on the ETF book): a
+    # young listing or fund is held at ~0.78x until both its tapes calibrate (CVG-B13).
     out.attrs["nco_uses_cvg"] = _uses_dh
     if _uses_dh and dh is not None:
         _held = set(out["symbol"])
@@ -1436,9 +1538,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         out.attrs["nco_cvg_names"] = 0
         out.attrs["nco_cvg_applied"] = False
     # Full correlation matrix plus the cluster ordering, so the UI can draw the
-    # quasi-diagonalized structure the allocator actually saw. Ordering by
-    # cluster is what makes the block structure visible — the same reordering
-    # HRP uses internally. Absent when there was no estimable covariance to
+    # correlation structure of the estimation universe. Ordering by the Ward
+    # clusters is what makes the block structure visible; it is a diagnostic for
+    # every style — HRP bisects its own single-linkage leaf order, not this one.
+    # Absent when there was no estimable covariance to
     # draw, which the UI reads as "skip the Risk Structure section".
     if cov_ok:
         _order = [est_names[i] for i in np.argsort(labels, kind="stable")]

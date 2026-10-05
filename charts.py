@@ -203,9 +203,10 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
                                   chart is then a direct read on whether the
                                   solver achieved what it was asked to.
       rc_target "cluster" (HRP) — green = risk share BELOW equal. HRP balances
-                                  across clusters, not across holdings, so a
-                                  low-risk name inside a big cluster is a
-                                  correct outcome, not an imbalance.
+                                  between the halves of a correlation-ordered
+                                  list, not across holdings, so a low-risk
+                                  name inside a big group is a correct
+                                  outcome, not an imbalance.
       rc_target "none"   (1/N, MaxDiv) — green = risk share below equal, since
                                   neither method manages risk contribution at
                                   all and the honest read is simply "who is

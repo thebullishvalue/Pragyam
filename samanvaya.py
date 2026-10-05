@@ -54,10 +54,13 @@ number offered, and the hedge is applied only as far as it has earned. Volatilit
 indices are deliberately absent — the Pine warns against hedging a target
 against its own volatility.
 
-DRIVER TIMING, as the Pine: a driver whose daily bar closes more than a third
-of a day after the name's is read at its PREVIOUS close — the value known when
-the name closed. US drivers against an NSE name are 10½ hours late and lag a
-day; European and Japanese ones do not.
+DRIVER TIMING: a driver whose daily bar closes AFTER the name's is read at its
+PREVIOUS close — the value known when the name closed. The Pine lags only a
+driver more than a third of a day late, which read European bonds for an NSE
+name 5½-6½ hours after the NSE close (look-ahead by construction); at
+DRIVER_LATE = 0 they lag too, as US drivers against an NSE name and futures,
+DXY and FX against a US name now do (measured immaterial: +0.004%/yr Nifty,
++0.02 Dow; research/audit_cvg.py, CVG-B10).
 
 What is not carried: the ▲▼ ◆ signal machinery and everything that exists only
 for it (the basket-warm gate, the arm/confirm state). Only the readings.
@@ -94,7 +97,7 @@ CLIP_Z = 3.0
 VAR_CORR_LEN = 200      # window for the leg correlation
 LEG_MIX = 0.5           # weight on the RV leg — Samanvaya's measured best
 THETA = 1.5             # entry threshold θ, in |z|
-DRIVER_LATE = 1.0 / 3.0
+DRIVER_LATE = 0.0      # days; any driver closing after the name lags (the Pine: 1/3)
 SELF_RHO = 0.99         # self-containment screen
 SELF_WIN = 200
 WEEKLY_BREADTH_MIN = 2 * B_WINDOWS[-1] + 20   # weekly bars before breadth is trusted
@@ -115,10 +118,8 @@ DRIVERS: Dict[str, Tuple[str, str, Optional[float], float]] = {
     "US10Y":  ("^TNX",          "yield", None, 20.5),
     "US30Y":  ("^TYX",          "yield", None, 20.5),
     "US02Y":  ("ZT=F",          "bond",  1.9,  21.0),   # 2-year T-note futures
-    "IN10Y":  ("SETF10GILT.NS", "bond",  6.8,  10.0),   # 10-year gilt ETF
-    "JP10Y":  ("1482.T",        "bond",  9.5,  6.0),    # Japan govt bond ETF
-    "CN10Y":  ("CBON",          "bond",  5.0,  20.5),   # China bond ETF (USD-listed)
-    "EU10Y":  ("EXX6.DE",       "bond",  6.0,  15.5),   # German govt bond ETF
+    "IN10Y":  ("SETF10GILT.NS", "bond",  6.8,  10.0),   # 10-year gilt ETF (read from 2021)
+    "EU10Y":  ("EXX6.DE",       "bond",  14.0, 15.5),   # German 10.5+ year Bund ETF
     "GB10Y":  ("IGLT.L",        "bond",  11.0, 15.5),   # UK gilt ETF
     "DXY":    ("DX-Y.NYB",      "price", None, 21.0),
     "USOIL":  ("CL=F",          "price", None, 21.0),
@@ -134,12 +135,17 @@ DRIVERS: Dict[str, Tuple[str, str, Optional[float], float]] = {
     "SPX":    ("^GSPC",         "price", None, 20.5),
 }
 DRIVER_TICKERS: List[str] = sorted({v[0] for v in DRIVERS.values()})
+# A proxy read only from this date: SETF10GILT.NS traded too thinly before 2021 (runs of
+# zero-return days) to carry a yield. Dropped from the pool (CVG-B9): 1482.T, a yen-hedged
+# US Treasury fund rather than JGBs, and CBON, whose daily moves are CNY noise. EXX6.DE is
+# the 10.5+ year Bund fund (duration ~14, not 6). Measured immaterial: +0.002%/yr Nifty.
+DRIVER_FROM: Dict[str, str] = {"IN10Y": "2021-01-01"}
 
 # Factor definitions: (name, kind, spec). kind "pool" averages its constituents'
 # returns na-safely; "sub" is the difference of two; "pool_sub" pools differences;
 # "home" is the name's home equity index.
 _SAMANVAYA = [
-    ("Global 10Y",   "pool",     ["US10Y", "IN10Y", "JP10Y", "CN10Y", "EU10Y", "GB10Y"]),
+    ("Global 10Y",   "pool",     ["US10Y", "IN10Y", "EU10Y", "GB10Y"]),
     ("Global curve", "pool_sub", [("US10Y", "US02Y")]),
     ("US rates",     "pool",     ["US02Y", "US10Y", "US30Y"]),
     ("US 30s2s",     "sub",      ("US30Y", "US02Y")),
@@ -204,11 +210,13 @@ def driver_returns(closes: Optional[pd.DataFrame], index: pd.DatetimeIndex,
         if tk not in closes.columns:
             continue
         s = pd.to_numeric(closes[tk], errors="coerce").dropna()
+        if key in DRIVER_FROM:
+            s = s[s.index >= pd.Timestamp(DRIVER_FROM[key])]
         if s.empty:
             continue
         if kind != "yield":
             s = s[s > 0]
-        # Late by more than a third of a day: read at the PREVIOUS close, on the
+        # Late by more than DRIVER_LATE days: read at the PREVIOUS close, on the
         # driver's own calendar — close[1] of the bar matched to this date.
         if max(0.0, close_utc - tgt_close) / 24.0 > DRIVER_LATE:
             s = s.shift(1).dropna()

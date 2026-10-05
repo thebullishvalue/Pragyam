@@ -37,8 +37,8 @@ its ±100 scale), Samanvaya's threshold:
   DISTRIBUTION  sellers in control of a rich price — the floor
 
 Units are the weight at each state's centre. Five were chosen from meaning; FOUR
-WERE MEASURED (Pragati v8, 2026-09): DISLOCATED 1 → 3, FADING ½ → 1½, BUILDING 3 → 1½,
-PAID 1½ → ¾. The Sanket audit of pragati.pine (380 instruments, six asset classes,
+WERE RE-MEASURED: Pragati v8 (2026-09) DISLOCATED 1 → 3, FADING ½ → 1½, BUILDING 3 → 1½,
+PAID 1½ → ¾; v12 (research/cvg_v9.py) DISLOCATED 3 → 4. The Sanket audit of pragati.pine (380 instruments, six asset classes,
 ~20 years) found sellers in control at a cheap or fair price followed by gains in
 BOTH eras on every class but crypto, and buyers in control at a fair price lagging;
 research/cvg_reweight.py then tested the four moves in THIS allocator — monthly, every
@@ -93,8 +93,8 @@ STATE_COLUMNS = ("cvg state", "cvg state days", "cvg held")
 COLUMNS = pragati.COLUMNS + samanvaya.VALUE_COLUMNS + STATE_COLUMNS
 
 # ── The nine states (and UNREAD), in allocation order, with their units ─────
-# Units are CHOSEN from what each state means, not fitted — the Pine's own
-# warning applies: "Do not tune this to a backtest." Order is by units, and
+# Units were seeded from what each state means; five are kept as seeded and four were
+# re-measured out of sample (v8, v12 — see the module docstring). Order is by units, and
 # within equal units by the grid (top row first, cheap before rich); it is the
 # order the book fills in when N is below the universe.
 STATES = (
@@ -104,7 +104,7 @@ STATES = (
     ("BASING",       1.50, "Basing",        "cheap, control not yet decided"),
     ("FADING",       1.50, "Fading",        "sellers in control at a fair price — a washout"),
     ("IDLE",         1.00, "Idle",          "fair price, control not yet decided"),
-    ("UNREAD",       1.00, "Unread",        "a tape not yet calibrated"),
+    ("UNREAD",       1.00, "Unread",        "a tape not yet calibrated — the Idle centre, below the average read name"),
     ("PAID",         0.75, "Paid",          "buyers in control, price already rich"),
     ("STALLING",     0.75, "Stalling",      "rich, and control has faded"),
     ("DISTRIBUTION", 0.25, "Distribution",  "sellers in control of a rich price"),
@@ -161,7 +161,11 @@ def graded_units(state: str, conv: float, value: float, push: float) -> float:
                                        saturation, toward the held side) keeps
                                        ½ + ½h of the cell, the rest leans one
                                        row toward the tape — a held row gives
-                                       up at most half, never the whole move
+                                       up at most half, never the whole move.
+                                       While a row is held the push, not the
+                                       tape, sets the weight: a held name can
+                                       earn its full cell with the tape back
+                                       past the knee
       COLUMNS (value tape, ink v)      the same two rules on the value ramp,
                                        FAIR leaning toward the side V is on
 

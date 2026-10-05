@@ -228,9 +228,10 @@ def _render_portfolio_tab(portfolio: pd.DataFrame, current_df: pd.DataFrame, cap
                       "figure, because top-N selection and the position cap move the held "
                       "book away from the solution."),
             "cluster": ("Grey is capital, coloured is variance. Uneven risk bars are **expected** "
-                        "here: HRP balances risk across *clusters*, not across individual "
-                        "holdings, so a small risk share inside a large cluster is a correct "
-                        "outcome rather than an imbalance."),
+                        "here: HRP balances risk between the halves of a correlation-ordered "
+                        "list (recursive bisection), not across individual holdings and not "
+                        "across the clusters drawn below, so a small risk share inside a large "
+                        "group is a correct outcome rather than an imbalance."),
         }.get(_rc_target,
               "Grey is capital, coloured is variance. This style does not manage risk "
               "contribution at all — the spread of the coloured bars is simply where the "

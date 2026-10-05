@@ -520,8 +520,9 @@ argument for risk-based weighting.
 **Risk Structure** is the correlation matrix reordered by cluster. Crisp blocks
 along the diagonal mean the clustering found real structure. A uniformly warm
 matrix means the universe is effectively a single bet — which no allocator can
-fix. Only HRP allocates *from* this tree; for the other styles the matrix is
-shown as a diagnostic and labelled as such.
+fix. No style allocates *from* this Ward tree, so it is labelled a diagnostic
+for every style: HRP bisects its own single-linkage ordering, split in halves
+by inverse cluster variance, whose first split cuts a Ward cluster every month.
 
 ## Reading the Analytics tab
 

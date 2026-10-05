@@ -25,8 +25,8 @@ from ui.shared import (NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, holds_univ
                        mmom_coverage_caveat, mmom_floor_text, mmom_history_caveat, mmom_state,
                        num, style_spec, unfunded_symbols)
 from cvgrid import STATE_LABEL, STATE_UNITS, STATES
-from nco import (MMOM_FLOOR, MMOM_HISTORY_START, MMOM_LAMBDA, MMOM_LOOK, MMOM_MIN_VOL_MONTHS,
-                 MMOM_SKIP)
+from nco import (MIN_COVERAGE, MMOM_FLOOR, MMOM_HISTORY_START, MMOM_LAMBDA, MMOM_LOOK,
+                 MMOM_MIN_VOL_MONTHS, MMOM_SKIP)
 
 # The CVG units as the allocator applies them, read from cvgrid so this text cannot drift.
 _CVG_UNITS_HTML = ' &middot; '.join(
@@ -361,7 +361,7 @@ def _render_system_tab(training_window: List):
                            'distance using Ward linkage, with the cluster count chosen by silhouette '
                            'score. Typically resolves to ~3 groups &mdash; matching the eigenvalue '
                            'participation ratio of the same matrix. Computed over the names carrying '
-                           'at least 80% of the estimation window: a shorter-lived holding is sized, '
+                           f'at least {MIN_COVERAGE:.0%} of the estimation window: a shorter-lived holding is sized, '
                            'but has no covariance to be clustered by.'
                        '</div>')
                 + '</div>'

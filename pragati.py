@@ -408,9 +408,12 @@ def compute_conviction(df: pd.DataFrame, intraday: dict | None = None) -> pd.Dat
             z_dn = ((z_chart + R.sum(axis=1, min_count=1).fillna(0.0))
                     / (ready.astype(float) + n_child)).where(ready)
             tape_dn = _ema(100.0 * _tanh(z_dn), SMOOTHING) if SMOOTHING > 1 else 100.0 * _tanh(z_dn)
-            # the Pine's ladReady: a lower rung held for norm + smooth bars before it leads
-            use_dn = pd.Series(np.cumsum((ready & (n_child > 0)).to_numpy()) > NORMALIZATION + SMOOTHING,
-                               index=df.index)
+            # the Pine's ladReady: a lower rung held for norm + smooth bars before it leads. A
+            # bar with no intraday rung (a session the frames do not cover) reads D · W and is
+            # flagged so: z_dn there is the daily rung alone, without the weekly (CVG-B5).
+            lad_ready = pd.Series(np.cumsum((ready & (n_child > 0)).to_numpy()) > NORMALIZATION + SMOOTHING,
+                                  index=df.index)
+            use_dn = lad_ready & (n_child > 0)
             tape = tape.where(~use_dn, tape_dn)
     res = pd.DataFrame({
         "conv tape": tape.where(ready),
