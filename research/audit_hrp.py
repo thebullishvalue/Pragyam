@@ -278,6 +278,25 @@ reading
     solver_cov and the risk diagnostics stay on today's covariance. All three windows need ≥ 295
     sessions, which the app's ~400-session panel holds. A shorter panel uses fewer windows, and
     when only j=0 fits (the 100-day fallback) the result is exactly today's HRP.
+
+RE-RUN (2026-10-05) on the v12.2 code — B1-B4, B6, B7 landed (dead-quote mask, MIN_COVERAGE 0.95,
+fill_method=None), pickles rebuilt, the same 8 configurations (not counted again as new trials;
+the inputs changed, the variants did not). Zero-change controls exact (Z0 vs stored raw 0.0;
+Z1 = Z0 in every month now that pct_change no longer pads, so the 400-session caveat is gone).
+  shipped HRP   Nifty 19.51 / 17.67 / 20.05 · Dow 12.38 / 15.40 / 11.03 · ETF27 16.26 · PIT E3 9.63
+  O1-A S3     N +0.21 (t+0.7) / +0.25 (t+0.8) / +0.13 (t+0.3)   vol +0.28 / +0.10 / −0.16
+              D +0.12 (t+0.4) / +0.17 (t+0.9) / +0.38 (t+1.5)   vol −0.06 / +0.02 / +0.04
+              → rule (i) FAILS (Nifty E1 ret/vol −0.000 at vol +0.28); rule (ii) PASS
+              ETF27 −0.25 (t −0.4) · PIT E3 +0.37 (t +1.3) · Nifty top-30 +0.27 / +0.39 / +0.78
+              turnover Nifty 1.23 → 0.72, Dow 0.92 → 0.53, ETF 0.93 → 0.68, PIT 1.10 → 0.59
+  O1-B S4     rule (ii) PASS, (i) fails (Nifty E1 r/v −0.005); ETF27 −0.75
+  O1-C canon  FAIL (Nifty E1 −0.13 at vol +0.72; Dow E2 −0.21); ETF27 −1.68 (t −2.1)
+  O2-A Q      FAIL (Dow E1 −0.19)
+  O2-B H      rule (i) and (ii) PASS: N +0.71 / +0.06 / +0.01, D +0.35 / +0.54 / +0.62; ETF −0.05,
+              PIT +0.06, top-30 E2 −0.38. Its Nifty E2/E3 margins sit at zero.
+Under the registered precedence (O1 before O2; C failed) O1-A stays the pick, now on rule (ii)
+alone: higher CAGR in all six cells, none significant, 40% less turnover, ETF27 slightly lower.
+Not shipped: it changes HRP's behaviour and waits on the owner's decision.
 """
 from __future__ import annotations
 
