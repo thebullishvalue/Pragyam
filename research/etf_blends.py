@@ -102,7 +102,7 @@ def run(snaps: list, px: pd.DataFrame) -> dict:
     meta = {sz: [] for sz, _ in SIZES}
     prev = {}
     for a, b in zip(bounds[:-1], bounds[1:]):
-        hist = snaps[max(0, pos[a] - 252): pos[a] + 1]
+        hist = snaps[max(0, pos[a] - (sb.PANEL - 1)): pos[a] + 1]
         w_raw = {k: sb.raw(hist, m) for k, m in sb.METHOD.items()}
         w_raw.update({k: sb.blend([w_raw[m] for m in mem]) for k, mem in sb.BLENDS.items()})
         seg = px.loc[a:b]

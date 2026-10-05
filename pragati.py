@@ -18,11 +18,15 @@ The conviction tape (the Pine's own header, WHAT IT MEASURES)
     agreement       raw = 100 * Σ(c·w) / Σ(|c|·w)       over the lookback
     scaling         100 * tanh(raw / 3σ), σ over the normalization window
     tape            100 * tanh(mean z over the ladder), EMA(3)
-                    LADDER DOWN (pragati.pine's default since v9.1): the chart and every lower
-                    frame yfinance carries — 1m · 3m · 5m · 15m · 30m · 1h · 4h, each
-                    averaged inside the day (intraday.py). Where a day has no intraday
-                    history (1h reaches back ~2 years) the tape reads Ladder up, D · W,
-                    and `conv ladder down` is 0 — the Pine's FALLBACK, per bar.
+                    LADDER UP, D · W (v12.2; v8 / v9): the chart and the weekly rung
+                    rebuilt from the week as it forms. LADDER DOWN (pragati.pine's default
+                    since v9.1) — the chart and every lower frame yfinance carries, 1m ·
+                    3m · 5m · 15m · 30m · 1h · 4h, each averaged inside the day — is kept
+                    behind the switch but off: the mean of k rungs restores no variance,
+                    so the tape's scale fell as rungs were added (cross-sectional sd ~30
+                    on D · W, ~14 with all seven) and its ±30 knee moved bar to bar;
+                    no backtest ever scored the seven-rung tape (research/audit_cvg.py,
+                    CVG-B1).
 
 The weekly rung is RECONSTRUCTED the way the Pine rebuilds every higher frame:
 the parent's settled state as of its last closed week, completed with the week
@@ -90,9 +94,10 @@ TIER_T = {"impulse": (18.0, 0.0), "building": (60.0, 38.0),
 
 CONVICTION_COLUMNS = ("conv tape", "conv daily", "conv weekly", "conv ladder down")
 
-# The conviction ladder: "down" (v9.1) reads the frames inside the day where they exist,
-# "up" reads D · W everywhere (v8 / v9).
-LADDER = "down"
+# The conviction ladder: "up" reads D · W everywhere (v8 / v9; again since v12.2), "down" (v9.1
+# to v12.1) the frames inside the day where they exist. Back to "up" in v12.2 because the down
+# tape's scale shrank with its rung count (CVG-B1): every measured CVG figure is a D · W tape.
+LADDER = "up"
 PUSH_COLUMNS = ("conv hist", "conv push", "conv push tier", "conv push gate")
 COLUMNS = CONVICTION_COLUMNS + PUSH_COLUMNS
 

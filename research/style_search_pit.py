@@ -92,7 +92,7 @@ def build() -> dict:
     raw, snap = {k: {} for k in sb.METHOD}, {}
     for a in months:
         hist = [(d, s[s["symbol"].map(lambda x: member(x, a))].reset_index(drop=True))
-                for d, s in snaps[max(0, pos[a] - 252): pos[a] + 1]]
+                for d, s in snaps[max(0, pos[a] - (sb.PANEL - 1)): pos[a] + 1]]
         for k, m in sb.METHOD.items():
             raw[k][a] = sb.raw(hist, m)
         snap[a] = by_date[a]

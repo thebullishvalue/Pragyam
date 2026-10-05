@@ -663,6 +663,7 @@ MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
 MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
 MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
 MMOM_MIN_HISTORY = MMOM_GATE + 1    # rows before the overlay may act, whatever the source (MM-B5)
+MMOM_SCALE_CAP = 1.0       # the volatility scale is min(MMOM_SCALE_CAP, median / now)
 # The windows above count ROWS of a 5-day calendar. A panel with > 300 rows in its trailing
 # 365 days (Crypto, or a Custom List mixing 7-day and 5-day calendars) reads the same spans
 # in 7-day rows; read as 5-day rows they were ~8-1 momentum, a 16.5-month gate and a 4-month
@@ -761,7 +762,7 @@ def mmom_scale(prices: pd.DataFrame, look: int = MMOM_LOOK, skip: int = MMOM_SKI
     if len(at) < MMOM_MIN_VOL_MONTHS or not np.isfinite(now) or now <= 0:
         return 1.0, now, float(at.median()) if len(at) else float("nan"), int(len(at))
     target = float(at.median())
-    return float(min(1.0, target / now)), now, target, int(len(at))
+    return float(min(MMOM_SCALE_CAP, target / now)), now, target, int(len(at))
 
 
 def _close_panel(prices: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
@@ -802,7 +803,16 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
     win = mmom_windows(prices.index)
     mom = mmom_momentum(prices.ffill(limit=5), names, win["look"], win["skip"])
     rank = mmom_ranks(mom, names)
-    gate, mkt = mmom_gate(prices, win["gate"], win["look"])
+    # The bear state is formed monthly (Daniel & Moskowitz), as every measured book read it: the
+    # gate reads the market as of the first session of the run date's month and holds through
+    # the month. Read daily, a book built mid-month near a flip swung between momentum and the
+    # pure grid from one day to the next (36.5% one-day turnover on Nifty 50, 2026-09-28; MM-B6).
+    # Momentum and the volatility scale still read the run date.
+    m0 = None
+    if len(prices):
+        t = prices.index[-1]
+        m0 = prices.index[(prices.index.year == t.year) & (prices.index.month == t.month)][0]
+    gate, mkt = mmom_gate(prices.loc[:m0] if m0 is not None else prices, win["gate"], win["look"])
     scale, vol, vol_med, vol_months = (mmom_scale(prices, win["look"], win["skip"], win["vol_win"],
                                                   win["ann"])
                                        if gate > 0 else (1.0, float("nan"), float("nan"), 0))
@@ -811,7 +821,7 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
         "overlay_vol": vol, "overlay_vol_median": vol_med, "vol_months": vol_months,
         "ranked": int(mom.notna().sum()), "history_days": int(len(prices)),
         "history_start": prices.index[0] if len(prices) else None,
-        "windows": win, "history_needed": int(win["gate"] + 1),
+        "windows": win, "history_needed": int(win["gate"] + 1), "gate_read_on": m0,
     }
 
 
@@ -1080,6 +1090,46 @@ def _is_priced(price: object) -> bool:
     return bool(np.isfinite(p)) and p > 0
 
 
+# HRP's leaf order is re-drawn from scratch every month, and dropping 2 of 252 days changes it in
+# 99% of trials: most of HRP's turnover is estimation noise, not a change of view. HRP is therefore
+# the mean of its fits on HRP_WINDOWS windows of `lookback` rows ending 0, HRP_STEP, 2·HRP_STEP
+# sessions back, inside the last HRP_PANEL sessions (the app's estimation panel holds ~400).
+# Pre-registered and measured through this code on the v12.2 inputs (research/audit_hrp.py,
+# O1-A): higher net CAGR in all six era cells (+0.12 to +0.38 %/yr, none significant), ~40% less
+# turnover (Nifty 50 1.23 -> 0.72x/yr), ETF book -0.25 over 19 months. A panel too short for a
+# window simply uses fewer; on a single window it is exactly the one-fit HRP.
+HRP_WINDOWS = 3
+HRP_STEP = 21
+HRP_PANEL = 400
+
+
+def hrp_staggered(history: Sequence[Tuple[object, pd.DataFrame]], est_names: List[str],
+                  cov: np.ndarray, corr: np.ndarray, lookback: int = 252) -> Tuple[np.ndarray, List[int]]:
+    """(weights over est_names, the windows used): the mean of hrp_weights over the staggered
+    windows. Window 0 is today's (`cov`, `corr`); an earlier window is built over today's
+    estimation names with the same rules, and skipped when it is not estimable. A name an
+    earlier window could not estimate is averaged over the windows that could."""
+    hist = list(history)[-HRP_PANEL:]
+    parts = [pd.Series(hrp_weights(cov, corr), index=est_names)]
+    used = [0]
+    for j in range(1, HRP_WINDOWS):
+        end = len(hist) - HRP_STEP * j
+        if end < lookback + 1:
+            continue
+        Rj = build_returns_matrix(hist[:end], symbols=list(est_names), lookback=lookback)
+        nj = Rj.shape[1]
+        if Rj.empty or nj < 2 or len(Rj) < MIN_OBS or len(Rj) < MIN_OBS_PER_ASSET * nj:
+            continue
+        Xj = Rj.to_numpy(dtype=float)
+        cj = np.cov(Xj, rowvar=False)
+        rj = np.nan_to_num(np.corrcoef(Xj, rowvar=False), nan=0.0)
+        parts.append(pd.Series(hrp_weights(cj, rj), index=Rj.columns).reindex(est_names))
+        used.append(j)
+    W = pd.concat(parts, axis=1).mean(axis=1, skipna=True).fillna(0.0)
+    tot = float(W.sum())
+    return (W / tot).to_numpy(dtype=float) if tot > 0 else parts[0].to_numpy(dtype=float), used
+
+
 def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                           prices: Dict[str, float],
                           capital: float,
@@ -1209,6 +1259,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # weight formula rather than a stylistic choice.
     mom = pd.Series(np.nan, index=alloc_names)
     _mmom: Optional[dict] = None
+    _hrp_windows: Optional[List[int]] = None
     _floored_names: set = set()
     # The covariance the ALLOCATOR optimised against. The convergence diagnostic
     # below must be measured on this matrix, not on the sample covariance used
@@ -1275,7 +1326,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         # silently dereference a matrix that was never built.
         return empty
     elif _m == "HRP":
-        w = hrp_weights(cov, corr)
+        w, _hrp_windows = hrp_staggered(history, est_names, cov, corr, lookback)
     elif _m in ("ERC", "ERC_MOM"):
         solver_cov = ledoit_wolf(R)
         w = erc_weights(solver_cov)
@@ -1467,6 +1518,9 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out.attrs["nco_silhouette"] = float(sil)
     out.attrs["nco_obs"] = int(len(rets))
     out.attrs["nco_obs_per_asset"] = float(len(rets) / n_est) if n_est else float("nan")
+    if _hrp_windows is not None:
+        # The staggered windows HRP averaged (sessions back = HRP_STEP × each entry).
+        out.attrs["nco_hrp_windows"] = list(_hrp_windows)
     out.attrs["nco_dead_quotes"] = dict(rets.attrs.get("dead", {}))
     out.attrs["nco_degenerate"] = dict(rets.attrs.get("degenerate", {}))
     # The set the ALLOCATOR worked over, and the (possibly smaller) set the risk
@@ -1620,6 +1674,8 @@ __all__ = [
     "MMOM_HISTORY_START",
     "MMOM_MIN_HISTORY",
     "mmom_windows",
+    "hrp_staggered",
+    "HRP_WINDOWS",
     "mmom_overlay",
     "mmom_gate",
     "mmom_scale",

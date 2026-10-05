@@ -256,8 +256,11 @@ def compute_readings(df: pd.DataFrame, driver_closes: Optional[pd.DataFrame] = N
         return pd.DataFrame(columns=list(COLUMNS))
     df = df.sort_index()
     if intraday is None:
-        import intraday as _idm
-        intraday = _idm.frames(symbol) if symbol else {}
+        if pragati.LADDER == "down":
+            import intraday as _idm
+            intraday = _idm.frames(symbol) if symbol else {}
+        else:
+            intraday = {}
     conv = compute_conviction(df, intraday).reindex(df.index)
     val = samanvaya.compute_value(df, driver_closes, symbol).reindex(df.index)
     st = classify_states(conv["conv tape"], val["value tape"], conv["conv push gate"])

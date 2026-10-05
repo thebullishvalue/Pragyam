@@ -242,7 +242,7 @@ def weights(d: dict, snaps: list, ref=None, members=None, history=None) -> dict:
     pos = {t: i for i, t in enumerate(cal)}
     ship, tested, info, g_id, g_ref = {}, {}, {}, {}, {}
     for a in d["months"][:-1]:
-        hist = snaps[max(0, pos[a] - 252): pos[a] + 1]
+        hist = snaps[max(0, pos[a] - (sb.PANEL - 1)): pos[a] + 1]
         if members is not None:
             hist = [(t, s[s["symbol"].map(lambda x: members(x, a))].reset_index(drop=True)) for t, s in hist]
         ph = history(a) if history is not None else d["px"].loc[:a]

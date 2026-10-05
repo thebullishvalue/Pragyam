@@ -351,6 +351,9 @@ def _symbols_from_key(symbols_key: str) -> List[str]:
     return list(symbols_list)
 
 
+_READINGS_YEARS = 8   # history the tapes are computed over (quiet regime 800 bars, push gate ~450)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: str) -> List[Tuple[datetime, pd.DataFrame]]:
     """Fetch and cache historical indicator snapshots from yfinance.
@@ -378,6 +381,10 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
             symbols_to_process=symbols_list,
             start_date=end_date - timedelta(days=int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30),
             end_date=end_date,
+            # The tapes read _READINGS_YEARS of bars, the snapshots stay this window: on the
+            # window alone 1 name in 8 sat in a different grid state than the full-history
+            # tapes the evidence was measured on (CVG-B4).
+            readings_start=end_date - timedelta(days=int(_READINGS_YEARS * 365.25)),
         )
     except Exception as e:
         # Logged as well as surfaced: the browser message disappears on the next
@@ -1151,7 +1158,7 @@ def _run_analysis(
         # Phase 2 (Strategies & Curation) 35-100 — so the bar can never move
         # backwards regardless of which Phase 1.5 branch executes. Labels are
         # Title Case; subs carry the load-bearing datum for that milestone.
-        progress_bar(progress_container, 2, "Fetching Market Data", f"yfinance · {len(symbols_list)} symbols · daily + intraday ladder")
+        progress_bar(progress_container, 2, "Fetching Market Data", f"yfinance · {len(symbols_list)} symbols · daily")
         metrics.start_phase("total_execution")
         # Must match _REGIME_LOOKBACK_FILES so the regime card / regime banner /
         # regime history chart / Phase 2 curation all share one cached panel.
@@ -1298,7 +1305,7 @@ def _run_analysis(
                 "EQUAL":  ("Measuring Risk Structure", "1/N · clustering for diagnostics only"),
                 "ERC":    ("Solving Equal Risk Contribution", "cyclical coordinate descent"),
                 "HRP":    ("Clustering Risk Structure", "correlation-distance hierarchy"),
-                "CVG": ("Reading Pragati's Tapes", "conviction (Ladder down) × value (D · W)"),
+                "CVG": ("Reading Pragati's Tapes", "conviction × value, both on D · W"),
                 "MMOM": ("Reading Tapes and Momentum", "the grid · 12-1 overlay, gated and "
                                                        "volatility-scaled"),
             }.get(_method, ("Measuring Risk Structure", _spec["formula"]))
@@ -1466,6 +1473,8 @@ def _run_analysis(
                                 f"{CVG_STATE_LABEL[c]} {_cz[c]}"
                                 for c, *_ in CVG_STATES if _cz.get(c)))
                             _t.item("Conviction ladder",
+                                    "D · W (daily + weekly) for every name"
+                                    if not _ba.get("nco_cvg_ladder_down") else
                                     f"down {_ba.get('nco_cvg_ladder_down', 0)} · "
                                     f"D · W ↺ {_ba.get('nco_cvg_ladder_up', 0)} "
                                     "(↺ = no calibrated intraday history yet)")

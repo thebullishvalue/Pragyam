@@ -122,6 +122,10 @@ import cvgrid                                     # noqa: E402
 import nco                                        # noqa: E402
 
 CAPITAL, CAP, MIN_NAMES, ROLL, STALE_RUN = 1e10, 0.10, 10, 36, 10
+# Snapshots each rebalance passes to the styles: the app's estimation panel (~400 sessions), so
+# HRP's staggered windows (nco.hrp_staggered, v12.2) can act as they do live. The other styles'
+# weights are identical on 253 or 400 (returns are cut to the 252-row lookback either way).
+PANEL = 400
 START, END = datetime(2006, 1, 1), datetime(2026, 10, 2)
 assert cvgrid.STATE_UNITS["DISLOCATED"] == 4.0, "the shipped CVG units are the control"
 
@@ -264,7 +268,7 @@ def backtest(snaps: list, sizes) -> dict:
     pos = {d: i for i, d in enumerate(dates)}
     rows, prev, started = {sz: [] for sz, _ in sizes}, {}, False
     for a, b in zip(months[:-1], months[1:]):
-        hist = snaps[max(0, pos[a] - 252): pos[a] + 1]
+        hist = snaps[max(0, pos[a] - (PANEL - 1)): pos[a] + 1]
         w_raw = {k: raw(hist, m) for k, m in METHOD.items()}
         if not started:
             if min(len(v) for v in w_raw.values()) < MIN_NAMES:

@@ -492,6 +492,11 @@ def mask_dead_quotes(close: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]
 
 _mask_dead = mask_dead_quotes
 
+
+class _LadderUp(Exception):
+    """Raised inside generate_historical_data to skip the intraday prefetch when the conviction
+    ladder reads D · W (pragati.LADDER != "down")."""
+
 # One-day close moves that are also overnight gaps of this size, on an Indian listing, are read
 # as corporate actions yfinance left unadjusted (MM-B3): demergers (BAJAJFINSV 2008, ADANIENT
 # 2015-06-03, TMPV 2025-10-14) and mis-dated splits or bonuses (LT 2006-09-27/28, TRENT
@@ -775,6 +780,7 @@ def generate_historical_data(
     symbols_to_process: List[str],
     start_date: datetime,
     end_date: datetime,
+    readings_start: Optional[datetime] = None,
 ) -> List[Tuple[datetime, pd.DataFrame]]:
     """
     Generate historical indicator snapshots for a list of symbols.
@@ -788,8 +794,13 @@ def generate_historical_data(
 
     Args:
         symbols_to_process: Stock ticker symbols (e.g. ``["RELIANCE.NS"]``).
-        start_date: Beginning of the download window (must include warmup).
+        start_date: Beginning of the snapshot window (must include warmup).
         end_date: End of the snapshot window.
+        readings_start: When earlier than start_date, the bars and macro drivers are fetched
+            from here so the tapes run over that longer history (their quiet regime ranks
+            800 bars and the push gate warms up over ~450), while snapshots are emitted for
+            the same dates as without it (CVG-B4: on a ~19-month window 1 name in 8 sat in
+            a different grid state than on full-history tapes).
 
     Returns:
         Chronologically ordered list of ``(date, indicator_df)`` tuples.
@@ -828,6 +839,7 @@ def generate_historical_data(
     
     # Update metrics
     metrics.symbols_count = len(symbols_to_process)
+    fetch_start = min(start_date, readings_start) if readings_start is not None else start_date
     
     # === DOWNLOAD WITH CIRCUIT BREAKER + RETRY ===
     try:
@@ -842,19 +854,23 @@ def generate_historical_data(
         def download_data():
             return yf.download(
                 symbols_to_process,
-                start=start_date,
+                start=fetch_start,
                 end=end_date + timedelta(days=1),
                 progress=False,
             )
 
         console.detail(
             f"yfinance batch · {len(symbols_to_process)} symbols · "
-            f"{start_date:%Y-%m-%d} → {end_date:%Y-%m-%d}"
+            f"{fetch_start:%Y-%m-%d} → {end_date:%Y-%m-%d}"
         )
         all_data = download_data()
-        # The conviction ladder reads DOWN (v9.1): every intraday frame yfinance carries,
-        # fetched once for the whole universe, read by cvgrid.compute_readings per name.
+        # The conviction ladder reads D · W since v12.2 (pragati.LADDER = "up"): no intraday
+        # frames are fetched. With LADDER = "down" every intraday frame yfinance carries is
+        # fetched once for the whole universe and read by cvgrid.compute_readings per name.
         try:
+            import pragati as _pg
+            if _pg.LADDER != "down":
+                raise _LadderUp
             import intraday as _idm
             _t0 = time.time()
             _cov = _idm.prefetch(list(symbols_to_process))
@@ -867,6 +883,8 @@ def generate_historical_data(
                                     "their conviction reads D · W (↺)")
             else:
                 console.detail("intraday ladder disabled — conviction reads D · W (↺)")
+        except _LadderUp:
+            pass
         except Exception as _e:        # the tape then reads Ladder up for every name
             console.warning(f"intraday prefetch failed ({type(_e).__name__}: {_e}) — conviction reads D · W (↺)")
         console.detail(
@@ -896,7 +914,7 @@ def generate_historical_data(
     # keeps its place in the universe instead of vanishing from the book.
     if len(symbols_to_process) > 1:
         all_data, recovery = _recover_missing_symbols(
-            all_data, symbols_to_process, start_date, end_date
+            all_data, symbols_to_process, fetch_start, end_date
         )
         metrics.data_recovery = recovery
         if recovery["recovered"]:
@@ -958,7 +976,7 @@ def generate_historical_data(
 
     # The value tape's macro basket — fetched ONCE for the whole panel, over the
     # same window as the names, and shared by every one of them.
-    driver_closes = fetch_macro_drivers(start_date, end_date)
+    driver_closes = fetch_macro_drivers(fetch_start, end_date)
     
     # 2. --- Pre-calculate all indicators for all symbols ---
     ticker_indicator_cache = {}
@@ -1080,7 +1098,11 @@ def generate_historical_data(
     # MAX_INDICATOR_PERIOD *bars* of date_range instead — the caller already
     # over-fetches enough calendar days (see _load_historical_data's x1.5+30
     # buffer) to have that many bars available before the requested window.
-    _warm_dates = set(date_range[:MAX_INDICATOR_PERIOD])
+    # With a longer readings history (readings_start), every bar before start_date is
+    # read by the tapes but not emitted, and the warm-up is counted from start_date, so
+    # the snapshot dates are the ones the plain window would give.
+    _window = date_range[date_range >= pd.Timestamp(start_date)]
+    _warm_dates = set(date_range[date_range < pd.Timestamp(start_date)]) | set(_window[:MAX_INDICATOR_PERIOD])
 
     # Align every symbol onto the SHARED trading calendar with a bounded
     # forward-fill.

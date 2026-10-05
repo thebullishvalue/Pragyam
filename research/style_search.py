@@ -105,7 +105,7 @@ def build(u: str) -> None:
     for a in months:
         if u == "etf_27" and not px.loc[a].notna().all():
             continue
-        hist = snaps[max(0, pos[a] - 252): pos[a] + 1]
+        hist = snaps[max(0, pos[a] - (sb.PANEL - 1)): pos[a] + 1]
         w = {k: sb.raw(hist, m) for k, m in sb.METHOD.items()}
         if not started:
             if min(len(v) for v in w.values()) < sb.MIN_NAMES:
