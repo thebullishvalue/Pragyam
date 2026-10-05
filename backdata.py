@@ -964,6 +964,22 @@ def generate_historical_data(
     _today, _hour = pd.Timestamp(_now.date()), _now.hour + _now.minute / 60.0
     _forming: List[str] = []
     _holiday_rows = 0
+    # Exchange holidays: dates on which at least half the names that report volume printed
+    # a flat (high == low), zero-volume row — yfinance emits such rows for NSE holidays. A
+    # single fund's no-trade day is not one: it stays (dropping those could carry a thin ETF
+    # out of the panel after five).
+    _holiday_dates = pd.DatetimeIndex([])
+    try:
+        if len(symbols_to_process) > 1:
+            _v, _h, _l = (all_data[k].apply(pd.to_numeric, errors="coerce") for k in ("Volume", "High", "Low"))
+            _reports = (_v > 0).any()
+            if int(_reports.sum()) >= 5:
+                _flat = ((_v <= 0) & (_h == _l)).loc[:, _reports]
+                _present = _v.loc[:, _reports].notna()
+                _share = _flat.sum(axis=1) / _present.sum(axis=1).clip(lower=1)
+                _holiday_dates = pd.DatetimeIndex(_share.index[_share >= 0.5])
+    except KeyError:
+        pass
     _corp_events: List[Tuple[str, pd.Timestamp, float]] = []
     for i, ticker in enumerate(symbols_to_process):
         try:
@@ -979,12 +995,11 @@ def generate_historical_data(
                     symbol_df[col] = pd.to_numeric(symbol_df[col], errors='coerce')
             
             symbol_df = symbol_df.dropna(subset=['close', 'volume'])
-            # Exchange holiday prints: a flat (high == low), zero-volume row on a day the
-            # exchange was shut, which yfinance emits for NSE names. Not a session, so not a
-            # bar for the tape engines (CVG-B8; data hygiene, measured -0.04%/yr on Nifty).
-            # Only for instruments that report volume at all: FX and most indices never do.
-            if {'high', 'low'}.issubset(symbol_df.columns) and (symbol_df['volume'] > 0).any():
-                _flat = (symbol_df['volume'] <= 0) & (symbol_df['high'] == symbol_df['low'])
+            # Exchange holiday prints (_holiday_dates above): not a session, so not a bar for
+            # the tape engines (CVG-B8; data hygiene, measured -0.04%/yr on Nifty).
+            if len(_holiday_dates) and {'high', 'low'}.issubset(symbol_df.columns):
+                _flat = (symbol_df.index.isin(_holiday_dates) & (symbol_df['volume'] <= 0)
+                         & (symbol_df['high'] == symbol_df['low']))
                 if _flat.any():
                     _holiday_rows += int(_flat.sum())
                     symbol_df = symbol_df[~_flat]
@@ -1032,7 +1047,8 @@ def generate_historical_data(
         console.detail("corporate-action gaps back-adjusted: " + ", ".join(
             f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _corp_events))
     if _holiday_rows:
-        console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) before the tapes")
+        console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) on "
+                       f"{len(_holiday_dates)} exchange holiday(s) before the tapes")
     _skipped_indicators = [s for s in symbols_to_process if s not in ticker_indicator_cache]
     console.detail(
         f"indicators computed for {len(ticker_indicator_cache)} of "

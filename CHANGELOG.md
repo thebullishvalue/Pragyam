@@ -29,8 +29,9 @@ here; changes to a style's behaviour are listed under *Found, not shipped* and w
 - **The forming bar** (CVG-B2). A run before a market's close dropped nothing, so today's
   half-formed bar (partial volume, a moving close) was read as a session; it moved the Nifty
   book 2-5% by the hour. Each name's bar for today is dropped until its market closes.
-- **Holiday prints** (CVG-B8): flat, zero-volume NSE rows dropped before the tapes (hygiene;
-  −0.04 %/yr measured).
+- **Holiday prints** (CVG-B8): flat, zero-volume rows on exchange holidays (dates when at least
+  half the names that report volume printed flat) dropped before the tapes; a thin fund's own
+  no-trade days stay (hygiene; −0.04 %/yr measured).
 - **Idle cash** (CVG-B3). Whole-share flooring left up to ~14% of a ₹5L, 50-name book in cash —
   −1.6 %/yr on CVG since 2020. The leftover is spent a share at a time on the holding furthest
   below target, never past the cap; `nco_cash`, `nco_topup_shares`.
