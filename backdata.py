@@ -598,8 +598,16 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     # One listing per stripped name: the LAST in the caller's list order, as the snapshot rows
     # and nco.cvg_readings (keep="last") resolve it — not yfinance's alphabetical column order,
     # which for ['INFY.NS', 'INFY'] gave the grid the ADR and the overlay the NSE line (MM-B11).
-    _last = {str(s).replace(".NS", ""): str(s) for s in symbols}
-    close = close[[c for c in close.columns if _last.get(str(c).replace(".NS", "")) == str(c)]]
+    # Only true duplicates are resolved; a column that matches no requested string exactly
+    # (yfinance normalising a ticker's case) is kept, as before.
+    _order = {str(s).upper(): i for i, s in enumerate(symbols)}
+    _rank: Dict[str, int] = {}
+    _keep: Dict[str, int] = {}
+    for j, c in enumerate(close.columns):
+        k, r = str(c).replace(".NS", ""), _order.get(str(c).upper(), -1)
+        if k not in _rank or r >= _rank[k]:
+            _rank[k], _keep[k] = r, j
+    close = close.iloc[:, sorted(_keep.values())]
     close.columns = [str(c).replace(".NS", "") for c in close.columns]
     console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
                    f"{close.index[0]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d}")
