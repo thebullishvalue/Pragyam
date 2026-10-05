@@ -25,6 +25,7 @@ Author: @thebullishvalue
 """
 
 import yfinance as yf
+import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import time
@@ -491,6 +492,44 @@ def mask_dead_quotes(close: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]
 
 _mask_dead = mask_dead_quotes
 
+# One-day close moves that are also overnight gaps of this size, on an Indian listing, are read
+# as corporate actions yfinance left unadjusted (MM-B3): demergers (BAJAJFINSV 2008, ADANIENT
+# 2015-06-03, TMPV 2025-10-14) and mis-dated splits or bonuses (LT 2006-09-27/28, TRENT
+# 2026-01-01). NSE price bands make a real 30% overnight gap rare; a US small cap's earnings
+# gap is not, so other listings are left alone. A close-only rule flags 200 crypto days, and a
+# rule that also wants a calm open-to-close misses two of the seven events.
+_CORP_ACTION_JUMP = 0.30
+
+
+def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame) -> List[Tuple[str, pd.Timestamp, float]]:
+    """(symbol, date, close / previous close) for every move read as an unadjusted corporate action:
+    an Indian listing (.NS / .BO) whose close moved >= 30% on a >= 30% overnight gap."""
+    cols = [c for c in close.columns if str(c).upper().endswith((".NS", ".BO"))]
+    if not cols or open_ is None:
+        return []
+    c = close[cols].apply(pd.to_numeric, errors="coerce")
+    o = open_.reindex(index=c.index, columns=cols).apply(pd.to_numeric, errors="coerce")
+    prev = c.ffill(limit=5).shift(1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        hit = (((c / prev - 1.0).abs() >= _CORP_ACTION_JUMP)
+               & ((o / prev - 1.0).abs() >= _CORP_ACTION_JUMP)).to_numpy()
+    return [(cols[j], c.index[i], float(c.iat[i, j] / prev.iat[i, j])) for i, j in np.argwhere(hit)]
+
+
+def back_adjust(frame: pd.DataFrame, events, columns=None) -> pd.DataFrame:
+    """Scale every row before each event by its ratio, so the jump leaves the return series and no
+    return before or after it changes (causal: only earlier levels move, by a constant).
+    `columns` maps an event's symbol to the frame columns to scale (default: the symbol)."""
+    if not events:
+        return frame
+    out = frame.copy()
+    for sym, t, k in events:
+        cols = columns(sym) if columns is not None else [sym]
+        cols = [c for c in cols if c in out.columns]
+        if cols and np.isfinite(k) and k > 0:
+            out.loc[out.index < t, cols] = out.loc[out.index < t, cols] * k
+    return out
+
 
 def fetch_close_history(symbols: List[str], start_date: datetime,
                         end_date: datetime, mask_dead_quotes: bool = True) -> Optional[pd.DataFrame]:
@@ -503,7 +542,9 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
 
     Columns are named as the snapshots name them (".NS" dropped), the same adjusted closes the
     panel's `price` column carries; a symbol listed twice (an ADR and its NSE line both named
-    INFY) keeps its last column, as the panel does. Symbols the batch missed get the panel's
+    INFY) keeps the listing that comes last in `symbols`, as the panel does. An Indian listing's
+    unadjusted corporate action (a >= 30% move on a >= 30% overnight gap) is back-adjusted
+    (corporate_action_gaps). Symbols the batch missed get the panel's
     own second pass (_recover_missing_symbols). A close repeating the one before it in a run of
     >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN (mask_dead_quotes) — pass
     mask_dead_quotes=False to mask later, after slicing to a run date, so that repeats after it
@@ -528,6 +569,8 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
         close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].set_axis(
             [symbols[0]], axis=1)
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all", axis=1)
+        _open = (raw["Open"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Open"]].set_axis(
+            [symbols[0]], axis=1)) if "Open" in raw.columns.get_level_values(0) else None
     except Exception as e:
         get_metrics().add_warning(f"Close history unavailable ({type(e).__name__}: {e}) — "
                                   "Managed Momentum stands down to the grid")
@@ -539,13 +582,25 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     close.index = pd.DatetimeIndex(close.index).tz_localize(None).normalize()
     close = close[~close.index.duplicated(keep="last")].sort_index()
     close = close.loc[:pd.Timestamp(end_date).normalize()]
+    if _open is not None:
+        _open = _open.set_axis(pd.DatetimeIndex(_open.index).tz_localize(None).normalize(), axis=0)
+        _open = _open[~_open.index.duplicated(keep="last")]
+        _ev = corporate_action_gaps(close, _open)
+        if _ev:
+            close = back_adjust(close, _ev)
+            console.detail("close history · corporate-action gaps back-adjusted: " + ", ".join(
+                f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _ev))
     if mask_dead_quotes:
         close, _dead = _mask_dead(close)
         if _dead:
             console.detail("close history · unpriced dead quotes: "
                            + ", ".join(f"{c.replace('.NS', '')} {n}" for c, n in _dead.items()))
+    # One listing per stripped name: the LAST in the caller's list order, as the snapshot rows
+    # and nco.cvg_readings (keep="last") resolve it — not yfinance's alphabetical column order,
+    # which for ['INFY.NS', 'INFY'] gave the grid the ADR and the overlay the NSE line (MM-B11).
+    _last = {str(s).replace(".NS", ""): str(s) for s in symbols}
+    close = close[[c for c in close.columns if _last.get(str(c).replace(".NS", "")) == str(c)]]
     close.columns = [str(c).replace(".NS", "") for c in close.columns]
-    close = close.loc[:, ~close.columns.duplicated(keep="last")]
     console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
                    f"{close.index[0]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d}")
     return close
@@ -909,6 +964,7 @@ def generate_historical_data(
     _today, _hour = pd.Timestamp(_now.date()), _now.hour + _now.minute / 60.0
     _forming: List[str] = []
     _holiday_rows = 0
+    _corp_events: List[Tuple[str, pd.Timestamp, float]] = []
     for i, ticker in enumerate(symbols_to_process):
         try:
             if len(symbols_to_process) > 1:
@@ -932,6 +988,16 @@ def generate_historical_data(
                 if _flat.any():
                     _holiday_rows += int(_flat.sum())
                     symbol_df = symbol_df[~_flat]
+            # An unadjusted demerger or mis-dated split (corporate_action_gaps) would reach the
+            # tapes as a -40% session and HRP / ERC's covariance as a -40% return: back-adjust
+            # the bars before it, as the close history does (MM-B3).
+            if {'open', 'high', 'low'}.issubset(symbol_df.columns):
+                _ev = corporate_action_gaps(symbol_df[['close']].set_axis([ticker], axis=1),
+                                            symbol_df[['open']].set_axis([ticker], axis=1))
+                if _ev:
+                    symbol_df = back_adjust(symbol_df, _ev,
+                                            columns=lambda _s: ['open', 'high', 'low', 'close'])
+                    _corp_events.extend(_ev)
             if (len(symbol_df) and symbol_df.index[-1].normalize() == _today
                     and _hour < _close_utc(ticker)):
                 symbol_df = symbol_df.iloc[:-1]
@@ -962,6 +1028,9 @@ def generate_historical_data(
     if _forming:
         console.warning(f"intraday run · today's bar is still forming for {len(_forming)} symbol(s) — "
                         "their readings and prices are as of the last completed close")
+    if _corp_events:
+        console.detail("corporate-action gaps back-adjusted: " + ", ".join(
+            f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _corp_events))
     if _holiday_rows:
         console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) before the tapes")
     _skipped_indicators = [s for s in symbols_to_process if s not in ticker_indicator_cache]

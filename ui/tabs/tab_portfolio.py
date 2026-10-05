@@ -26,7 +26,7 @@ from ui.shared import (CVG_CHIP, CVG_TONE, NCO_STYLES, REGIME_FACTOR_ORDER,
                        STYLE_LABELS, holds_universe, mmom_state, num, style_spec)
 from ui.components import render_kpi_strip
 from cvgrid import STATE_LABEL, STATE_UNITS, STATES
-from nco import MMOM_GATE, MMOM_MIN_VOL_MONTHS
+from nco import MMOM_MIN_VOL_MONTHS
 from pragati import INNER_ZONE
 from samanvaya import THETA_OSC
 import html as html_module
@@ -345,7 +345,8 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
                         if mm["coverage"] is not None and mm["coverage"] < 1 else "")),
          "color_class": ("warning" if down or mm["fell_back"] or mm["short"]
                          or mm["no_close"] else "neutral"),
-         "tooltip": (f"The 24-month gate needs {MMOM_GATE + 1} sessions; this history "
+         "tooltip": (f"The 24-month gate needs {mm['gate_needs']} sessions on this "
+                     f"{mm['calendar']} calendar; this history "
                      + ("is short of that." if mm["short"] else "covers it."))},
     ], max_cols=3, key="mmom-overlay")
     render_note(

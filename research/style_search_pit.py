@@ -79,7 +79,7 @@ def build() -> dict:
         snaps = generate_historical_data(list(DOW_JONES_TICKERS) + list(ADDED), datetime(2006, 1, 1),
                                          datetime(2026, 10, 2))
         pickle.dump(snaps, open(snap_pkl, "wb"))
-    snaps = sb.unstale(snaps)
+    snaps = sb.repair(snaps)
     by_date = {pd.Timestamp(d): s.drop_duplicates("symbol", keep="last").set_index("symbol") for d, s in snaps}
     px = pd.DataFrame({d: pd.to_numeric(s["price"], errors="coerce") for d, s in by_date.items()}).T.sort_index()
     num = [c for c in snaps[-1][1].columns if c not in ("date", "symbol", "price")

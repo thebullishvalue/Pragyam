@@ -150,11 +150,58 @@ def symbols(key: str) -> list:
 def snapshots(key: str) -> list:
     p = os.path.join(HERE, f"cvg_reweight_{key}.pkl")
     if os.path.exists(p):
-        return unstale(pickle.load(open(p, "rb")))
+        return repair(pickle.load(open(p, "rb")))
     from backdata import generate_historical_data
     snaps = generate_historical_data(symbols(key), START, END)
     pickle.dump(snaps, open(p, "wb"))
-    return unstale(snaps)
+    return repair(snaps)
+
+
+def repair(snaps: list) -> list:
+    """The research panels' two data repairs: stale closes unpriced, corporate actions back-adjusted."""
+    return unsplit(unstale(snaps))
+
+
+# Corporate actions yfinance leaves unadjusted in these panels: what backdata.corporate_action_gaps
+# finds on the raw Open/Close download (a >= 30% move on a >= 30% overnight gap, Indian listings),
+# inside the research window. The snapshots carry no Open, so the events are listed; LT's 2006-09
+# pair precedes the panels and NESTLEIND's 2010-01-08 jump ends a stale run unstale() unprices.
+# Unrepaired, every style "lost" BAJAJFINSV's -64% and -93% days in 2008 (MM-B3).
+CORP_ACTIONS = (("BAJAJFINSV", "2008-03-14"), ("BAJAJFINSV", "2008-05-26"), ("ADANIENT", "2015-06-03"),
+                ("TMPV", "2025-10-14"), ("TRENT", "2026-01-01"))
+
+
+def unsplit(snaps: list) -> list:
+    """Back-adjust each CORP_ACTIONS price before its date by the panel's own jump ratio, so the
+    jump leaves the return series and no other return changes."""
+    px = pd.DataFrame({pd.Timestamp(d): pd.to_numeric(s.drop_duplicates("symbol", keep="last")
+                                                      .set_index("symbol")["price"], errors="coerce")
+                       for d, s in snaps}).T.sort_index()
+    scale = pd.DataFrame(1.0, index=px.index, columns=px.columns)
+    done = []
+    for sym, t in CORP_ACTIONS:
+        t = pd.Timestamp(t)
+        if sym not in px.columns or t not in px.index or not np.isfinite(px.at[t, sym]):
+            continue
+        prev = px[sym].loc[:t].iloc[:-1].last_valid_index()
+        if prev is None:
+            continue
+        k = float(px.at[t, sym] / px.at[prev, sym])
+        scale.loc[scale.index < t, sym] *= k
+        done.append(f"{sym} {t:%Y-%m-%d} ×{k:.3f}")
+    if not done:
+        return snaps
+    out = []
+    for d, s in snaps:
+        row = scale.loc[pd.Timestamp(d)]
+        row = row[row != 1.0]
+        if len(row):
+            s = s.copy()
+            m = s["symbol"].isin(row.index)
+            s.loc[m, "price"] = pd.to_numeric(s.loc[m, "price"], errors="coerce") * s.loc[m, "symbol"].map(row)
+        out.append((d, s))
+    print("   back-adjusted corporate actions: " + ", ".join(done), flush=True)
+    return out
 
 
 def unstale(snaps: list) -> list:

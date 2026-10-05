@@ -18,7 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from nco import (METHOD_ORDER, METHOD_SPECS, MMOM_FLOOR, MMOM_GATE, MMOM_LAMBDA,
+from nco import (METHOD_ORDER, METHOD_SPECS, MMOM_FLOOR, MMOM_LAMBDA, MMOM_MIN_HISTORY,
                  MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS, method_spec)
 
 # Portfolio styles, derived from nco.METHOD_SPECS rather than hardcoded here.
@@ -120,7 +120,10 @@ def mmom_state(attrs) -> Optional[dict]:
         # to the grid (strength 0) — the reason, else None.
         "stood_down": (str(at["nco_mmom_stood_down"]) if at.get("nco_mmom_stood_down")
                        else None),
-        "gate_needs": MMOM_GATE + 1,
+        # Rows the 24-month gate needs on this history's calendar (505 on a 5-day one,
+        # 731 on a 7-day one); a book built before nco recorded it read 5-day rows.
+        "gate_needs": int(at.get("nco_mmom_history_needed") or MMOM_MIN_HISTORY),
+        "calendar": str((at.get("nco_mmom_windows") or {}).get("calendar", "5-day")),
         "lam": num(at.get("nco_mmom_lambda")) or MMOM_LAMBDA,
         "gate": num(at.get("nco_mmom_gate")),            # 1 open, 0 shut
         "market": num(at.get("nco_mmom_market_24m")),    # None: under a year, gate held open

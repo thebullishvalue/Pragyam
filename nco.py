@@ -654,6 +654,22 @@ MMOM_FLOOR = 0.25          # no name below this share of its CVG weight: the gri
 MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
 MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
 MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
+MMOM_MIN_HISTORY = MMOM_GATE + 1    # rows before the overlay may act, whatever the source (MM-B5)
+# The windows above count ROWS of a 5-day calendar. A panel with > 300 rows in its trailing
+# 365 days (Crypto, or a Custom List mixing 7-day and 5-day calendars) reads the same spans
+# in 7-day rows; read as 5-day rows they were ~8-1 momentum, a 16.5-month gate and a 4-month
+# volatility window, and the Crypto gate read shut at -22% on a +26% market (MM-B2).
+MMOM_WINDOWS_7D = dict(look=365, skip=30, gate=730, vol_win=183, ann=365.0)
+
+
+def mmom_windows(index) -> dict:
+    """The overlay's row windows for the panel's own calendar (rows in the trailing 365 days)."""
+    ix = pd.DatetimeIndex(index) if len(index) else pd.DatetimeIndex([])
+    bpy = int((ix > ix[-1] - pd.Timedelta(days=365)).sum()) if len(ix) else 0
+    if bpy > 300:
+        return dict(MMOM_WINDOWS_7D, bpy=bpy, calendar="7-day")
+    return dict(look=MMOM_LOOK, skip=MMOM_SKIP, gate=MMOM_GATE, vol_win=MMOM_VOL_WIN, ann=252.0,
+                bpy=bpy, calendar="5-day")
 
 
 def mmom_ranks(score: pd.Series, index) -> pd.Series:
@@ -665,32 +681,37 @@ def mmom_ranks(score: pd.Series, index) -> pd.Series:
     return (2.0 * (r - 1.0) / (len(s) - 1.0) - 1.0).reindex(index).fillna(0.0)
 
 
-def mmom_momentum(closes: pd.DataFrame, names) -> pd.Series:
+def mmom_momentum(closes: pd.DataFrame, names, look: int = MMOM_LOOK,
+                  skip: int = MMOM_SKIP) -> pd.Series:
     """12-1 total return as of the panel's last row. `closes` carried over gaps of <= 5 sessions."""
-    if closes is None or len(closes) < MMOM_LOOK + 1:
+    if closes is None or len(closes) < look + 1:
         return pd.Series(np.nan, index=list(names))
-    p1 = closes.iloc[-1 - MMOM_SKIP].reindex(names)
-    p0 = closes.iloc[-1 - MMOM_LOOK].reindex(names)
+    p1 = closes.iloc[-1 - skip].reindex(names)
+    p0 = closes.iloc[-1 - look].reindex(names)
     with np.errstate(divide="ignore", invalid="ignore"):
         return (p1 / p0 - 1.0).replace([np.inf, -np.inf], np.nan)
 
 
-def mmom_gate(prices: pd.DataFrame) -> Tuple[float, float]:
+def mmom_gate(prices: pd.DataFrame, gate: int = MMOM_GATE,
+              look: int = MMOM_LOOK) -> Tuple[float, float]:
     """(gate, market return): 0 while the equal-weighted market's 24-month return is negative.
 
     The market is the mean daily return of every name priced that day. With less than a year
     of history the gate cannot be read and stays open (1); with less than 24 months it reads
     what there is — app.py logs the span either way.
     """
-    mkt = prices.pct_change(fill_method=None).mean(axis=1).dropna()
-    n = min(MMOM_GATE, len(mkt))
-    if n < MMOM_LOOK:
+    # Closes carried over gaps of <= 5 sessions first, as momentum and the research panel read
+    # them: uncarried, every return across a missing quote was lost (MM-B1).
+    mkt = prices.ffill(limit=5).pct_change(fill_method=None).mean(axis=1).dropna()
+    n = min(gate, len(mkt))
+    if n < look:
         return 1.0, float("nan")
     ret = float(np.prod(1.0 + mkt.iloc[-n:].to_numpy()) - 1.0)
     return (0.0 if ret < 0.0 else 1.0), ret
 
 
-def mmom_scale(prices: pd.DataFrame) -> Tuple[float, float, float, int]:
+def mmom_scale(prices: pd.DataFrame, look: int = MMOM_LOOK, skip: int = MMOM_SKIP,
+               vol_win: int = MMOM_VOL_WIN, ann: float = 252.0) -> Tuple[float, float, float, int]:
     """(scale, current vol, median vol, months): Barroso & Santa-Clara's scale for the overlay.
 
     The unit overlay — the rank / N weights re-formed at every month start and held to the next,
@@ -708,25 +729,25 @@ def mmom_scale(prices: pd.DataFrame) -> Tuple[float, float, float, int]:
         return 1.0, float("nan"), float("nan"), 0
     pos = {d: i for i, d in enumerate(idx)}
     carried = prices.ffill(limit=5)
-    rets = prices.pct_change(fill_method=None)
+    rets = carried.pct_change(fill_method=None)                # MM-B1: carried, as the gate
     bounds = list(zip(starts[:-1], starts[1:]))
     if idx[-1] > starts[-1]:
         bounds.append((starts[-1], idx[-1]))                 # the month to date
     pieces = []
     for m0, m1 in bounds:
         i0, i1 = pos[m0], pos[m1]
-        if i0 < MMOM_LOOK:
+        if i0 < look:
             continue
         row = prices.iloc[i0]
         names = prices.columns[row.notna() & (row > 0)]
-        u = mmom_ranks(mmom_momentum(carried.iloc[: i0 + 1], names), names)
+        u = mmom_ranks(mmom_momentum(carried.iloc[: i0 + 1], names, look, skip), names)
         if not (u != 0).any():
             continue
         rr = rets.iloc[i0 + 1: i1 + 1].reindex(columns=names).fillna(0.0)
         pieces.append(pd.Series(rr.to_numpy() @ (u.to_numpy() / len(names)), index=rr.index))
     if not pieces:
         return 1.0, float("nan"), float("nan"), 0
-    sig = pd.concat(pieces).rolling(MMOM_VOL_WIN).std(ddof=1) * np.sqrt(252.0)
+    sig = pd.concat(pieces).rolling(vol_win).std(ddof=1) * np.sqrt(ann)
     at = sig.reindex([d for d in starts if d in sig.index]).dropna()
     now = float(sig.iloc[-1])
     if len(at) < MMOM_MIN_VOL_MONTHS or not np.isfinite(now) or now <= 0:
@@ -766,16 +787,23 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
             prices = prices.set_axis(pd.DatetimeIndex(pd.to_datetime(prices.index)), axis=0)
         except (TypeError, ValueError):
             prices = pd.DataFrame()
-    mom = mmom_momentum(prices.ffill(limit=5), names)
+    if len(prices):
+        # A close <= 0 is not a price (CL=F printed -37.63 on 2020-04-20): read as one it made
+        # -306% and -127% "returns" that shut the gate and doubled the overlay's vol (MM-B7).
+        prices = prices.where(prices > 0)
+    win = mmom_windows(prices.index)
+    mom = mmom_momentum(prices.ffill(limit=5), names, win["look"], win["skip"])
     rank = mmom_ranks(mom, names)
-    gate, mkt = mmom_gate(prices)
-    scale, vol, vol_med, vol_months = mmom_scale(prices) if gate > 0 else (1.0, float("nan"),
-                                                                          float("nan"), 0)
+    gate, mkt = mmom_gate(prices, win["gate"], win["look"])
+    scale, vol, vol_med, vol_months = (mmom_scale(prices, win["look"], win["skip"], win["vol_win"],
+                                                  win["ann"])
+                                       if gate > 0 else (1.0, float("nan"), float("nan"), 0))
     return rank, mom, {
         "gate": gate, "market_24m": mkt, "scale": scale, "strength": MMOM_LAMBDA * gate * scale,
         "overlay_vol": vol, "overlay_vol_median": vol_med, "vol_months": vol_months,
         "ranked": int(mom.notna().sum()), "history_days": int(len(prices)),
         "history_start": prices.index[0] if len(prices) else None,
+        "windows": win, "history_needed": int(win["gate"] + 1),
     }
 
 
@@ -1219,11 +1247,12 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                                            for s in alloc_names])) if alloc_names else 0.0
         _mmom["source"] = "close history" if _from_close else "estimation panel"
         _mmom["stood_down"] = None
-        # The estimation panel (~400 sessions) cannot hold the gate's 24 months, nor the
-        # volatility scale's month-start readings: an overlay that cannot read its own
-        # crash guard stands down to the grid rather than run at full strength unguarded.
-        if not _from_close and _mmom["history_days"] < MMOM_GATE + 1:
-            _mmom.update(strength=0.0, stood_down="estimation panel too short for the 24-month gate")
+        # A history short of the gate's 24 months (the ~400-session estimation panel, a run
+        # date before ~2008, a Custom List of recent listings) cannot read its own crash
+        # guard: the overlay stands down to the grid rather than run at full strength
+        # unguarded, whichever history it read (MM-B5; it used to test the fallback only).
+        if _mmom["history_days"] < _mmom["history_needed"]:
+            _mmom.update(strength=0.0, stood_down=f"{_mmom['source']} too short for the 24-month gate")
         _cw = pd.Series(_c, index=alloc_names)
         _tilted = _cw + _mmom["strength"] * _rank / len(_cw)
         _floored = _tilted < MMOM_FLOOR * _cw
@@ -1507,7 +1536,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
             out.attrs[f"nco_mmom_{_k}"] = _v
         out.attrs["nco_mmom_lambda"] = float(MMOM_LAMBDA)
         out.attrs["nco_mmom_floor"] = float(MMOM_FLOOR)
-        out.attrs["nco_mmom_history_short"] = bool(_mmom["history_days"] < MMOM_GATE + 1)
+        out.attrs["nco_mmom_history_short"] = bool(_mmom["history_days"] < _mmom["history_needed"])
     # The grid, over the WHOLE allocation universe as well as the book: the states
     # every name sits in (the census), the readings behind them (for the conviction-value
     # map and the watchlist, which show names the book holds at the floor or not
@@ -1580,6 +1609,8 @@ __all__ = [
     "MMOM_FLOOR",
     "MMOM_GATE",
     "MMOM_HISTORY_START",
+    "MMOM_MIN_HISTORY",
+    "mmom_windows",
     "mmom_overlay",
     "mmom_gate",
     "mmom_scale",

@@ -126,6 +126,7 @@ import sys
 import time
 import warnings
 from contextlib import contextmanager
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -186,8 +187,27 @@ def _gap(a: pd.Series, b: pd.Series) -> float:
     return float((a.reindex(idx, fill_value=0.0) - b.reindex(idx, fill_value=0.0)).abs().max())
 
 
-def weights(d: dict, snaps: list, ref=None, members=None) -> dict:
-    """Shipped and tested raw weights for every rebalance month of `d`, and the exactness gaps."""
+CLOSE_PKL = os.path.join(HERE, "mmom_close_{}.pkl")
+
+
+def app_history(u: str, syms: list):
+    """price_history the app's way (MM-B9): backdata.fetch_close_history from MMOM_HISTORY_START,
+    unmasked and cached once, then sliced to each run date and dead-quote masked after the slice."""
+    import backdata
+    path = CLOSE_PKL.format(u)
+    if os.path.exists(path):
+        close = pickle.load(open(path, "rb"))
+    else:
+        close = backdata.fetch_close_history(syms, datetime.fromisoformat(nco.MMOM_HISTORY_START), sb.END,
+                                             mask_dead_quotes=False)
+        pickle.dump(close, open(path, "wb"))
+    cache = {}
+    return lambda a: cache.setdefault(a, backdata.mask_dead_quotes(close.loc[:a])[0])
+
+
+def weights(d: dict, snaps: list, ref=None, members=None, history=None) -> dict:
+    """Shipped and tested raw weights for every rebalance month of `d`, and the exactness gaps.
+    `history(a)` is the overlay's price_history on run date a (default: the panel's own closes)."""
     cal = list(d["px"].index)
     assert [pd.Timestamp(t) for t, _ in snaps] == cal, "snapshots and panel calendars differ"
     pos = {t: i for i, t in enumerate(cal)}
@@ -196,7 +216,10 @@ def weights(d: dict, snaps: list, ref=None, members=None) -> dict:
         hist = snaps[max(0, pos[a] - 252): pos[a] + 1]
         if members is not None:
             hist = [(t, s[s["symbol"].map(lambda x: members(x, a))].reset_index(drop=True)) for t, s in hist]
-        w, inf = shipped(hist, d["px"].loc[:a])
+        ph = history(a) if history is not None else d["px"].loc[:a]
+        if members is not None:            # a live user fetches only that day's universe (MM-B8)
+            ph = ph[[c for c in ph.columns if members(c, a)]]
+        w, inf = shipped(hist, ph)
         ctx = ss.Ctx(d, a)
         assert inf["names"] == frozenset(ctx.priced), f"{a:%Y-%m-%d}: priced names differ"
         t = B.managed_mom(ctx, lam=1.0)
@@ -258,14 +281,18 @@ def overlay_line(info: pd.DataFrame) -> str:
             f"{', '.join(sorted(set(info['source'])))}")
 
 
-def panel(u: str, ref) -> dict:
+def panel(u: str, ref, app: bool = False) -> dict:
     t0 = time.time()
     d = ss.load(u, holdout=True)
     key = "etf_book" if u == "etf_27" else u
     snaps = sb.snapshots(key)
     if u == "etf_27":
         snaps = [(t, s[~s["symbol"].isin(ss.ETF_YOUNG)].reset_index(drop=True)) for t, s in snaps]
-    W = weights(d, snaps, ref)
+    hist = None
+    if app:
+        syms = [s for s in sb.symbols(key) if s.replace(".NS", "") not in ss.ETF_YOUNG]
+        hist = app_history(u, syms)
+    W = weights(d, snaps, ref, history=hist)
     base = ss.baselines(d)
     runs = {SHIP: ss.run(lambda c: W["ship"][c.date], d), TESTED: ss.run(lambda c: W["tested"][c.date], d)}
     eras = list(ss.ERAS) if u != "etf_27" else [("window", None, None)]
@@ -311,12 +338,16 @@ def point_in_time():
         ss.Ctx.__init__ = init
 
 
-def pit(ref) -> dict:
+def pit(ref, app: bool = False) -> dict:
     t0 = time.time()
     d = pickle.load(open(P.PKL, "rb"))
-    snaps = sb.unstale(pickle.load(open(os.path.join(HERE, "cvg_reweight_dow_pit.pkl"), "rb")))
+    snaps = sb.repair(pickle.load(open(os.path.join(HERE, "cvg_reweight_dow_pit.pkl"), "rb")))
+    hist = None
+    if app:
+        from universe import DOW_JONES_TICKERS
+        hist = app_history("dow_pit", list(DOW_JONES_TICKERS) + list(P.ADDED))
     with point_in_time():
-        W = weights(d, snaps, ref, members=P.member)
+        W = weights(d, snaps, ref, members=P.member, history=hist)
         base = ss.baselines(d)
         runs = {SHIP: ss.run(lambda c: W["ship"][c.date], d), TESTED: ss.run(lambda c: W["tested"][c.date], d)}
     e3 = {k: ss._era(v, "2020-01-01", None) for k, v in {**base, **runs}.items()}
@@ -377,12 +408,14 @@ def summary(res: dict, p: dict) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--ref", help="path to the scratch reference of the shipped form (defines mmom_s(ctx))")
+    ap.add_argument("--app-history", action="store_true",
+                    help="read the overlay's history the app's way (fetch_close_history from 2006)")
     ap.add_argument("panels", nargs="*", default=list(PANELS) + ["pit"])
     args = ap.parse_args()
     pd.set_option("display.width", 250)
     ref = _module(args.ref) if args.ref else None
-    res = {u: panel(u, ref) for u in PANELS if u in args.panels}
-    p = pit(ref) if "pit" in args.panels else None
+    res = {u: panel(u, ref, args.app_history) for u in PANELS if u in args.panels}
+    p = pit(ref, args.app_history) if "pit" in args.panels else None
     summary(res, p)
 
 
