@@ -54,13 +54,15 @@ number offered, and the hedge is applied only as far as it has earned. Volatilit
 indices are deliberately absent — the Pine warns against hedging a target
 against its own volatility.
 
-DRIVER TIMING: a driver whose daily bar closes AFTER the name's is read at its
-PREVIOUS close — the value known when the name closed. The Pine lags only a
-driver more than a third of a day late, which read European bonds for an NSE
-name 5½-6½ hours after the NSE close (look-ahead by construction); at
-DRIVER_LATE = 0 they lag too, as US drivers against an NSE name and futures,
-DXY and FX against a US name now do (measured immaterial: +0.004%/yr Nifty,
-+0.02 Dow; research/audit_cvg.py, CVG-B10).
+DRIVER TIMING: a driver whose daily bar closes more than an hour after the
+name's is read at its PREVIOUS close — the value known when the name closed. The
+Pine lags only a driver more than a third of a day late, which read European
+bonds for an NSE name 5½-6½ hours after the NSE close (look-ahead by
+construction); at DRIVER_LATE = 1 h they lag, as US drivers against an NSE name
+and FX against a US name do (CVG-B10; immaterial: +0.004%/yr Nifty). Within an
+hour counts as the same close, so the US curve's legs (^TNX 20:30, ZT=F 21:00)
+stay on one day for a US name: lagging one leg alone fabricated a steepening and
+a flattening out of every parallel shift.
 
 What is not carried: the ▲▼ ◆ signal machinery and everything that exists only
 for it (the basket-warm gate, the arm/confirm state). Only the readings.
@@ -97,7 +99,7 @@ CLIP_Z = 3.0
 VAR_CORR_LEN = 200      # window for the leg correlation
 LEG_MIX = 0.5           # weight on the RV leg — Samanvaya's measured best
 THETA = 1.5             # entry threshold θ, in |z|
-DRIVER_LATE = 0.0      # days; any driver closing after the name lags (the Pine: 1/3)
+DRIVER_LATE = 1.0 / 24.0   # days; a driver closing more than an hour after the name lags (the Pine: 1/3)
 SELF_RHO = 0.99         # self-containment screen
 SELF_WIN = 200
 WEEKLY_BREADTH_MIN = 2 * B_WINDOWS[-1] + 20   # weekly bars before breadth is trusted

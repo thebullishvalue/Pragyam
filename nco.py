@@ -121,12 +121,15 @@ MIN_COVERAGE = 0.95
 # nco does not import yfinance.
 _DEAD_QUOTE_RUN = 10
 
-# A return column whose variance is non-finite or below this share of the
-# universe's median variance is degenerate (a frozen or broken series that the
-# dead-quote rule did not catch) and is left out of the estimation universe. Clean
-# data sits far above it: the lowest ratio over 494 research month-starts is 0.18,
-# today's live universes 0.12; a frozen J&KBANK (2017) sits at 8.7e-4.
-_DEGENERATE_VAR_RATIO = 0.01
+# A return column is degenerate — a frozen or broken series the dead-quote rule did not
+# catch — and left out of the estimation universe when its variance is non-finite or zero,
+# when at least half its returns are exactly zero (J&KBANK 2016-17: 99.6%), or when its
+# variance is below a millionth of the universe's median (a series that barely moves at
+# all). A RATIO to the median alone would also drop genuinely calm assets — a pegged
+# currency (USDHKD ~0.006x the FX median) or a cash-like ETF (~1e-4x equities) — which HRP
+# and ERC should hold; they have few zero returns and clear 1e-6 by orders of magnitude.
+_DEGENERATE_ZERO_SHARE = 0.5
+_DEGENERATE_VAR_RATIO = 1e-6
 
 
 def correlation_distance(corr: np.ndarray) -> np.ndarray:
@@ -663,7 +666,13 @@ MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
 MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
 MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
 MMOM_MIN_HISTORY = MMOM_GATE + 1    # rows before the overlay may act, whatever the source (MM-B5)
-MMOM_SCALE_CAP = 1.0       # the volatility scale is min(MMOM_SCALE_CAP, median / now)
+# The volatility scale is min(MMOM_SCALE_CAP, median / now): the overlay shrinks while its own
+# volatility runs above its long-run median and grows, up to 1.5x, while it runs below — volatility
+# targeting in both directions (Barroso & Santa-Clara 2015; Moreira & Muir 2017). Pre-registered
+# (research/audit_mmom.py, MM-O1 BSC_UP15) and re-measured on the v12.2 code and data: ahead of the
+# one-sided scale (cap 1) in all six era cells — Nifty 50 +0.28 / +0.14 / +0.22 %/yr, Dow 30 +0.05 /
+# +0.17 / +0.01 — and level on the point-in-time Dow (+0.005); none significant.
+MMOM_SCALE_CAP = 1.5
 # The windows above count ROWS of a 5-day calendar. A panel with > 300 rows in its trailing
 # 365 days (Crypto, or a Custom List mixing 7-day and 5-day calendars) reads the same spans
 # in 7-day rows; read as 5-day rows they were ~8-1 momentum, a 16.5-month gate and a 4-month
@@ -812,7 +821,8 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
     if len(prices):
         t = prices.index[-1]
         m0 = prices.index[(prices.index.year == t.year) & (prices.index.month == t.month)][0]
-    gate, mkt = mmom_gate(prices.loc[:m0] if m0 is not None else prices, win["gate"], win["look"])
+    head = prices.loc[:m0] if m0 is not None else prices
+    gate, mkt = mmom_gate(head, win["gate"], win["look"])
     scale, vol, vol_med, vol_months = (mmom_scale(prices, win["look"], win["skip"], win["vol_win"],
                                                   win["ann"])
                                        if gate > 0 else (1.0, float("nan"), float("nan"), 0))
@@ -822,6 +832,7 @@ def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dic
         "ranked": int(mom.notna().sum()), "history_days": int(len(prices)),
         "history_start": prices.index[0] if len(prices) else None,
         "windows": win, "history_needed": int(win["gate"] + 1), "gate_read_on": m0,
+        "gate_rows": int(len(head)),
     }
 
 
@@ -935,11 +946,13 @@ def build_returns_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     # left out of the estimation universe rather than floored: a floor hands the
     # frozen name 37-87% of HRP's raw weight, and ERC solves it to the cap too.
     _v = out.var(ddof=1)
+    _zero = out.eq(0.0).mean() if len(out) else pd.Series(0.0, index=out.columns)
     _fin = np.isfinite(_v.to_numpy(dtype=float))
     _med = float(np.median(_v.to_numpy(dtype=float)[_fin])) if _fin.any() else 0.0
     degenerate = {str(c): (float(_v[c] / _med) if _med > 0 and np.isfinite(_v[c]) else float("nan"))
                   for c in out.columns
-                  if not np.isfinite(_v[c]) or _v[c] <= 0 or _v[c] < _DEGENERATE_VAR_RATIO * _med}
+                  if not np.isfinite(_v[c]) or _v[c] <= 0 or _zero[c] >= _DEGENERATE_ZERO_SHARE
+                  or _v[c] < _DEGENERATE_VAR_RATIO * _med}
     if degenerate:
         out = out.drop(columns=list(degenerate))
     # Record WHAT was dropped and by how much, so a book built on fewer names
@@ -1310,7 +1323,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         # date before ~2008, a Custom List of recent listings) cannot read its own crash
         # guard: the overlay stands down to the grid rather than run at full strength
         # unguarded, whichever history it read (MM-B5; it used to test the fallback only).
-        if _mmom["history_days"] < _mmom["history_needed"]:
+        if _mmom["gate_rows"] < _mmom["history_needed"]:
             _mmom.update(strength=0.0, stood_down=f"{_mmom['source']} too short for the 24-month gate")
         _cw = pd.Series(_c, index=alloc_names)
         _tilted = _cw + _mmom["strength"] * _rank / len(_cw)
@@ -1489,14 +1502,23 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     _cap_value = max(cap_eff, 1.0 / len(out)) * capital + 1e-9
     _cash = float(capital - (_units * _px_u).sum())
     _topped = 0
-    while _topped < 200_000:
+    # Greedy in bulk: the holding furthest below target buys as many shares as bring it level
+    # with the next-furthest (at least one), capped by the cash and the cap. One share at a time
+    # stalled on a sub-cent coin (SHIB ~1.2e-5) for 200,000 steps with whole shares affordable.
+    for _ in range(10_000):
         _ok = (_px_u <= _cash + 1e-9) & ((_units + 1.0) * _px_u <= _cap_value)
         if not _ok.any():
             break
-        _i = int(np.argmax(np.where(_ok, _target - _units * _px_u, -np.inf)))
-        _units[_i] += 1.0
-        _cash -= _px_u[_i]
-        _topped += 1
+        _gap = np.where(_ok, _target - _units * _px_u, -np.inf)
+        _i = int(np.argmax(_gap))
+        _rest = np.delete(_gap, _i)
+        _most = int(min(np.floor((_cash + 1e-9) / _px_u[_i]),
+                        np.floor((_cap_value - _units[_i] * _px_u[_i]) / _px_u[_i])))
+        _k = (_most if not _rest.size or not np.isfinite(_rest.max())
+              else int(np.clip(np.ceil((_gap[_i] - _rest.max()) / _px_u[_i]), 1, _most)))
+        _units[_i] += _k
+        _cash -= _k * _px_u[_i]
+        _topped += _k
     out["units"] = _units
     out["value"] = out["units"] * out["price"]
     # Rows that hold no share even after the top-up (the price exceeds the cash left or the
@@ -1562,7 +1584,8 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # NUMBERS, which is the same set for a covariance-driven style and a
     # strictly milder statement for equal weight.
     _excl = dict(rets.attrs.get("excluded", {})) if not rets.empty else {}
-    out.attrs["nco_universe_requested"] = int(n_est + len(_excl) if _needs_cov
+    _degen = dict(rets.attrs.get("degenerate", {})) if not rets.empty else {}
+    out.attrs["nco_universe_requested"] = int(n_est + len(_excl) + len(_degen) if _needs_cov
                                               else len(alloc_names))
     out.attrs["nco_universe_excluded"] = dict(_excl) if _needs_cov else {}
     out.attrs["nco_diagnostic_excluded"] = dict(_excl)
@@ -1599,7 +1622,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
             out.attrs[f"nco_mmom_{_k}"] = _v
         out.attrs["nco_mmom_lambda"] = float(MMOM_LAMBDA)
         out.attrs["nco_mmom_floor"] = float(MMOM_FLOOR)
-        out.attrs["nco_mmom_history_short"] = bool(_mmom["history_days"] < _mmom["history_needed"])
+        out.attrs["nco_mmom_history_short"] = bool(_mmom["gate_rows"] < _mmom["history_needed"])
     # The grid, over the WHOLE allocation universe as well as the book: the states
     # every name sits in (the census), the readings behind them (for the conviction-value
     # map and the watchlist, which show names the book holds at the floor or not

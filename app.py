@@ -113,8 +113,9 @@ from universe import (
     render_universe_selector,
 )
 from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec, MIN_OBS,
+                 build_price_matrix, mmom_windows,
                  MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP,
-                 MMOM_GATE, MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS)
+                 MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS)
 from cvgrid import STATE_LABEL as CVG_STATE_LABEL, STATES as CVG_STATES
 
 try:
@@ -791,6 +792,16 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
             "body": f"Below {cov_req:.0%} of the estimation window, so this style has no "
                     f"weight to give them: {', '.join(sorted(excluded))}.",
         })
+    degenerate = at.get("nco_degenerate") or {}
+    if degenerate:
+        out.append({
+            "kind": "info",
+            "title": f"{len(degenerate)} symbol(s) with a frozen return series",
+            "body": ("At least half their returns are exactly zero, or they barely move at all, so "
+                     "no covariance is estimated for them" + (" and this style has no weight to give "
+                     "them" if at.get("nco_needs_covariance", True) else "; they are held, without risk "
+                     "figures") + f": {', '.join(sorted(degenerate))}."),
+        })
     if not at.get("nco_cov_estimable", True):
         out.append({
             "kind": "warning",
@@ -802,8 +813,8 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
     # fails, the estimation panel (~400 sessions, ~19 months) cannot hold the
     # bear gate's 24 months, and the overlay STANDS DOWN: strength 0, the book is
     # the grid's. A run dated near the start of the history is short the same
-    # way, but there the gate reads what there is and the overlay runs. Either
-    # way the reader is told, in the words mmom_history_caveat gives every surface.
+    # way and stands down too (v12.2: whatever history it read). Either way the
+    # reader is told, in the words mmom_history_caveat gives every surface.
     _mm = mmom_state(at)
     _cav = mmom_history_caveat(_mm)
     if _cav is not None:
@@ -1173,10 +1184,11 @@ def _run_analysis(
         with log.task("Historical panel",
                       f"{LOOKBACK_FILES}-day lookback · {len(symbols_list)} symbols") as _t:
             _t.item("Anchor", selected_date.strftime("%Y-%m-%d"))
+            _bars_start = selected_date - timedelta(days=int(_READINGS_YEARS * 365.25))
             _t.item("Download window",
-                    f"{_panel_start:%Y-%m-%d} → {selected_date:%Y-%m-%d} "
-                    f"({(selected_date - _panel_start).days} calendar days, "
-                    f"{MAX_INDICATOR_PERIOD} warmup bars)")
+                    f"{_bars_start:%Y-%m-%d} → {selected_date:%Y-%m-%d} "
+                    f"({_READINGS_YEARS} years of bars, which the tapes read) · snapshots from "
+                    f"{_panel_start:%Y-%m-%d} ({MAX_INDICATOR_PERIOD} warmup bars)")
             _fetches_before = _panel_fetch_count()
             _rec_before = getattr(metrics, "data_recovery", None)
             all_hist = _load_historical_data(selected_date, LOOKBACK_FILES, symbols_key)
@@ -1410,8 +1422,9 @@ def _run_analysis(
                                     + (f" ({type(_close_err).__name__}: {_close_err})"
                                        if _close_err is not None else " to this date")
                                     + f" — the overlay has only the {len(_nco_hist)}-session "
-                                      f"estimation panel, under the {MMOM_GATE + 1} its 24-month "
-                                      "bear gate needs, so it stands down to the grid")
+                                      "estimation panel, under the "
+                                      f"{mmom_windows(build_price_matrix(_nco_hist).index)['gate'] + 1} "
+                                      "its 24-month bear gate needs, so it stands down to the grid")
                         else:
                             _ph_last = _price_history.index[-1]
                             _t.item("Span", f"{_price_history.index[0]:%Y-%m-%d} → "
@@ -1541,12 +1554,18 @@ def _run_analysis(
                     f"{type(_curation_error).__name__}: {_curation_error}. The run log "
                     "carries the step it failed on."
                     if _curation_error is not None else
-                    f"{investment_style} could not build a portfolio — the return "
-                    f"covariance was not estimable: {_book.attrs.get('nco_obs', 0)} overlapping "
-                    f"daily returns for {_book.attrs.get('nco_n_est', 0)} names with enough "
-                    f"history, and it needs at least {MIN_OBS} rows and one per name. A larger "
-                    "universe makes this worse; a smaller one, or Equal Weight / the "
-                    "Conviction-Value Grid (which read no covariance), will build."
+                    (f"{investment_style} could not build a portfolio — fewer than two names "
+                     f"({_book.attrs.get('nco_n_est', 0)}) carry {MIN_COVERAGE:.0%} of the "
+                     "estimation window with a usable return series, and a covariance needs at "
+                     "least two. A universe with more long-listed names, or Equal Weight / the "
+                     "Conviction-Value Grid (which read no covariance), will build."
+                     if int(_book.attrs.get('nco_n_est', 0) or 0) < 2 else
+                     f"{investment_style} could not build a portfolio — the return "
+                     f"covariance was not estimable: {_book.attrs.get('nco_obs', 0)} overlapping "
+                     f"daily returns for {_book.attrs.get('nco_n_est', 0)} names with enough "
+                     f"history, and it needs at least {MIN_OBS} rows and one per name. A larger "
+                     "universe makes this worse; a smaller one, or Equal Weight / the "
+                     "Conviction-Value Grid (which read no covariance), will build.")
                     if _needs_cov else
                     f"{investment_style} could not build a portfolio — no symbol in this "
                     "universe returned a usable price for the selected date. Check the "

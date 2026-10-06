@@ -145,6 +145,9 @@ AUDIT_MMOM_REF (default HEAD). The v12.1 ruling: REF = c28f5a5.
   mkdir D; for f in nco cvgrid pragati samanvaya intraday; do git show c28f5a5:$f.py > D/$f.py; done
 
 Run:  AUDIT_MMOM_CODE=D AUDIT_MMOM_REF=c28f5a5 python research/audit_mmom.py [--cache DIR] [panels]
+      (D must hold c28f5a5's product modules: the drop-in overlay returns v12.1's diagnostics, and
+      v12.2's compute_nco_portfolio reads keys it lacks. The v12.2 re-check of MM-O1 ran through the
+      shipped overlay with nco.MMOM_SCALE_CAP set instead; see nco.MMOM_SCALE_CAP.)
       (~30 min, one process; weights cached per panel)
 
 RESULT (2026-10-05) — MM-O1: BSC_UP2 AND BSC_UP15 BOTH PASS THE BAR, thinly; by the registered rule the pick is

@@ -28,8 +28,9 @@ not a re-implementation, on the same panels, book, costs and eras as every other
 METHOD
 ──────
 (a) For every rebalance month of ss.load(u, holdout=True), u in nifty_50, dow_30 and etf_27:
-        hist   = the 253 snapshots ending on the rebalance date, from style_blends.snapshots(key)
-                 (stale-close repair applied; key "etf_book" for etf_27, minus ss.ETF_YOUNG)
+        hist   = the sb.PANEL (400; 253 before v12.2) snapshots ending on the rebalance date, from
+                 style_blends.snapshots(key) (stale-close and corporate-action repairs applied; key
+                 "etf_book" for etf_27, minus ss.ETF_YOUNG)
         prices = the last snapshot's priced names (every name is held: num_positions = len(prices))
         book   = nco.compute_nco_portfolio(hist, prices, 1e10, len(prices), method="MMOM",
                                            max_pos_pct=1.0, price_history=d["px"].loc[:a])
@@ -52,9 +53,11 @@ METHOD
 (d) Point-in-time Dow, E3: style_search_pit.PKL with ctx.priced restricted to that day's members,
     as style_search_pit.main does. The shipped weights are built from snapshots filtered to those
     members, with prices restricted to them, as style_search_pit.build does for the baselines.
-    price_history = d["px"].loc[:a] covers every name: the ranks are over that day's members, while
-    the bear gate's market and the volatility scale read the full panel, non-members included, as
-    the research reference did.
+    price_history is cut to that day's members (v12.2, MM-B8), as a live user's fetch would be: the
+    ranks, the bear gate's market and the volatility scale all read members only. (Until v12.1 the
+    gate and scale read the full panel, non-members included, as the research reference did.)
+    --app-history replaces d["px"] with backdata.fetch_close_history from MMOM_HISTORY_START,
+    cached once to research/mmom_close_{u}.pkl and sliced and dead-quote masked per date (MM-B9).
 
 Run:  python research/mmom_ship.py [--ref /path/to/mmom_ref_keep.py]     (~8 min, one process)
 
@@ -229,6 +232,10 @@ def app_history(u: str, syms: list):
     else:
         close = backdata.fetch_close_history(syms, datetime.fromisoformat(nco.MMOM_HISTORY_START), sb.END,
                                              mask_dead_quotes=False)
+        want = {str(s).replace(".NS", "") for s in syms}
+        if close is None or close.empty or len(want - set(close.columns)) > 0.05 * len(want):
+            raise RuntimeError(f"{u}: the close-history fetch came back empty or short "
+                               f"({0 if close is None else close.shape[1]} of {len(want)}); not cached")
         pickle.dump(close, open(path, "wb"))
     cache = {}
     return lambda a: cache.setdefault(a, backdata.mask_dead_quotes(close.loc[:a])[0])

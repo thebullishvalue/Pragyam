@@ -36,7 +36,7 @@ from typing import List, Tuple, Dict, Any, Optional, cast
 # Import circuit breaker, metrics and the console
 from circuit_breaker import yfinance_circuit, RetryWithBackoff
 from cvgrid import COLUMNS as CVG_COLUMNS, compute_readings
-from samanvaya import DRIVER_TICKERS, _close_utc
+from samanvaya import DRIVER_TICKERS
 from logger_config import console
 from metrics import get_metrics
 
@@ -506,19 +506,58 @@ class _LadderUp(Exception):
 _CORP_ACTION_JUMP = 0.30
 
 
-def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame) -> List[Tuple[str, pd.Timestamp, float]]:
-    """(symbol, date, close / previous close) for every move read as an unadjusted corporate action:
-    an Indian listing (.NS / .BO) whose close moved >= 30% on a >= 30% overnight gap."""
+def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame):
+    """(events, bad_spans) read from an Indian listing's (.NS / .BO) closes and opens.
+
+    events     (symbol, date, close / previous close): a >= 30% close move on a >= 30% overnight
+               gap, read as a corporate action yfinance left unadjusted — back-adjust it.
+    bad_spans  (symbol, first, end): a flagged move that reverses a >= 30% move of the last five
+               sessions to within 25% (LT 2006-09-27 at half price for one day, MON100's -90% /
+               +892% in June 2021, a one-day bad close). That is a bad print, not an action: the
+               closes from `first` up to (not including) `end` are unpriced, and neither leg is
+               back-adjusted — adjusting only the second leg would turn a harmless spike into a
+               permanent level shift.
+    """
     cols = [c for c in close.columns if str(c).upper().endswith((".NS", ".BO"))]
     if not cols or open_ is None:
-        return []
+        return [], []
     c = close[cols].apply(pd.to_numeric, errors="coerce")
     o = open_.reindex(index=c.index, columns=cols).apply(pd.to_numeric, errors="coerce")
     prev = c.ffill(limit=5).shift(1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        hit = (((c / prev - 1.0).abs() >= _CORP_ACTION_JUMP)
+        move = c / prev - 1.0
+        hit = ((move.abs() >= _CORP_ACTION_JUMP)
                & ((o / prev - 1.0).abs() >= _CORP_ACTION_JUMP)).to_numpy()
-    return [(cols[j], c.index[i], float(c.iat[i, j] / prev.iat[i, j])) for i, j in np.argwhere(hit)]
+    mv = move.to_numpy()
+    events, spans = [], []
+    for i, j in sorted(map(tuple, np.argwhere(hit))):
+        k = float(c.iat[i, j] / prev.iat[i, j])
+        back = next((s for s in range(i - 1, max(i - 6, -1), -1)
+                     if np.isfinite(mv[s, j]) and abs(mv[s, j]) >= _CORP_ACTION_JUMP
+                     and np.sign(mv[s, j]) != np.sign(k - 1.0)
+                     and abs((1.0 + mv[s, j]) * k - 1.0) < 0.25), None)
+        if back is None:
+            events.append((cols[j], c.index[i], k))
+        else:
+            spans.append((cols[j], c.index[back], c.index[i]))
+    events = [e for e in events
+              if not any(e[0] == sp[0] and sp[1] <= e[1] < sp[2] for sp in spans)]
+    return events, spans
+
+
+def session_close_utc(symbol: str) -> float:
+    """The LATEST UTC hour the symbol's daily bar can still be forming, all year round: NSE/BSE
+    10:00 (no DST), FX and CME futures 22:00, 24h markets never (24), everything else 21:00 (a US
+    equity's 16:00 ET under EST; it closes at 20:00 under EDT, so this errs toward dropping).
+    samanvaya._close_utc's 20:30 midpoint is fine for ordering drivers, not as a cutoff."""
+    s = str(symbol).upper()
+    if s.endswith((".NS", ".BO")) or s in ("^NSEI", "^NSEBANK", "^BSESN", "^INDIAVIX"):
+        return 10.0
+    if s.endswith("-USD"):
+        return 24.0
+    if s.endswith(("=X", "=F")):
+        return 22.0
+    return 21.0
 
 
 def back_adjust(frame: pd.DataFrame, events, columns=None) -> pd.DataFrame:
@@ -590,11 +629,16 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     if _open is not None:
         _open = _open.set_axis(pd.DatetimeIndex(_open.index).tz_localize(None).normalize(), axis=0)
         _open = _open[~_open.index.duplicated(keep="last")]
-        _ev = corporate_action_gaps(close, _open)
+        _ev, _bad = corporate_action_gaps(close, _open)
+        for _c, _t0, _t1 in _bad:
+            close.loc[(close.index >= _t0) & (close.index < _t1), _c] = np.nan
         if _ev:
             close = back_adjust(close, _ev)
             console.detail("close history · corporate-action gaps back-adjusted: " + ", ".join(
                 f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _ev))
+        if _bad:
+            console.detail("close history · bad prints unpriced: " + ", ".join(
+                f"{c.replace('.NS', '')} {t0:%Y-%m-%d}" for c, t0, _ in _bad))
     if mask_dead_quotes:
         close, _dead = _mask_dead(close)
         if _dead:
@@ -983,7 +1027,7 @@ def generate_historical_data(
     # A run before a market's close receives TODAY's bar still forming (partial volume, a
     # moving close). Read as a finished session it moved the Nifty book 2.3-4.5% and the
     # state of 2-18% of names depending on the hour (CVG-B2). Each name's bar for today is
-    # therefore dropped until its own market has closed (samanvaya._close_utc; 24h markets
+    # therefore dropped until its own market has closed (session_close_utc; 24h markets
     # never close, so their today is always forming); the calendar carry below fills that
     # date from the last completed session, so readings and price are as of that close.
     _now = datetime.now(timezone.utc)
@@ -1012,7 +1056,9 @@ def generate_historical_data(
             if len(symbols_to_process) > 1:
                 symbol_df = all_data.xs(ticker, level='Symbol', axis=1).copy()
             else:
-                symbol_df = all_data.copy()
+                # yfinance >= 0.2.5x returns (Price, Ticker) columns even for one symbol.
+                symbol_df = (all_data.droplevel('Symbol', axis=1) if isinstance(all_data.columns, pd.MultiIndex)
+                             else all_data).copy()
                 
             symbol_df.columns = [col.lower() for col in symbol_df.columns]
             
@@ -1033,14 +1079,17 @@ def generate_historical_data(
             # tapes as a -40% session and HRP / ERC's covariance as a -40% return: back-adjust
             # the bars before it, as the close history does (MM-B3).
             if {'open', 'high', 'low'}.issubset(symbol_df.columns):
-                _ev = corporate_action_gaps(symbol_df[['close']].set_axis([ticker], axis=1),
-                                            symbol_df[['open']].set_axis([ticker], axis=1))
+                _ev, _bad = corporate_action_gaps(symbol_df[['close']].set_axis([ticker], axis=1),
+                                                  symbol_df[['open']].set_axis([ticker], axis=1))
+                for _c, _t0, _t1 in _bad:            # a bad print: drop the bars, the carry fills them
+                    symbol_df = symbol_df[~((symbol_df.index >= _t0) & (symbol_df.index < _t1))]
+                    _corp_events.append((_c, _t0, float("nan")))
                 if _ev:
                     symbol_df = back_adjust(symbol_df, _ev,
                                             columns=lambda _s: ['open', 'high', 'low', 'close'])
                     _corp_events.extend(_ev)
             if (len(symbol_df) and symbol_df.index[-1].normalize() == _today
-                    and _hour < _close_utc(ticker)):
+                    and _hour < session_close_utc(ticker)):
                 symbol_df = symbol_df.iloc[:-1]
                 _forming.append(ticker)
             symbol_df.name = ticker
@@ -1070,8 +1119,9 @@ def generate_historical_data(
         console.warning(f"intraday run · today's bar is still forming for {len(_forming)} symbol(s) — "
                         "their readings and prices are as of the last completed close")
     if _corp_events:
-        console.detail("corporate-action gaps back-adjusted: " + ", ".join(
-            f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _corp_events))
+        console.detail("corporate-action gaps back-adjusted (× ratio) or bad prints dropped (—): " + ", ".join(
+            f"{c.replace('.NS', '')} {t:%Y-%m-%d} " + (f"×{k:.3f}" if np.isfinite(k) else "—")
+            for c, t, k in _corp_events))
     if _holiday_rows:
         console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) on "
                        f"{len(_holiday_dates)} exchange holiday(s) before the tapes")

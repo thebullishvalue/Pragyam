@@ -15,6 +15,8 @@ are too young to test. So:
     Window B    the months of A in which EVERY style holds all 27: HRP and ERC admit a fund only
                 once it carries 80% of its 252-day covariance window, so the four Feb-2025 funds
                 join their books about ten months in. B is the strict reading; A1 = A before B.
+                (Measured at nco.MIN_COVERAGE 0.8, as v12.1 shipped. From v12.2 the rule is 95%,
+                so a re-run at HEAD starts B in Feb 2026 and splits A1 / B at a later month.)
     Styles      as research/style_blends.py: EW, ERC, HRP, CVG, and the blends HRP+CVG, HRP+EW,
                 CVG+EW, HRP+CVG+EW (members' raw weights averaged, then top-N and the 10% cap).
     Books       every fund held (27); top-15 reported alongside.

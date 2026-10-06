@@ -227,8 +227,8 @@ def _render_system_tab(training_window: List):
         # leaving a reader to infer it from blank cells in the holdings table.
         render_note(
             f"{_uncovered} holding(s) have less than "
-            f"{num(_at.get('nco_coverage_required')) or 0.8:.0%} of the estimation window "
-            f"and carry no covariance estimate. {_spec['label']} does not read one — it "
+            f"{num(_at.get('nco_coverage_required')) or 0.8:.0%} of the estimation window, "
+            f"or a frozen return series, and carry no covariance estimate. {_spec['label']} does not read one — it "
             "sizes them by the same rule as everything else — but every risk figure above, and "
             "every risk column in the holdings table, is computed WITHOUT them"
             + (f", over {_rc_cov:.0%} of book weight." if _rc_cov is not None else ".")

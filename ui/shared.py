@@ -101,6 +101,8 @@ def mmom_state(attrs) -> Optional[dict]:
     if "nco_mmom_strength" not in at:
         return None
     days = int(at.get("nco_mmom_history_days", 0) or 0)
+    # Rows the bear gate read: the history up to the run month's first session (v12.2).
+    gate_days = int(at.get("nco_mmom_gate_rows", days) or 0)
     short = bool(at.get("nco_mmom_history_short"))
     start = at.get("nco_mmom_history_start")
     months = int(at.get("nco_mmom_vol_months", 0) or 0)
@@ -149,6 +151,7 @@ def mmom_state(attrs) -> Optional[dict]:
         "coverage": coverage,
         "no_close": (int(round((1.0 - coverage) * n_uni)) if coverage is not None else 0),
         "days": days,
+        "gate_days": gate_days,
         "short": short,
         "source": str(at.get("nco_mmom_source") or "—"),
         "fell_back": at.get("nco_mmom_source") == "estimation panel",
@@ -187,7 +190,7 @@ def mmom_floor_text(s: dict) -> str:
     held = s["floored_held"]
     return ((f"{held} held" if held is not None else "— held")
             + f" at {pct} of their grid weight · {fl} of {n} at the floor before top-N"
-            + (" — the lowest weights, cut first" if held is not None and fl > held else ""))
+            + (f" — {fl - held} cut by top-N" if held is not None and fl > held else ""))
 
 
 def mmom_history_caveat(s: Optional[dict]) -> Optional[tuple]:
@@ -204,8 +207,9 @@ def mmom_history_caveat(s: Optional[dict]) -> Optional[tuple]:
         return ("Momentum overlay stood down",
                 ("The long close history was unavailable" if s["fell_back"]
                  else "The overlay's history was too short")
-                + f", so the overlay stood down — {s['stood_down']} ({days} sessions, "
-                f"{needs} needed). Its strength is 0 and this book's weights are the grid's.")
+                + f", so the overlay stood down — {s['stood_down']} ({s['gate_days']} sessions "
+                f"to the month's first, {needs} needed). Its strength is 0 and this book's "
+                "weights are the grid's.")
     if not (s["fell_back"] or s["short"]):
         return None
     lead = (f"The long close history was unavailable, so the overlay read the {days}-session "
