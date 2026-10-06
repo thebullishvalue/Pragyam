@@ -296,7 +296,11 @@ Z1 = Z0 in every month now that pct_change no longer pads, so the 400-session ca
               PIT +0.06, top-30 E2 −0.38. Its Nifty E2/E3 margins sit at zero.
 Under the registered precedence (O1 before O2; C failed) O1-A stays the pick, now on rule (ii)
 alone: higher CAGR in all six cells, none significant, 40% less turnover, ETF27 slightly lower.
-Not shipped: it changes HRP's behaviour and waits on the owner's decision.
+
+SHIPPED in v12.2 (2026-10-06) as nco.hrp_staggered (HRP_WINDOWS 3, HRP_STEP 21, HRP_PANEL 400;
+equal to hrp_staggered(K=3) here to 0.0). On the snapshots regenerated under the v12.2 code,
+staggered vs single fit: Nifty +0.46 / +0.19 / +0.12, Dow +0.12 / +0.17 / +0.38, point-in-time
++0.37, ETF27 −0.25; turnover Nifty 1.23 → 0.72, Dow 0.92 → 0.53. B5 / O1-C not shipped.
 """
 from __future__ import annotations
 

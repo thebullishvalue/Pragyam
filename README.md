@@ -19,75 +19,74 @@ committee — three readers per style, a chair who merged their findings and
 pre-registered the opportunities, a skeptic who tried to refute every bug on real
 data, and a tester who ran the opportunities through the product code
 (`research/audit_cvg.py`, `audit_hrp.py`, `audit_mmom.py`). Every reported bug
-reproduced; the fixes below shipped. What the audit found that would change a
-style's behaviour is listed last and is **not** shipped — each is a product decision.
+reproduced and is fixed; the style changes the audit measured were decided on that
+evidence, and the release diff was then reviewed adversarially itself. Every figure
+in this README is re-measured on the v12.2 code, with the research snapshots
+regenerated under it.
 
 **Data every style reads.**
 - yfinance leaves some Indian demergers and mis-dated splits unadjusted (BAJAJFINSV
   −64% and −93% in 2008, ADANIENT 2015-06-03, TMPV 2025-10-14, TRENT 2026-01-01). An
-  Indian listing's ≥ 30% move on a ≥ 30% overnight gap is now back-adjusted in the
-  close history and the estimation panel (`backdata.corporate_action_gaps`), and the
-  research return panel is repaired the same way (`style_blends.repair`). Every style
-  had been scored on those fake losses: on Nifty 50, Equal Weight's full span rises
-  from 19.69 to 20.10 %/yr and CVG's from 20.48 to 20.95. Every Nifty figure below is
-  on the repaired panel.
+  Indian listing's ≥ 30% move on a ≥ 30% overnight gap is back-adjusted in the close
+  history and the estimation panel (`backdata.corporate_action_gaps`); a move that
+  reverses a recent spike is a bad print and is unpriced instead. The research return
+  panel is repaired the same way (`style_blends.repair`). Every style had been scored
+  on those fake losses: Nifty 50 Equal Weight's full span rises from 19.69 to 20.10 %/yr.
 - A run during market hours no longer reads today's still-forming bar (it moved the
-  Nifty book 2-5% depending on the hour); NSE holiday prints are dropped before the
-  tapes.
+  Nifty book 2-5% by the hour); exchange-holiday prints are dropped before the tapes.
 - Whole-share rounding left up to ~14% of a ₹5L, 50-name book in cash (a −1.6 %/yr
-  drag on CVG since 2020). The leftover is now spent a share at a time on the holding
-  furthest below target, never past the cap.
+  drag on CVG since 2020). The leftover is now spent on the holdings furthest below
+  target, never past the cap.
 
-**HRP and ERC.** Dead quotes and closes ≤ 0 are unpriced before returns, interior
-gaps are no longer padded into zero returns, a degenerate (near-zero-variance) column
-is left out, and the coverage rule is 95%: at 80%, one late listing cut every name's
-window by up to a fifth, and NIFTY SMLCAP 250 got no HRP or ERC book at all. A frozen
-J&KBANK (2016-17) no longer takes the 10% cap. ERC's Ledoit-Wolf shrinkage gains the
-ρ term it was missing. Measured on the unrepaired panel, to isolate the fixes —
-HRP: Nifty 50 2007-13 −0.69 %/yr (t −1.7), other cells within ±0.3, ETF +0.46; ERC: within ±0.25 every-name, +0.61 %/yr (t 2.0) at 30 positions on
-Nifty 50. HRP is now described as what it measures: the deepest volatility and
-drawdown cut of the styles, at about three times ERC's turnover.
+**HRP and ERC.** Dead quotes and closes ≤ 0 are unpriced before returns, gaps are no
+longer padded into zero returns, a frozen or near-riskless column is left out (named in
+the run log), and the coverage rule is 95%: at 80%, one late listing cut every name's
+window by up to a fifth, and NIFTY SMLCAP 250 got no HRP or ERC book at all. ERC's
+Ledoit-Wolf shrinkage gains the ρ term it was missing. **HRP now averages its fits on
+three staggered windows** (ending 0, 21 and 42 sessions back): most of its turnover
+was its leaf order re-drawn by estimation noise. Against the single fit: Nifty 50
++0.46 / +0.19 / +0.12 %/yr by era, Dow 30 +0.12 / +0.17 / +0.38, point-in-time Dow
++0.37, ETF book −0.25, none significant — and turnover down 40% (Nifty 1.23 → 0.72x/yr).
+HRP is described as what it measures: the deepest volatility and drawdown cut of the
+styles, at about 1.7x ERC's turnover.
 
-**CVG.** Run-log notice when the cap forces 1/N (10 positions at 10%); the Ladder-down
-flag only on bars with an intraday rung; two wrong bond proxies dropped from the macro
-pool, the gilt ETF read from 2021, the Bund ETF's duration 14; European drivers
-lagged for NSE names (they closed after the NSE: look-ahead). Each measured within
-±0.04 %/yr.
+**CVG.** **The conviction tape reads D · W again.** Ladder down (v12.0-12.1) averaged the
+daily rung with every intraday frame and restored no variance, so the tape's scale
+shrank as rungs were added (cross-sectional sd ~30 on D · W, ~14 with all seven), its
+±30 knee meant something different on every bar, and no backtest ever scored the
+seven-rung tape. Every measured CVG figure is a D · W tape; no intraday data is fetched
+now. **The app's tapes read 8 years of bars** (the snapshots keep the estimation
+window): on ~19 months, 1 name in 8 sat in a different state than on full-history
+tapes. Also: a notice when the cap forces 1/N; two wrong bond proxies dropped from the
+macro pool; European drivers lagged for NSE names (they closed hours after the NSE).
+Together, on the regenerated panels: Nifty 50 −0.05 / −0.07 / +0.25 %/yr, Dow 30 +0.00
+/ +0.01 / +0.05, ETF +0.06, point-in-time Dow +0.09.
 
-**Managed Momentum.** The gate and the volatility scale carry closes across gaps
-(they lost every return across a missing quote — the ETF book, FX); the windows follow
-the panel's own calendar (Crypto's gate read shut at −22% on a +26% market); the
-overlay stands down below 24 months of history whatever history it read; a close ≤ 0
-is not a price; a name listed twice keeps one listing. Re-measured as the app runs it
-(its own close history from 2006): still ahead of the best earlier style in all six
-era cells, by less — Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / +0.39 /
-+0.24, none significant (largest t 0.98) — and the Nifty 2007-13 cell holds only
-because the HRP fixes lowered HRP's. On a point-in-time Dow, its overlay reading only
-that day's members: −0.42 %/yr against CVG. A book cut below the universe is mostly
-momentum's pick; that is now measured and documented ([details](#managed-momentum)).
+**Managed Momentum.** The gate and the volatility scale carry closes across gaps; the
+windows follow the panel's own calendar (Crypto's gate had read shut at −22% on a +26%
+market); the overlay stands down below 24 months of history whatever history it read;
+a close ≤ 0 is not a price; a name listed twice keeps one listing. **The bear gate is
+read at the first session of the month** and held through it, as every backtest read it
+(read daily, a mid-month book could swing between momentum and the pure grid: 36.5%
+one-day turnover on 2026-09-28). **The volatility scale is two-sided**,
+`min(1.5, median / current)`: it now also grows the overlay, up to 1.5×, while its
+volatility runs below its median (Barroso & Santa-Clara; Moreira & Muir). Pre-registered
+and re-passed on the final data: ahead of the one-sided scale in all six cells (Nifty
++0.28 / +0.14 / +0.22, Dow +0.05 / +0.18 / +0.01 %/yr), level on the point-in-time Dow.
+As shipped: ahead of the best earlier style in all six era cells — Nifty 50 +0.33 /
++1.72 / +1.59 %/yr, Dow 30 +0.77 / +0.57 / +0.29 — none significant (largest t 1.07);
+−0.38 %/yr against CVG on a point-in-time Dow. A book cut below the universe is mostly
+momentum's pick; that is now measured and stated ([details](#managed-momentum)).
 
-**Found, not shipped — each needs the owner's decision:**
-- **CVG's live conviction tape.** Ladder down averages the daily rung with every
-  intraday frame and restores no variance, so the tape's scale shrinks as rungs are
-  added (cross-sectional sd ~30 on D · W, ~14 with all seven), its ±30 knee means
-  something different on every bar, and no backtest scored today's seven-rung tape.
-  Reverting to D · W: CVG 2020+ +0.18 %/yr Nifty, +0.06 Dow (not significant). It
-  reverses v12's recorded product decision.
-- **HRP.** Averaging three staggered estimation windows raised CAGR in all six cells
-  (+0.12 to +0.38 %/yr, none significant) and cut turnover ~40%; ETF −0.25. A
-  data-derived dendrogram orientation would end the book's dependence on the order
-  of the universe file, at a per-era cost within noise.
-- **Managed Momentum.** A two-sided volatility scale (up to 1.5×) led the shipped one
-  in every cell, thinly (Nifty full span +0.27 %/yr, t 2.6 nominal; measured on
-  v12.1). Reading the bear gate at the month start would stop mid-month whipsaws
-  (36.5% one-day turnover on 2026-09-28).
-- **The app's tape window.** The tapes come from a ~19-month panel and place about 1
-  name in 8 in a different grid state than full-history tapes (performance-neutral);
-  a longer panel costs run time.
+**Not shipped.** A data-derived HRP dendrogram orientation (it would end the book's
+dependence on the universe file's order) failed its bar inside the staggered average
+(ETF −1.68 %/yr, t −2.1). Overlapping momentum formations (Jegadeesh-Titman K = 3)
+failed theirs. Every backtest still rebalances on the first trading day (see
+[Known limits](#known-limits)).
 
 ## What changed in v12.1
 
-*(As published in v12.1; v12.2 re-measured Managed Momentum — see above.)*
+*(As published in v12.1; v12.2 changed and re-measured Managed Momentum — see above.)*
 
 v12.1 adds a fifth style, **Managed Momentum (MMOM)**: the grid's weights plus a
 12-1 momentum overlay that stands down while the equal-weighted market's 24-month
@@ -220,10 +219,10 @@ streamlit run app.py
 | Style | Family | Behaviour |
 |---|---|---|
 | **Equal Weight** *(default)* | baseline | Identical `1/N` per holding. The default because nothing beat it reproducibly — Managed Momentum led it in every era tested, not significantly; see below. Lowest turnover of any style. |
-| **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style on return: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes, at about a third of its turnover. In-repo (every name held, net, 2007-26): −0.49 %/yr against Equal Weight on Nifty 50 and −1.27 on Dow 30, at volatility 20.1 / 15.3 against 22.2 / 16.5. |
-| **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. The deepest volatility and drawdown cut of the styles (volatility 18.7 / 14.3, max drawdown −50.1% / −36.3% on Nifty 50 / Dow 30), at a larger return cost than ERC (−0.78 / −2.70 %/yr against Equal Weight) and about 3× its turnover. Measured holding every name: at 30 of 50 positions it is the 30 lowest-variance names (18.58 %/yr against 19.32). |
+| **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style on return: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes, at about 0.6x its turnover. In-repo (every name held, net, 2007-26): −0.49 %/yr against Equal Weight on Nifty 50 and −1.27 on Dow 30, at volatility 20.1 / 15.3 against 22.2 / 16.5. |
+| **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. Averaged over three staggered estimation windows (v12.2). The deepest volatility and drawdown cut of the styles (volatility 18.8 / 14.2, max drawdown −49.3% / −36.4% on Nifty 50 / Dow 30), at −0.54 / −2.47 %/yr against Equal Weight and about 1.7× ERC's turnover. Measured holding every name: at 30 of 50 positions it is the 30 lowest-variance names (19.11 %/yr against 19.56). |
 | **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction and value, both on D · W (the daily chart and the weekly rung) — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
-| **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return is negative and scaled down while the overlay's own volatility runs above its median; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped (v12.2), every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / +0.39 / +0.24), none significant (largest per-era t 0.98; full-span Nifty vs CVG +1.15 %/yr at t 1.03, nominal); −0.42 %/yr against CVG on a point-in-time Dow. Below the universe's size momentum mostly picks the names: ahead of the grid on Nifty 50 at 30 positions, 1.8-5.0 %/yr behind it on the Dow since 2020. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
+| **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return (read at the month's first session) is negative, and scaled by the overlay's own volatility against its median — down when above, up to 1.5× when below; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped (v12.2), every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +0.33 / +1.72 / +1.59 %/yr, Dow 30 +0.77 / +0.57 / +0.29), none significant (largest per-era t 1.07; full-span Nifty vs CVG +1.37 %/yr at t 1.17, nominal); −0.38 %/yr against CVG on a point-in-time Dow. Below the universe's size momentum mostly picks the names: ahead of the grid on Nifty 50 at 30 positions, 1.8-5.0 %/yr behind it on the Dow since 2020. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
 
 Every style travels the identical pipeline — same eligibility filter, same
 clustering diagnostics, same risk decomposition — so any difference on screen is
@@ -244,17 +243,17 @@ method with a reproducible return improvement over `1/N`**:
 
 What *does* reproduce is the ordering **among the risk-reduction styles**: ERC
 beats HRP on the any-date hit rate in every cell tested, on both stock
-universes, at a fifth of the turnover in that search (about a third on the
-in-repo harness, `research/style_search.py`, where HRP is the deeper volatility
-and drawdown cut). That is a real improvement to the risk
+universes, at a fifth of the turnover in that search (about 0.6x on the in-repo
+harness since v12.2's staggered HRP, `research/style_search.py`, where HRP is the
+deeper volatility and drawdown cut). That is a real improvement to the risk
 leg — which the rest of this README has always said is the leg that reproduces.
 
 The v12.1 style search did not overturn this. Managed Momentum led Equal Weight
 and every other earlier style in all six era cells, but no margin over the best of
-them is significant (largest per-era t 0.98 as re-measured in v12.2). Over the full
-span its Nifty 50 lead over Equal Weight reads +2.01 %/yr at a nominal t of 1.98 —
+them is significant (largest per-era t 1.07 as re-measured in v12.2). Over the full
+span its Nifty 50 lead over Equal Weight reads +2.27 %/yr at a nominal t of 2.11 —
 but it was one of 43 configurations tried, the panels are today's constituents, and
-on a point-in-time Dow it trails the grid (−0.42 %/yr, t −0.49). Equal Weight stays
+on a point-in-time Dow it trails the grid (−0.38 %/yr, t −0.45). Equal Weight stays
 the default.
 
 **Position-count contract.** Every shipped style returns exactly the number of
@@ -424,8 +423,8 @@ after a bear market, a state marked by a negative two-year market return (Daniel
 & Moskowitz 2016) — and its risk is predictable from its own recent volatility,
 so scaling it by that volatility cuts the crashes (Barroso & Santa-Clara 2015).
 The windows are the papers' (12-1, 24 months, six months); the scale's target —
-the overlay's own median volatility, capped so it only shrinks — is this style's
-choice, and λ = 1 is one of the three strengths the search tried (0.5, 1, 2),
+the overlay's own median volatility, capped at 1.5× (v12.2; until then it could only
+shrink) — is this style's choice, and λ = 1 is one of the three strengths the search tried (0.5, 1, 2),
 picked after the holdout over the λ = 2 that discovery ranked first (see the
 cautions below).
 
@@ -441,10 +440,12 @@ weight_i = max( cvg_i + λ · gate · scale · rank_i / N ,  ¼ · cvg_i ),   λ
   (the close 21 sessions ago over the close 252 sessions ago, − 1). Fewer than 10
   names with a 12-1 return: no overlay.
 - `gate` — 0 while the equal-weighted market's 24-month (504-session) return is
-  negative, else 1. Under a year of history it cannot be read and stays open.
-- `scale` — `min(1, median / current)` of the unit overlay's 126-day realised
+  negative, else 1, read as of the first session of the run's month and held through
+  it. Under 24 months of history the overlay stands down altogether.
+- `scale` — `min(1.5, median / current)` of the unit overlay's 126-day realised
   volatility, the median taken over every month start so far (at least 7 before it
-  acts). It only ever shrinks the overlay.
+  acts). It shrinks the overlay while that volatility runs above its median and grows
+  it, up to 1.5×, while it runs below.
 - the floor — no name below a quarter of its grid weight (`nco.MMOM_FLOOR`, the
   grid's own Distribution-to-Idle ratio, 0.25 : 1).
 
@@ -469,43 +470,41 @@ Weight), with its paired t:
 ```
                          Nifty 50                   Dow 30               ETF (27)
                    E1      E2      E3         E1      E2      E3        Mar 2025 →
-best of eight    20.08H+C 19.89C  22.97C    14.39EW 18.50C  15.06C       17.57EW
-MMOM             20.51   21.46   24.33      15.11   18.88   15.31        19.37
-  margin         +0.43   +1.57   +1.37      +0.72   +0.39   +0.24        +1.80
-  (t)            (0.57)  (0.80)  (0.98)     (0.70)  (0.41)  (0.14)       (0.54)
-tested form      +0.54   +1.65   +1.45      +0.22   +0.41   +0.39        +1.96
+best of eight    20.39H  19.82C  23.22C     14.39EW 18.50C  15.11C       17.57EW
+MMOM             20.73   21.54   24.81      15.16   19.07   15.40        19.57
+  margin         +0.33   +1.72   +1.59      +0.77   +0.57   +0.29        +2.01
+  (t)            (0.54)  (0.82)  (1.07)     (0.70)  (0.52)  (0.18)       (0.63)
+one-sided scale  +0.06   +1.58   +1.37      +0.72   +0.38   +0.28        +1.84
 v12.1 published  +1.02   +1.66   +1.58      +0.25   +0.39   +0.25        +1.79
 
 Full span, net (Feb 2007 → Sep 2026; ETF from Mar 2025)
               CAGR    vol   ret/vol   maxDD   turnover/yr
-Nifty  MMOM   22.10  22.08   1.02    −57.2     1.89
-       CVG    20.95  22.56   0.96    −56.7     1.47
+Nifty  MMOM   22.36  22.11   1.03    −57.1     1.89
+       CVG    20.99  22.55   0.96    −56.6     1.46
        EW     20.10  22.16   0.94    −56.5     0.37
-Dow    MMOM   16.32  16.82   0.99    −37.8     1.83
-       CVG    15.78  16.73   0.97    −39.3     1.41
+Dow    MMOM   16.42  16.88   0.99    −37.8     1.82
+       CVG    15.80  16.74   0.97    −39.3     1.40
        EW     15.52  16.48   0.96    −39.9     0.27
-ETF    MMOM   19.37  12.68   1.47     −7.5     1.71
-       CVG    17.09  13.05   1.28     −7.2     1.39
+ETF    MMOM   19.57  12.85   1.46     −8.1     1.62
+       CVG    17.16  13.24   1.27     −7.8     1.25
        EW     17.57  13.70   1.25     −8.0     0.20
 
 Point-in-time Dow, E3 (that day's members, 29-30 names; the overlay reads only them)
-       MMOM 11.06 · CVG 11.47 (best of eight) · EW 11.00
-       → −0.42 vs CVG (t −0.49), +0.06 vs EW
+       MMOM 11.18 · CVG 11.56 (best of eight) · EW 11.00
+       → −0.38 vs CVG (t −0.45), +0.17 vs EW
 ```
 
-(CAGR and margins %/yr; vol and maxDD %; turnover x/yr.) What moved since v12.1:
-the repaired return panel lifts every Nifty style (Equal Weight +0.40 %/yr full
-span) and takes away an E1 edge the overlay drew from reading those fake losses as
-momentum; the overlay now stands down below 24
-months of history (off until 2008-01 on the app's history, which starts 2006-01-01);
-and the HRP fixes lowered HRP's Nifty E1 from 20.21 to 19.99. **The Nifty E1 cell is
-won only because of that last change: against the v12.1 HRP on the repaired panel
-it is lost** (−0.07 to −0.30 %/yr, by history path). Read through the research panel's own closes
-(from Oct 2006) instead of the app's history: Nifty 20.74 / 21.45 / 24.33, Dow
-14.58 / 18.88 / 15.31, point-in-time 11.05. The tested form reads the research
-panel without the floor or the history minimum, so it no longer matches the shipped
-weights exactly. In these every-name books every priced name is held (39-50 Nifty,
-28-30 Dow, 27 ETF).
+(CAGR and margins %/yr; vol and maxDD %; turnover x/yr.) "One-sided scale" is the
+same book with the v12.1 scale, `min(1, median / current)`. What moved since v12.1:
+the repaired return panel lifts every Nifty style (Equal Weight +0.40 %/yr full span)
+and takes away an E1 edge the overlay drew from reading those fake losses as
+momentum; the overlay stands down below 24 months of history (off until 2008-01 on
+the app's history, which starts 2006-01-01); HRP's staggered windows raised the Nifty
+E1 bar to 20.39; and the two-sided scale added +0.14 to +0.28 on Nifty. **The Nifty E1
+margin is thin** (+0.33, t 0.54; +0.06 with the one-sided scale). The tested form of
+v12.1 reads the research panel without the floor or the history minimum, so it no
+longer matches the shipped weights exactly. In these every-name books every priced
+name is held (39-50 Nifty, 28-30 Dow, 27 ETF).
 
 **Cut books** (measured on v12.1, before the repairs, by the audit's skeptic). In a
 book smaller than the universe the names held are mostly the 12-1 leaders: 0.86-0.94
@@ -518,9 +517,9 @@ constituents.
 **Cautions — read before sizing it.**
 
 - **Not significant.** The largest per-era paired t over the best earlier style is
-  0.98 (Nifty E3); Dow E3 is 0.14. Over the full span Nifty leads CVG by
-  +1.15 %/yr (t 1.03) and Equal Weight by +2.01 (t 1.98); the Dow's are +0.53
-  against CVG (t 0.81) and +0.80 against Equal Weight (t 1.23). Those t's are
+  1.07 (Nifty E3); Dow E3 is 0.18. Over the full span Nifty leads CVG by
+  +1.37 %/yr (t 1.17) and Equal Weight by +2.27 (t 2.11); the Dow's are +0.62
+  against CVG (t 0.91) and +0.90 against Equal Weight (t 1.33). Those t's are
   nominal: the search ran 43 configurations and the shipped form is a post-holdout
   variant of one of them, so none survives a family-wise correction — and none
   survives the survivorship caveat below either.
@@ -528,10 +527,12 @@ constituents.
   larger than the position count (Nifty 50 at 30) holds mostly the 12-1 leaders.
   That measured well on Nifty and badly on the Dow, point-in-time included (above):
   do not read the full-book figures as a description of a cut book.
-- **Three decisions made after the holdout.** λ = 1 over the λ = 2 that discovery
+- **Decisions made after the holdout.** λ = 1 over the λ = 2 that discovery
   ranked first, chosen on the point-in-time Dow (λ = 2 trailed CVG by 0.63 %/yr
   there) and the position-count result (λ = 2 zeroed up to 6 Nifty names); the
-  ¼ floor (about −0.1 %/yr, above); and the month-to-date volatility reading,
+  ¼ floor (about −0.1 %/yr); the two-sided volatility scale (v12.2, pre-registered
+  in the audit and passed: Nifty +0.14 to +0.28, Dow +0.01 to +0.18, none
+  significant); and the month-to-date volatility reading,
   which this calendar cannot test — on a first-of-month rebalance that piece is
   empty, so a book built mid-month in the app can differ from the books measured
   above. The holdout's own verdict recommended a point-in-time Nifty test before
@@ -548,7 +549,7 @@ constituents.
   before they joined the index, which a book confined to the index's members
   could not have done.
 - **On a point-in-time Dow it does not lead.** Rebuilt on each day's actual
-  members, E3: −0.42 %/yr against CVG (t −0.49), +0.06 against Equal Weight. The
+  members, E3: −0.38 %/yr against CVG (t −0.45), +0.17 against Equal Weight. The
   ranks, the bear gate and the volatility scale all read that day's members only,
   as a live user's fetch would (v12.1 let the gate and scale read non-members too,
   which read −0.19). No point-in-time Nifty panel exists here (it needs NSE's
@@ -562,18 +563,15 @@ constituents.
   RSP) since 2008: it stayed open on 16-28 month starts where an index gate was shut.
   An index gate measured worse (Nifty 21.93 vs 22.26, Dow 16.02 vs 16.15, v12.1)
   and is not used.
-- **The gate is read on the run day.** The research reads it on month starts; a book
-  built mid-month near a flip can swing between momentum and the pure grid from one
-  day to the next (Nifty 50 on 2026-09-28: 36.5% one-day turnover on the 30-name
-  book).
 - **It trades more:** about 1.3x the grid's turnover and 5-7x Equal Weight's on the
-  stock panels (Nifty 1.89x/yr vs 1.48x and 0.37x; Dow 1.83x vs 1.41x and 0.27x).
-- **The ETF book is 19 months.** The +1.79 %/yr there sits above the ~1%/yr ceiling
-  the v11 notes put on forecasting this book; at t 0.53 it reads as noise, not a
+  stock panels (Nifty 1.89x/yr vs 1.46x and 0.37x; Dow 1.82x vs 1.40x and 0.27x).
+- **The ETF book is 19 months.** The +2.01 %/yr there sits above the ~1%/yr ceiling
+  the v11 notes put on forecasting this book; at t 0.63 it reads as noise, not a
   broken bound.
 
-The volatility scale averaged 0.96 (Nifty), 0.90 (Dow) and 0.86 (ETF), at minimum
-0.58, 0.39 and 0.54.
+The volatility scale averaged 1.11 (Nifty), 1.01 (Dow) and 0.89 (ETF), at minimum
+0.58, 0.39 and 0.54; the floor bound on 0-15 Nifty names a month (mean 7.0), 0-9 Dow
+(3.7), 0-5 ETF (2.2), counted over the universe.
 
 **In the app.** The run log's Close history step reports who reads the closes, the
 span and whether the cache served them; the Allocate step logs the overlay's
@@ -682,7 +680,7 @@ cannot sit in the table above.
   to have.
 - **The stock panels are today's constituents.** Survivorship flatters every
   style, momentum more than the grid: on the Dow in 2020+, Managed Momentum falls
-  from 15.31 to 11.06 %/yr on point-in-time members, CVG from 15.06 to 11.47 (see
+  from 15.40 to 11.18 %/yr on point-in-time members, CVG from 15.11 to 11.56 (see
   [Managed Momentum](#managed-momentum)). Only the Dow has been re-read on
   point-in-time membership.
 - **The 36-candidate figures may have read a dead quote.** yfinance carries
@@ -693,19 +691,15 @@ cannot sit in the table above.
   The 36-candidate search behind [Why Equal Weight is the default](#why-equal-weight-is-the-default)
   is not in this repository, so whether its Nifty 50 figures read the defect cannot
   be checked.
-- **CVG's live conviction tape is not the tape that was validated.** Ladder down's
-  scale shrinks as intraday rungs are added (see [What changed in v12.2](#what-changed-in-v122));
-  the research snapshots switch to it in Oct 2024, so E3 mixes two tapes, and no
-  rebalance scored today's seven-rung tape. Reverting to D · W is pending a product
-  decision.
-- **The app's tapes come from a ~19-month panel.** On the same date they place about
-  1 name in 8 in a different grid state than the research's full-history tapes
-  (agreement 87-89%); the measured effect is within ±0.17 %/yr.
 - **Every backtest rebalances on the first trading day of the month.** Across
-  rebalance days CVG's Nifty 50 margin over Equal Weight averages +0.40 %/yr with a
-  spread of ±0.35; the first trading day (+0.79 on the unrepaired panel) is a
+  rebalance days CVG's Nifty 50 margin over Equal Weight averaged +0.40 %/yr with a
+  spread of ±0.35 on the v12.1 panels, and the first trading day (+0.79 there) was a
   favourable draw. Read every per-cell margin in this README as one draw of that
   spread.
+- **HRP's book depends on the order of the universe file.** Single linkage orients
+  each merge by input position, so the same data in another order gives another
+  book (up to 0.04-0.05 of raw weight); the order is fixed for a given universe
+  file, so a run is reproducible. A data-derived orientation failed its bar.
 - **Cited, not present.** `research/README.md`, `research/conviction_value_grid.py`
   and the 36-candidate search are cited above but are not in this repository.
 
@@ -717,7 +711,8 @@ per-name E3 contributions — `style_search_pit.py`) and the v12.2 audit
 for Managed Momentum as shipped), with one exception: the full-span paired t's
 quoted for Managed Momentum (against CVG and Equal Weight) were computed in review
 from the monthly net returns `mmom_ship.py` builds (`panel(u, None, app=True)["runs"]`
-against `["base"]`), which it does not print. The style-search pickles must be
-rebuilt (`python research/style_search.py build`) for the v12.2 code and repairs to
-apply; figures from before v12.2 in the research files' RESULT blocks were measured
-on the old code. No harness is imported by the app.
+against `["base"]`), which it does not print. The research snapshots
+(`research/cvg_reweight_*.pkl`, regenerated by `style_blends.snapshots` when absent)
+and the style-search pickles (`python research/style_search.py build`) were rebuilt
+under the v12.2 code; figures from before v12.2 in the research files' RESULT blocks
+were measured on the old code. No harness is imported by the app.

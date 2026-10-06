@@ -144,6 +144,10 @@ edits in the working tree do not enter; the run prints, per module, whether the 
 AUDIT_MMOM_REF (default HEAD). The v12.1 ruling: REF = c28f5a5.
   mkdir D; for f in nco cvgrid pragati samanvaya intraday; do git show c28f5a5:$f.py > D/$f.py; done
 
+SHIPPED in v12.2 (2026-10-06): MM-O1 BSC_UP15 as nco.MMOM_SCALE_CAP = 1.5, after re-passing the bar on
+the v12.2 code and regenerated panels (Nifty +0.28 / +0.14 / +0.22, Dow +0.05 / +0.18 / +0.01,
+point-in-time +0.006; research/mmom_ship.py RE-MEASURED). MM-O2 not shipped.
+
 Run:  AUDIT_MMOM_CODE=D AUDIT_MMOM_REF=c28f5a5 python research/audit_mmom.py [--cache DIR] [panels]
       (D must hold c28f5a5's product modules: the drop-in overlay returns v12.1's diagnostics, and
       v12.2's compute_nco_portfolio reads keys it lacks. The v12.2 re-check of MM-O1 ran through the

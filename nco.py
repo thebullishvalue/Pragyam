@@ -78,8 +78,8 @@ alongside HRP. In those two windows ERC achieved perfect risk balance (1.00x
 against HRP's 1.5-1.7x) and matched HRP on return and Sharpe to within noise;
 NCO trailed HRP on return, Sharpe and drawdown in both. ERC has since shipped as
 the preferred risk-reduction style on return — it beats HRP on the any-date hit
-rate in 6 of 6 cells across two stock universes, at about a third of its turnover
-on the in-repo harness (METHOD_SPECS["ERC"]); HRP is the deeper volatility and
+rate in 6 of 6 cells across two stock universes, at about 0.6x its turnover on
+the in-repo harness (METHOD_SPECS["ERC"]); HRP is the deeper volatility and
 drawdown cut — and neither beats Equal Weight reproducibly on return.
 See CHANGELOG for the figures.
 
@@ -260,11 +260,12 @@ def erc_weights(cov: np.ndarray) -> np.ndarray:
     inverting the covariance matrix. That is why it stays stable where minimum
     variance produces corner solutions.
 
-    MEASURED (see research/): ERC beats HRP on the any-date hit rate in 6 of 6
-    cells across Nifty 50 and Dow 30, at roughly a FIFTH of HRP's turnover
-    (0.26x/yr vs 1.31x/yr), and it beat equal weight in 100% / 69% of 60-month
-    SIP streams across two disjoint start-halves with a stable +0.66%/yr median
-    excess in both. It is the most reproducible result in the allocator program.
+    MEASURED: ERC beats HRP on the any-date hit rate in 6 of 6 cells across Nifty
+    50 and Dow 30 (the 36-candidate search). On the in-repo harness (research/
+    style_search.py, every name held, net, 2007-26) it trails equal weight by
+    0.49 %/yr (Nifty 50) and 1.27 (Dow 30) at lower volatility, trading 0.42x/yr
+    against HRP's 0.72x. (The SIP-stream wins once quoted here came from a solver
+    defect; see the README's v11.1 correction.)
     """
     n = cov.shape[0]
     if n == 0:
@@ -477,7 +478,7 @@ METHOD_SPECS = {
                      "(research/style_search.py: monthly, every name held, net of costs, "
                      "2007-26) it does NOT beat equal weight on return (-0.49%/yr Nifty 50, "
                      "-1.27% Dow 30), at lower volatility (20.1 vs 22.2, 15.3 vs 16.5) and "
-                     "about a third of HRP's turnover (0.42x/yr vs 1.23x on Nifty 50). "
+                     "about 0.6x HRP's turnover (0.42x/yr vs 0.72x on Nifty 50). "
                      "Shrinkage: Ledoit-Wolf (2004) constant correlation, with its rho term "
                      "since v12.2."),
         "long_run": ("-0.49%/yr on Nifty 50 and -1.27% on Dow 30 (2007-26, every name held), "
@@ -500,17 +501,17 @@ METHOD_SPECS = {
         "needs_covariance": True,
         "evidence": ("The deepest volatility and drawdown cut of the styles on the in-repo "
                      "harness (research/style_search.py: monthly, every name held, net of "
-                     "costs, 2007-26): volatility 18.7 against Equal Weight's 22.2 and ERC's "
-                     "20.1 on Nifty 50, 14.3 against 16.5 / 15.3 on Dow 30; max drawdown "
-                     "-50.1% vs -56.5% and -36.3% vs -39.9%. It pays on return (-0.78%/yr "
-                     "Nifty 50, -2.70% Dow 30 against Equal Weight) at about three times "
-                     "ERC's turnover, and won 0 of 115 five-year SIP streams. Measured "
-                     "holding every name: at the default 30 positions on Nifty 50 the book "
-                     "is the 30 lowest-variance names (18.58%/yr against 19.32, turnover "
-                     "1.67x)."),
-        "long_run": ("-0.78%/yr on Nifty 50 and -2.70% on Dow 30 (2007-26, every name held), "
-                     "the deepest volatility and drawdown cut: volatility 18.7 / 14.3, "
-                     "max drawdown -50.1% / -36.3%"),
+                     "costs, 2007-26, v12.2's staggered windows): volatility 18.8 against "
+                     "Equal Weight's 22.2 and ERC's 20.1 on Nifty 50, 14.2 against 16.5 / 15.3 "
+                     "on Dow 30; max drawdown -49.3% vs -56.5% and -36.4% vs -39.9%. It pays "
+                     "on return (-0.54%/yr Nifty 50, -2.47% Dow 30 against Equal Weight) at "
+                     "about 1.7x ERC's turnover (0.72 vs 0.42x/yr; the staggered windows cut "
+                     "it 40%), and won 0 of 115 five-year SIP streams. Measured holding every "
+                     "name: at the default 30 positions on Nifty 50 the book is the 30 "
+                     "lowest-variance names (19.11%/yr against 19.56, turnover 0.96x)."),
+        "long_run": ("-0.54%/yr on Nifty 50 and -2.47% on Dow 30 (2007-26, every name held), "
+                     "the deepest volatility and drawdown cut: volatility 18.8 / 14.2, "
+                     "max drawdown -49.3% / -36.4%"),
         "sip_default": False,
     },
     # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
@@ -575,34 +576,34 @@ METHOD_SPECS = {
         "needs_covariance": False,
         "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
                      "43 configurations, chosen on 2007-19, run once on 2020+) and re-measured "
-                     "as shipped after the v12.2 audit (research/mmom_ship.py --app-history: the "
-                     "app's close history from 2006, monthly, every name held, net of 10bp "
-                     "India / 3bp US costs, yfinance's unadjusted demergers repaired). Against "
-                     "the best of the eight earlier styles and blends in each era (2007-13 / "
-                     "2014-19 / 2020+): Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / "
-                     "+0.39 / +0.24; +1.80 %/yr over Equal Weight on the 27-fund ETF book (19 "
-                     "months). Full span: Nifty 22.10% vs CVG 20.95%, Dow 16.32% vs 15.78%, at "
-                     "CVG's volatility and 1.3x its turnover. None of it is significant: the "
-                     "largest per-era t over the best earlier style is 0.98; over the full span "
-                     "Nifty leads CVG by +1.15 %/yr (t 1.03) and Equal Weight by +2.01 (t 1.98), "
-                     "nominal. The Nifty 2007-13 lead holds only because the v12.2 HRP fixes "
-                     "lowered HRP's; on the v12.1 HRP code it is lost. The shipped form is a "
-                     "post-holdout variant (λ, floor, month-to-date volatility) of one of 43 "
-                     "tries, so none of it survives a family-wise correction, nor the "
-                     "survivorship of today's constituents: the 2020+ edge sits in a few names, "
-                     "led by late index entrants (BSE, TRENT, BEL, ADANIENT; NVDA, AMZN, CRM). On "
-                     "a point-in-time Dow, its overlay reading only that day's members, it "
-                     "trails CVG by 0.42 %/yr (t -0.49); no point-in-time Nifty was tested. Its "
-                     "crash gate reads today's constituents, a laxer market than an index (an "
-                     "index gate measured worse). In a book cut below the universe the names "
-                     "held are mostly the 12-1 leaders: ahead of the grid on Nifty 50 at 30 "
-                     "positions, 1.8-4.3 %/yr behind it on the Dow 2020+ at 25-10 positions and "
-                     "1.9-5.0 behind on a point-in-time Dow (measured on v12.1). In a full book "
-                     "expect CVG-like results, not a reliable premium."),
+                     "as shipped in v12.2 (research/mmom_ship.py --app-history: the app's close "
+                     "history from 2006, monthly, every name held, net of 10bp India / 3bp US "
+                     "costs, yfinance's unadjusted demergers repaired, the two-sided volatility "
+                     "scale). Against the best of the eight earlier styles and blends in each era "
+                     "(2007-13 / 2014-19 / 2020+): Nifty 50 +0.33 / +1.72 / +1.59 %/yr, Dow 30 "
+                     "+0.77 / +0.57 / +0.29; +2.01 %/yr over Equal Weight on the 27-fund ETF book "
+                     "(19 months). Full span: Nifty 22.36% vs CVG 20.99%, Dow 16.42% vs 15.80%, "
+                     "at CVG's volatility and 1.3x its turnover. None of it is significant: the "
+                     "largest per-era t over the best earlier style is 1.07; over the full span "
+                     "Nifty leads CVG by +1.37 %/yr (t 1.17) and Equal Weight by +2.27 (t 2.11), "
+                     "nominal. The Nifty 2007-13 lead (+0.33 over the staggered HRP) is thin. The "
+                     "shipped form is a post-holdout variant (λ, floor, month-to-date volatility, "
+                     "the two-sided scale) of one of 43 tries, so none of it survives a "
+                     "family-wise correction, nor the survivorship of today's constituents: the "
+                     "2020+ edge sits in a few names, led by late index entrants (BSE, TRENT, BEL, "
+                     "ADANIENT; NVDA, AMZN, CRM). On a point-in-time Dow, its overlay reading only "
+                     "that day's members, it trails CVG by 0.38 %/yr (t -0.45); no point-in-time "
+                     "Nifty was tested. Its crash gate reads today's constituents, a laxer market "
+                     "than an index (an index gate measured worse), at the month's first session. "
+                     "In a book cut below the universe the names held are mostly the 12-1 "
+                     "leaders: ahead of the grid on Nifty 50 at 30 positions, 1.8-4.3 %/yr behind "
+                     "it on the Dow 2020+ at 25-10 positions and 1.9-5.0 behind on a "
+                     "point-in-time Dow (measured on v12.1). In a full book expect CVG-like "
+                     "results, not a reliable premium."),
         "long_run": ("vs the best of the eight earlier styles and blends, 2007-13 / 2014-19 / 2020+: "
-                     "Nifty 50 +0.43% / +1.57% / +1.37%/yr, Dow 30 +0.72% / +0.39% / +0.24%/yr — "
-                     "none significant (largest per-era t 0.98; full-span Nifty vs CVG t 1.03), "
-                     "every-name books; -0.42%/yr vs CVG on a point-in-time Dow"),
+                     "Nifty 50 +0.33% / +1.72% / +1.59%/yr, Dow 30 +0.77% / +0.57% / +0.29%/yr — "
+                     "none significant (largest per-era t 1.07; full-span Nifty vs CVG t 1.17), "
+                     "every-name books; -0.38%/yr vs CVG on a point-in-time Dow"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -675,7 +676,7 @@ MMOM_MIN_HISTORY = MMOM_GATE + 1    # rows before the overlay may act, whatever 
 # targeting in both directions (Barroso & Santa-Clara 2015; Moreira & Muir 2017). Pre-registered
 # (research/audit_mmom.py, MM-O1 BSC_UP15) and re-measured on the v12.2 code and data: ahead of the
 # one-sided scale (cap 1) in all six era cells — Nifty 50 +0.28 / +0.14 / +0.22 %/yr, Dow 30 +0.05 /
-# +0.17 / +0.01 — and level on the point-in-time Dow (+0.005); none significant.
+# +0.18 / +0.01 — and level on the point-in-time Dow (+0.006); none significant.
 MMOM_SCALE_CAP = 1.5
 # The windows above count ROWS of a 5-day calendar. A panel with > 300 rows in its trailing
 # 365 days (Crypto, or a Custom List mixing 7-day and 5-day calendars) reads the same spans
@@ -1113,8 +1114,9 @@ def _is_priced(price: object) -> bool:
 # the mean of its fits on HRP_WINDOWS windows of `lookback` rows ending 0, HRP_STEP, 2·HRP_STEP
 # sessions back, inside the last HRP_PANEL sessions (the app's estimation panel holds ~400).
 # Pre-registered and measured through this code on the v12.2 inputs (research/audit_hrp.py,
-# O1-A): higher net CAGR in all six era cells (+0.12 to +0.38 %/yr, none significant), ~40% less
-# turnover (Nifty 50 1.23 -> 0.72x/yr), ETF book -0.25 over 19 months. A panel too short for a
+# O1-A, re-measured on the final v12.2 panels): higher net CAGR in all six era cells (+0.12 to
+# +0.46 %/yr, none significant), ~40% less turnover (Nifty 50 1.23 -> 0.72x/yr, Dow 0.92 -> 0.53),
+# point-in-time Dow +0.37, ETF book -0.25 over 19 months. A panel too short for a
 # window simply uses fewer; on a single window it is exactly the one-fit HRP.
 HRP_WINDOWS = 3
 HRP_STEP = 21

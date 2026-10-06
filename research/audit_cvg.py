@@ -111,6 +111,9 @@ IMPLEMENTATION NOTES (fixed before the run; how the ruled and reported items are
 Run:  AUDIT_CVG_CACHE=<dir> python research/audit_cvg.py      (cache is optional; ~10 min, 1 core)
 
 RESULT (2026-10-04) — BOTH VARIANTS FAIL THE BAR. CVG stays a monthly book.
+(v12.2, 2026-10-06: the committee's CVG bugs are fixed, and CVG-B1 shipped — pragati.LADDER = "up",
+the conviction tape reads D · W — with CVG-B4's 8-year tape window; see CHANGELOG 12.2.0. The
+figures below were measured before that, on the Ladder-down snapshots.)
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 zero-change (reproduces the shipped CVG exactly)
     target from the units panel vs stored raw CVG (= nco.compute_nco_portfolio(method="CVG")) at
