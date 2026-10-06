@@ -318,9 +318,10 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
                      "no current reading" if vol is None else
                      f"median {med or 0.0:.1%} / now {vol:.1%}"),
          "color_class": ("info" if not gate_shut and not down and scale is not None
-                         and scale < 0.999 else "neutral"),
-         "tooltip": "min(1, median / current) of the overlay's own six-month volatility "
-                    "(Barroso & Santa-Clara): it only ever shrinks the overlay."},
+                         and abs(scale - 1.0) > 0.001 else "neutral"),
+         "tooltip": "min(1.5, median / current) of the overlay's own six-month volatility "
+                    "(Barroso & Santa-Clara): it shrinks the overlay while that volatility runs "
+                    "above its median and grows it, up to 1.5×, while it runs below."},
         {"label": "Ranked", "value": str(mm["ranked"]),
          "subtext": f"of {n_uni} names carry a 12-1 return"
                     + (" · not applied (stood down)" if mm.get("stood_down")
@@ -364,7 +365,8 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
               if mm["tilted"] else ""))
         + " The **gate** shuts "
         "the overlay while the equal-weighted market has lost money over 24 months; the "
-        "**scale** shrinks it while its own volatility runs above its long-run median."
+        "**scale** shrinks it while its own volatility runs above its long-run median and "
+        "grows it, up to 1.5×, while it runs below."
         + (f" Today the overlay **stood down** — {down} — so this book's weights are the grid's."
            if down else
            " Today the gate is shut, so this book's weights are the grid's."

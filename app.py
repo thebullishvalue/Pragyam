@@ -115,7 +115,7 @@ from universe import (
 from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec, MIN_OBS,
                  build_price_matrix, mmom_windows,
                  MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP,
-                 MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS)
+                 MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS, MMOM_SCALE_CAP)
 from cvgrid import STATE_LABEL as CVG_STATE_LABEL, STATES as CVG_STATES
 
 try:
@@ -311,7 +311,7 @@ def _log_mmom_overlay(step, at: dict) -> None:
               f"1.00 — {s['months']} month-start readings, {MMOM_MIN_VOL_MONTHS} needed "
               "before it acts" if not s["scale_acts"] else
               "1.00 — no current volatility reading" if vol is None else
-              f"{scale or 1.0:.2f} = min(1, median {s['vol_median'] or 0.0:.1%} / current "
+              f"{scale or 1.0:.2f} = min({MMOM_SCALE_CAP:g}, median {s['vol_median'] or 0.0:.1%} / current "
               f"{vol:.1%}) · {s['months']} month-start readings")
     step.item("Ranked", f"{s['ranked']} of {s['universe']} names carry a 12-1 return"
               + ("" if s["ranks_enough"] else f" — under {MMOM_MIN_RANKED}, so no overlay"))
@@ -1941,8 +1941,9 @@ def main():
                 "panels, so read it as directional.\n\n"
                 "**Managed Momentum** — the grid's weights plus a 12-1 momentum overlay, "
                 "λ · rank / N, N the names allocated over. The overlay stands down while the "
-                "equal-weighted market's 24-month return is negative and shrinks while its own "
-                "volatility runs above its median. No weight falls below a quarter of the "
+                "equal-weighted market's 24-month return is negative, shrinks while its own "
+                "volatility runs above its median and grows, up to 1.5×, while it runs below. "
+                "No weight falls below a quarter of the "
                 "grid's, so the book always fills the positions you ask for; when they cover "
                 "the whole universe every name stays held, and below that momentum can also "
                 "change which names make the cut. Found by a style search over 43 "

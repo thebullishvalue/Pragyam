@@ -11,8 +11,7 @@ Produces, per symbol per day (daily and weekly timeframes where noted):
   • Volume-profile features (daily): point-of-control (POC), value-area position
     (``vap`` — a volatility-normalised premium/discount to accepted value) and
     in-value position (``va_pos``). See ``compute_volume_profile``.
-  • Pragati's two tapes — conviction on Ladder down (intraday.py; D · W before
-    intraday history) (pragati.py) and value on D · W
+  • Pragati's two tapes — conviction (pragati.py) and value, both on D · W
     (samanvaya.py, hedged against a macro basket fetched once per panel by
     ``fetch_macro_drivers``) — and the state they place each name in. See
     ``cvgrid.compute_readings``.

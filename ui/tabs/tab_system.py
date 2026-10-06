@@ -410,9 +410,10 @@ def _render_system_tab(training_window: List):
                                      'the <b>gate</b> is 0 while the equal-weighted market&rsquo;s '
                                      '24-month return is negative, the state in which momentum '
                                      'crashes (Daniel &amp; Moskowitz), and the <b>scale</b> is '
-                                     '<code>min(1, median / current)</code> of the overlay&rsquo;s '
-                                     'own six-month volatility (Barroso &amp; Santa-Clara), so it only '
-                                     f'ever shrinks. No name falls below {MMOM_FLOOR:.0%} of its grid '
+                                     '<code>min(1.5, median / current)</code> of the overlay&rsquo;s '
+                                     'own six-month volatility (Barroso &amp; Santa-Clara): it shrinks the '
+                                     'overlay while that volatility runs above its median and grows it, '
+                                     f'up to 1.5&times;, while it runs below. No name falls below {MMOM_FLOOR:.0%} of its grid '
                                      'weight. ' + _held_html),
                           }.get(_m_spec["short"], html_module.escape(str(_m_spec["formula"])))
                     + '</div>'

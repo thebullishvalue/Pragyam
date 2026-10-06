@@ -513,7 +513,7 @@ METHOD_SPECS = {
         "sip_default": False,
     },
     # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
-    # pragati.pine read through both of its tapes (conviction on Ladder down, value on D · W) —
+    # pragati.pine read through both of its tapes (both on D · W) —
     # conviction (who controls: the rows) and value (rich or cheap against the
     # macro drivers, Samanvaya's engine: the columns) — each name placed in one
     # of nine states and sized by its state. The pane's histogram runs the rows:
@@ -542,8 +542,9 @@ METHOD_SPECS = {
                      "+0.47% (t 1.3); Dow -0.23% then +0.90% (t 2.4). The ETF book (1-27 "
                      "funds from 2012) is too thin to test. v12: Dislocated 3 → 4 beat 3 in all "
                      "three eras (Nifty +0.29 / +0.13 / +0.10 %/yr, Dow +0.04 / +0.02 / +0.07); "
-                     "the conviction tape reads Ladder down where intraday history exists, "
-                     "which read slightly negative on Nifty since Nov 2024 (−0.35 %/yr, t −0.8). "
+                     "since v12.2 the conviction tape reads D · W, the tape these figures were "
+                     "measured on (v12.0-12.1 read Ladder down, whose scale shrank as intraday "
+                     "rungs were added). "
                      "Several designs were tried on these panels, so read every t as directional."),
         "long_run": ("vs Equal Weight, before / after 2018: Nifty 50 +0.83% / +0.47%/yr, "
                      "Dow 30 -0.23% / +0.90%/yr — at 1.2-1.3x monthly turnover"),
@@ -552,8 +553,9 @@ METHOD_SPECS = {
     # ── Managed Momentum · the grid plus a crash-managed 12-1 overlay (v12.1) ─
     # CVG's weights, plus λ · rank(12-1 momentum) / N. The overlay stands down
     # (strength 0) while the equal-weighted market's 24-month return is
-    # negative, and shrinks while its own volatility runs above its long-run
-    # median. Every name keeps at least MMOM_FLOOR of its CVG weight. Reads no
+    # negative, shrinks while its own volatility runs above its long-run median
+    # and grows (up to MMOM_SCALE_CAP) while it runs below. Every name keeps at
+    # least MMOM_FLOOR of its CVG weight. Reads no
     # covariance, like the grid it is built on; reads a long close history for
     # the overlay (backdata.fetch_close_history), and stands down to the grid
     # when that fetch fails (the estimation panel cannot read the gate).
@@ -562,7 +564,7 @@ METHOD_SPECS = {
         "short": "MMOM",
         "family": "accumulation",
         "formula": ("CVG weights + λ · rank(12-1 momentum) / N, λ = 1 · off while the market's "
-                    "24-month return is negative · scaled by min(1, median / current) overlay "
+                    "24-month return is negative · scaled by min(1.5, median / current) overlay "
                     "volatility · no name below ¼ of its CVG weight"),
         "tagline": "The grid plus a 12-1 momentum overlay that stands down in bear markets",
         "uses_clusters": False,
@@ -653,7 +655,8 @@ MOMENTUM_SKIP = 21
 # Moskowitz & Pedersen 2013) — switched OFF while the equal-weighted market's
 # 24-month return is negative, the state in which momentum crashes (Daniel &
 # Moskowitz 2016), and scaled DOWN while the overlay's own six-month volatility
-# runs above its long-run median (Barroso & Santa-Clara 2015).
+# runs above its long-run median, and UP, to 1.5x, while it runs below (Barroso & Santa-Clara
+# 2015; two-sided since v12.2).
 MMOM_LAMBDA = 1.0          # overlay strength: weight_i = cvg_i + λ · rank_i / N
 MMOM_LOOK = 252            # 12-1: the total return from t-252 to t-21
 MMOM_SKIP = 21
@@ -736,7 +739,8 @@ def mmom_scale(prices: pd.DataFrame, look: int = MMOM_LOOK, skip: int = MMOM_SKI
     the current month to date included — is priced from the closes; its 126-day realised
     volatility today is set against the median of that volatility at every month start up to
     and including today (an expanding median: nothing after today enters it). The scale is
-    min(1, median / today), so the overlay only ever shrinks. Below MMOM_MIN_VOL_MONTHS
+    min(MMOM_SCALE_CAP, median / today): it shrinks the overlay while its volatility runs above
+    the median and grows it, up to 1.5x, while it runs below. Below MMOM_MIN_VOL_MONTHS
     readings it stays at 1.
     """
     if prices is None or len(prices) == 0 or not isinstance(prices.index, pd.DatetimeIndex):
@@ -997,10 +1001,10 @@ def build_price_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
 # Snapshot column → the name the book carries it under. Numeric readings first,
 # then the two text fields.
 CVG_FIELDS = {
-    "conv tape": "conviction",               # the conviction tape, Ladder down (D · W ↺)
+    "conv tape": "conviction",               # the conviction tape (D · W)
     "conv daily": "conviction_daily",   # its daily rung (the pane's trace)
     "conv weekly": "conviction_weekly", # its reconstructed weekly rung
-    "conv ladder down": "ladder_down",       # 1 = the tape read Ladder down, 0 = D · W ↺
+    "conv ladder down": "ladder_down",       # 1 = the tape read Ladder down (off since v12.2), 0 = D · W
     "conv hist": "hist",                     # the pane's histogram, native
     "conv push": "push",                     # the histogram as drawn, −1 … +1
     "value tape": "value_tape",              # the value tape, D · W (+ rich)

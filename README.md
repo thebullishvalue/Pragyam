@@ -112,9 +112,9 @@ the book is the grid's. Everything else from v12 stands.
 
 v12 adds a fourth style, the **Conviction-Value Grid (CVG)** — the Pragati indicator's two tapes
 (conviction × value) placing every name in a 3 × 3 of states, each sized by measured units
-(details below). Its conviction tape reads **Ladder down** (pragati.pine v9.3; the default since v9.1): the intraday
+(details below). Its conviction tape read **Ladder down** (pragati.pine v9.3; the default since v9.1): the intraday
 frames inside each day that yfinance carries, falling back to D · W on days older than that
-history. Measured throughout — the units were re-weighted only where the change held in every
+history — reverted to D · W in v12.2. Measured throughout — the units were re-weighted only where the change held in every
 era; a trend tilt and a neutralised map were tested and rejected. Everything else from v11
 stands.
 
@@ -222,7 +222,7 @@ streamlit run app.py
 | **Equal Weight** *(default)* | baseline | Identical `1/N` per holding. The default because nothing beat it reproducibly — Managed Momentum led it in every era tested, not significantly; see below. Lowest turnover of any style. |
 | **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style on return: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes, at about a third of its turnover. In-repo (every name held, net, 2007-26): −0.49 %/yr against Equal Weight on Nifty 50 and −1.27 on Dow 30, at volatility 20.1 / 15.3 against 22.2 / 16.5. |
 | **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. The deepest volatility and drawdown cut of the styles (volatility 18.7 / 14.3, max drawdown −50.1% / −36.3% on Nifty 50 / Dow 30), at a larger return cost than ERC (−0.78 / −2.70 %/yr against Equal Weight) and about 3× its turnover. Measured holding every name: at 30 of 50 positions it is the 30 lowest-variance names (18.58 %/yr against 19.32). |
-| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction on Ladder down (the intraday frames inside each day; D · W before intraday history), value on D · W — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
+| **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction and value, both on D · W (the daily chart and the weekly rung) — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
 | **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return is negative and scaled down while the overlay's own volatility runs above its median; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped (v12.2), every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +0.43 / +1.57 / +1.37 %/yr, Dow 30 +0.72 / +0.39 / +0.24), none significant (largest per-era t 0.98; full-span Nifty vs CVG +1.15 %/yr at t 1.03, nominal); −0.42 %/yr against CVG on a point-in-time Dow. Below the universe's size momentum mostly picks the names: ahead of the grid on Nifty 50 at 30 positions, 1.8-5.0 %/yr behind it on the Dow since 2020. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
 
 Every style travels the identical pipeline — same eligibility filter, same
@@ -298,17 +298,15 @@ divergences are not used).
 
 - **Conviction** (`pragati.py`) — who controls, and how firmly:
   `100 · tanh(mean z)` of participation-weighted agreement `Σc·w / Σ|c|·w`,
-  `c = ΔC / TR`, over its ladder. **Ladder down** (v12; pragati.pine's
-  default since v9.1): the daily chart plus every lower frame yfinance carries — 1m (7
-  days), 3m, 5m / 15m / 30m (60 days), 1h (≈ 2 years), 4h — each running the
-  engine on its own history and averaged inside the day, joining where it has
-  calibrated (`intraday.py`, fetched once per universe). Days older than the
-  intraday history read **Ladder up**, D · W — the weekly rung rebuilt from the
-  week as it forms, normalised over 52 weeks — and the snapshot's
-  `conv ladder down` is 0. Measured head to head in Sanket (2024-26): the grid
-  tied on stocks; in this book's own old-vs-new comparison the change read
-  slightly negative on Nifty (−0.35 %/yr since Nov 2024, t −0.8) — see the
-  CHANGELOG. A product decision, watched.
+  `c = ΔC / TR`, over its ladder: **D · W** — the daily chart and the weekly rung
+  rebuilt from the week as it forms, normalised over 52 weeks (`pragati.LADDER =
+  "up"`). v12.0 and v12.1 read **Ladder down** (pragati.pine's default since v9.1):
+  the daily chart plus every lower frame yfinance carries, averaged inside the day.
+  v12.2 reverted it: the mean of k rungs restores no variance, so the tape's scale
+  fell as rungs were added (cross-sectional sd ~30 on D · W, ~14 with all seven),
+  its ±30 knee meant something different on every bar, and no backtest ever scored
+  the seven-rung tape. Every CVG figure in this README is a D · W tape. Ladder down
+  stays behind the switch (`intraday.py`), off.
 - **Value** (`samanvaya.py`) — rich or cheap against what the drivers explain:
   Samanvaya's blend of a hedged return spread and seven market-strength views.
   The hedge is fitted on at most three drivers, chosen by stepwise partial
