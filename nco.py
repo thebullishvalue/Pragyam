@@ -121,15 +121,16 @@ MIN_COVERAGE = 0.95
 # nco does not import yfinance.
 _DEAD_QUOTE_RUN = 10
 
-# A return column is degenerate — a frozen or broken series the dead-quote rule did not
-# catch — and left out of the estimation universe when its variance is non-finite or zero,
-# when at least half its returns are exactly zero (J&KBANK 2016-17: 99.6%), or when its
-# variance is below a millionth of the universe's median (a series that barely moves at
-# all). A RATIO to the median alone would also drop genuinely calm assets — a pegged
-# currency (USDHKD ~0.006x the FX median) or a cash-like ETF (~1e-4x equities) — which HRP
-# and ERC should hold; they have few zero returns and clear 1e-6 by orders of magnitude.
+# A return column is degenerate, and left out of the estimation universe, when its variance
+# is non-finite or zero, when at least half its returns are exactly zero (a frozen series the
+# dead-quote rule did not catch: J&KBANK 2016-17, 99.6%), or when its variance is under 1% of
+# the universe's median. The last also leaves out a genuinely near-riskless asset — a cash-like
+# ETF among equities (~1e-4x), possibly a pegged currency among FX pairs — on purpose: an
+# inverse-variance allocator gives it ~99.8% of raw weight, the cap holds it at 10%, and the
+# rest of the book comes out flat (HRP becomes equal weight). Clean research universes sit far
+# above the line (lowest ratio 0.18 over 494 month-starts); the run log names every name left out.
 _DEGENERATE_ZERO_SHARE = 0.5
-_DEGENERATE_VAR_RATIO = 1e-6
+_DEGENERATE_VAR_RATIO = 0.01
 
 
 def correlation_distance(corr: np.ndarray) -> np.ndarray:

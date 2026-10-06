@@ -796,9 +796,10 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
     if degenerate:
         out.append({
             "kind": "info",
-            "title": f"{len(degenerate)} symbol(s) with a frozen return series",
-            "body": ("At least half their returns are exactly zero, or they barely move at all, so "
-                     "no covariance is estimated for them" + (" and this style has no weight to give "
+            "title": f"{len(degenerate)} symbol(s) with a frozen or near-riskless return series",
+            "body": ("At least half their returns are exactly zero, or their variance is under 1% of "
+                     "the universe's median (frozen data, or a cash-like asset an inverse-variance "
+                     "allocator would pile into), so no covariance is estimated for them" + (" and this style has no weight to give "
                      "them" if at.get("nco_needs_covariance", True) else "; they are held, without risk "
                      "figures") + f": {', '.join(sorted(degenerate))}."),
         })
