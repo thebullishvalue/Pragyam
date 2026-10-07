@@ -27,7 +27,7 @@ regenerated under it.
 **Data every style reads.**
 - yfinance leaves some Indian demergers and mis-dated splits unadjusted (BAJAJFINSV
   −64% and −93% in 2008, ADANIENT 2015-06-03, TMPV 2025-10-14, TRENT 2026-01-01). An
-  Indian listing's ≥ 30% move on a ≥ 30% overnight gap is back-adjusted in the close
+  Indian listing's ≥ 30% fall (or a doubling) on a ≥ 30% overnight gap is back-adjusted in the close
   history and the estimation panel (`backdata.corporate_action_gaps`); a move that
   reverses a recent spike is a bad print and is unpriced instead. The research return
   panel is repaired the same way (`style_blends.repair`). Every style had been scored

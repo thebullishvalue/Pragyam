@@ -503,13 +503,17 @@ class _LadderUp(Exception):
 # gap is not, so other listings are left alone. A close-only rule flags 200 crypto days, and a
 # rule that also wants a calm open-to-close misses two of the seven events.
 _CORP_ACTION_JUMP = 0.30
+_CORP_ACTION_UP = 2.0     # an unpaired RISE counts only from a doubling (see corporate_action_gaps)
 
 
 def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame):
     """(events, bad_spans) read from an Indian listing's (.NS / .BO) closes and opens.
 
-    events     (symbol, date, close / previous close): a >= 30% close move on a >= 30% overnight
-               gap, read as a corporate action yfinance left unadjusted — back-adjust it.
+    events     (symbol, date, close / previous close): a >= 30% close FALL on a >= 30% overnight
+               gap — what a missed split, bonus or demerger looks like — or a jump to at least
+               double (a reverse split or a broken print), read as a corporate action yfinance
+               left unadjusted: back-adjust it. A rise of 30-100% is left alone: on its own it is
+               far likelier real news (a results-day gap) than an unbooked action.
     bad_spans  (symbol, first, end): a flagged move that reverses a >= 30% move of the last five
                sessions to within 25% (LT 2006-09-27 at half price for one day, MON100's -90% /
                +892% in June 2021, a one-day bad close). That is a bad print, not an action: the
@@ -540,7 +544,8 @@ def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame):
         else:
             spans.append((cols[j], c.index[back], c.index[i]))
     events = [e for e in events
-              if not any(e[0] == sp[0] and sp[1] <= e[1] < sp[2] for sp in spans)]
+              if not any(e[0] == sp[0] and sp[1] <= e[1] < sp[2] for sp in spans)
+              and (e[2] < 1.0 or e[2] >= _CORP_ACTION_UP)]
     return events, spans
 
 
@@ -586,7 +591,7 @@ def fetch_close_history(symbols: List[str], start_date: datetime,
     Columns are named as the snapshots name them (".NS" dropped), the same adjusted closes the
     panel's `price` column carries; a symbol listed twice (an ADR and its NSE line both named
     INFY) keeps the listing that comes last in `symbols`, as the panel does. An Indian listing's
-    unadjusted corporate action (a >= 30% move on a >= 30% overnight gap) is back-adjusted
+    unadjusted corporate action (a >= 30% fall, or a doubling, on a >= 30% overnight gap) is back-adjusted
     (corporate_action_gaps). Symbols the batch missed get the panel's
     own second pass (_recover_missing_symbols). A close repeating the one before it in a run of
     >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN (mask_dead_quotes) — pass

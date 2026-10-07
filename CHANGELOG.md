@@ -22,7 +22,8 @@ below is re-measured with the research snapshots regenerated under the v12.2 cod
 - **Unadjusted corporate actions** (MM-B3). yfinance leaves some Indian demergers and mis-dated
   splits raw: BAJAJFINSV −64% (2008-03-14) and −93% (2008-05-26), ADANIENT −39% (2015-06-03),
   TMPV −40% (2025-10-14), TRENT −33% (2026-01-01). `backdata.corporate_action_gaps` reads an
-  Indian listing's ≥ 30% move on a ≥ 30% overnight gap as one, and `back_adjust` rescales the
+  Indian listing's ≥ 30% fall (or a doubling) on a ≥ 30% overnight gap as one — a 30-100% rise
+  alone is likelier real news — and `back_adjust` rescales the
   bars before it (causal) in `fetch_close_history` and `generate_historical_data`; a flagged
   move that reverses a ≥ 30% move of the last five sessions is a bad print (LT 2006-09-27,
   MON100 2021-06) and is unpriced instead. Not applied to other listings, where a real 30%
