@@ -380,8 +380,8 @@ def _render_mmom_overlay(portfolio: pd.DataFrame, mm: Dict[str, Any]) -> None:
           "tilt, not as a momentum fund."
         + ("" if mm["whole"] else
            f" In a top-{req} book like this one momentum mostly picks the names held: "
-           "measured ahead of the grid on Nifty 50 at 30 positions, but 1.8-5.0 %/yr behind "
-           "it on the Dow since 2020.")
+           "measured (on v12.1) ahead of the grid on Nifty 50 at 30 positions, but 1.8-5.0 "
+           "%/yr behind it on the Dow since 2020.")
     )
 
 

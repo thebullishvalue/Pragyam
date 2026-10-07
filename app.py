@@ -300,7 +300,8 @@ def _log_mmom_overlay(step, at: dict) -> None:
               + " × scale " + (f"{scale:.2f}" if scale is not None else "—")
               + f" · added as strength × rank / N, N = the {s['universe']} names allocated over")
     step.item("Bear gate",
-              f"not read — {s['days']} sessions, {s['gate_needs']} needed" if _down else
+              f"not read — {s['gate_days']} sessions to the month's first, {s['gate_needs']} needed"
+              if _down else
               "not read — under a year of history, held open" if mkt is None else
               f"SHUT — equal-weighted market {mkt:+.1%} over {s['window']} · overlay off, "
               "the book is the grid's" if gate == 0 else
@@ -319,6 +320,8 @@ def _log_mmom_overlay(step, at: dict) -> None:
     step.item("History", f"{s['source']} · "
               + (f"from {s['start']:%Y-%m-%d} · " if s["start"] is not None else "")
               + f"{s['days']} sessions"
+              + (f" ({s['gate_days']} to the month's first — short of the gate's "
+                 f"{s['gate_needs']})" if s["short"] else "")
               + (f" · {s['coverage']:.0%} of names with a close"
                  if s["coverage"] is not None and s["coverage"] < 1 else ""))
     if not s["whole"] and s["tilted"]:
@@ -1521,7 +1524,8 @@ def _run_analysis(
                                 _t.detail("dead quotes unpriced (≥ 10 repeated closes): " + ", ".join(
                                     f"{c.replace('.NS', '')} {n}" for c, n in _ba["nco_dead_quotes"].items()))
                             if _ba.get("nco_degenerate"):
-                                _t.note("left out — near-zero return variance: " + ", ".join(
+                                _t.note("left out — frozen (≥ 50% zero returns) or near-riskless "
+                                        "(< 1% of the median variance): " + ", ".join(
                                     f"{c.replace('.NS', '')} ({r:.1e}× median)"
                                     for c, r in _ba["nco_degenerate"].items()))
                         _t.ok(f"{len(_book)} positions from "

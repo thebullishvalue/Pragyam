@@ -1,6 +1,6 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 12.1.0
+**Version:** 12.2.0
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
@@ -222,7 +222,7 @@ streamlit run app.py
 | **Equal Risk Contribution** | preservation | Solves so every holding contributes the same share of portfolio variance. The preferred risk-reduction style on return: beats HRP on the any-date hit rate in 6 of 6 cells across two stock universes, at about 0.6x its turnover. In-repo (every name held, net, 2007-26): −0.49 %/yr against Equal Weight on Nifty 50 and −1.27 on Dow 30, at volatility 20.1 / 15.3 against 22.2 / 16.5. |
 | **Risk Parity (HRP)** | preservation | Clusters by correlation distance, then splits capital by recursive bisection on cluster variance. Inverts no matrix. Averaged over three staggered estimation windows (v12.2). The deepest volatility and drawdown cut of the styles (volatility 18.8 / 14.2, max drawdown −49.3% / −36.4% on Nifty 50 / Dow 30), at −0.54 / −2.47 %/yr against Equal Weight and about 1.7× ERC's turnover. Measured holding every name: at 30 of 50 positions it is the 30 lowest-variance names (19.11 %/yr against 19.56). |
 | **Conviction-Value Grid (CVG)** | accumulation | Places every name in the 3 × 3 of the Pragati indicator's two tapes — conviction and value, both on D · W (the daily chart and the weekly rung) — and sizes it by that state, graded within each cell by the tapes' drawn intensity; the pane's histogram decides when a name changes row. Reads no covariance. Measured: the units beat the seed in every era on Nifty 50 and Dow 30 (v8, then Dislocated 3 → 4 in v12) and are level with or above Equal Weight after 2018 (see [The Conviction-Value Grid](#the-conviction-value-grid)). |
-| **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return (read at the month's first session) is negative, and scaled by the overlay's own volatility against its median — down when above, up to 1.5× when below; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped (v12.2), every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +0.33 / +1.72 / +1.59 %/yr, Dow 30 +0.77 / +0.57 / +0.29), none significant (largest per-era t 1.07; full-span Nifty vs CVG +1.37 %/yr at t 1.17, nominal); −0.38 %/yr against CVG on a point-in-time Dow. Below the universe's size momentum mostly picks the names: ahead of the grid on Nifty 50 at 30 positions, 1.8-5.0 %/yr behind it on the Dow since 2020. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
+| **Managed Momentum (MMOM)** | accumulation | The grid's weights plus `λ · rank(12-1 momentum) / N` (λ = 1), switched off while the equal-weighted market's 24-month return (read at the month's first session) is negative, and scaled by the overlay's own volatility against its median — down when above, up to 1.5× when below; no name below a quarter of its grid weight, so the book always fills the position count. Reads no covariance. Measured as shipped (v12.2), every name held: ahead of the best of the eight earlier styles and blends in all six era cells (Nifty 50 +0.33 / +1.72 / +1.59 %/yr, Dow 30 +0.77 / +0.57 / +0.29), none significant (largest per-era t 1.07; full-span Nifty vs CVG +1.37 %/yr at t 1.17, nominal); −0.38 %/yr against CVG on a point-in-time Dow. Below the universe's size momentum mostly picks the names: measured on v12.1, ahead of the grid on Nifty 50 at 30 positions, 1.8-4.3 %/yr behind it on the Dow since 2020 and 1.9-5.0 on a point-in-time Dow. About 1.3x the grid's turnover (see [Managed Momentum](#managed-momentum)). |
 
 Every style travels the identical pipeline — same eligibility filter, same
 clustering diagnostics, same risk decomposition — so any difference on screen is
@@ -265,7 +265,7 @@ hold is not a weighting method. `nco_positions_short` and `nco_short_cause` now
 record any shortfall and distinguish "the eligible universe ran out" (a data
 condition) from "the allocator zeroed names" (a defect). Managed Momentum's floor
 exists for this contract: the overlay as tested clipped at zero, so even a book
-meant to hold every name held as few as 37 Nifty names; the shipped one keeps
+meant to hold every name held as few as 36 Nifty names; the shipped one keeps
 every weight positive, at no less than a quarter of the grid's, so the book fills
 whatever count you ask for. It does not keep a name in a smaller book: below the
 universe's size floored names usually fall outside it (Nifty 50 at 30 positions:

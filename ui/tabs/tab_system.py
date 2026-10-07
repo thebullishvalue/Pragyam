@@ -52,7 +52,8 @@ def _mmom_rows(at: Dict[Any, Any], n_alloc: int) -> Dict[str, str]:
              + " × scale " + (f"{s['scale']:.2f}" if s["scale"] is not None else "—"))
             + f" · added as strength × rank / N, N = the {n_alloc} names allocated over"),
         "Bear Gate": (
-            f"not read — {s['days']} sessions, {s['gate_needs']} needed; overlay stood down"
+            f"not read — {s['gate_days']} sessions to the month's first, {s['gate_needs']} "
+            "needed; overlay stood down"
             if down else
             "not read — under a year of history, held open" if mkt is None else
             f"shut — equal-weighted market {mkt:+.1%} over {s['window']}; overlay off"
@@ -73,7 +74,9 @@ def _mmom_rows(at: Dict[Any, Any], n_alloc: int) -> Dict[str, str]:
         "Overlay History": (
             f"{s['source']} · "
             + (f"from {s['start']:%Y-%m-%d} · " if s["start"] is not None else "")
-            + f"{s['days']} sessions" + (" — short of the gate's 24 months" if s["short"] else "")
+            + f"{s['days']} sessions"
+            + (f" ({s['gate_days']} to the month's first) — short of the gate's 24 months"
+               if s["short"] else "")
             + (f" · {s['no_close']} of {n_alloc} names with no close"
                if s["no_close"] else "")),
     }
@@ -145,7 +148,9 @@ def _render_system_tab(training_window: List):
             + (f" · {len(_at.get('nco_universe_excluded') or {})} excluded"
                f" (<{num(_at.get('nco_coverage_required')) or 0.8:.0%} history)"
                if _at.get("nco_universe_excluded") else
-               " · nothing excluded (reads no covariance)" if not _needs_cov else "")),
+               " · nothing excluded (reads no covariance)" if not _needs_cov else "")
+            + (f" · {len(_at.get('nco_degenerate') or {})} frozen / near-riskless"
+               if _needs_cov and _at.get("nco_degenerate") else "")),
         "Risk Estimation": (
             f"{_n_est} of {_n_alloc} names"
             + (f" · {len(_diag_excl)} below "

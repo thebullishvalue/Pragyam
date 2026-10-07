@@ -1509,23 +1509,41 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     _cap_value = max(cap_eff, 1.0 / len(out)) * capital + 1e-9
     _cash = float(capital - (_units * _px_u).sum())
     _topped = 0
-    # Greedy in bulk: the holding furthest below target buys as many shares as bring it level
-    # with the next-furthest (at least one), capped by the cash and the cap. One share at a time
-    # stalled on a sub-cent coin (SHIB ~1.2e-5) for 200,000 steps with whole shares affordable.
-    for _ in range(10_000):
-        _ok = (_px_u <= _cash + 1e-9) & ((_units + 1.0) * _px_u <= _cap_value)
+    # The same result as buying one share at a time for the holding furthest below target, but
+    # computed by water-filling: among the names still affordable (a share fits the cash and the
+    # cap), find by bisection the lowest level L whose shares — every share bought while a name's
+    # gap to target is above L — fit the cash, and buy them; a name whose share no longer fits
+    # drops out, and the rest fill again. At most one round per name. One share at a time took
+    # ~1e5 steps on a book of sub-dollar coins (SHIB ~1.2e-5, XLM, DOGE).
+    for _ in range(len(_units) + 5):
+        _room = np.floor((_cap_value - _units * _px_u) / _px_u)
+        _ok = (_px_u <= _cash + 1e-9) & (_room >= 1)
         if not _ok.any():
             break
-        _gap = np.where(_ok, _target - _units * _px_u, -np.inf)
-        _i = int(np.argmax(_gap))
-        _rest = np.delete(_gap, _i)
-        _most = int(min(np.floor((_cash + 1e-9) / _px_u[_i]),
-                        np.floor((_cap_value - _units[_i] * _px_u[_i]) / _px_u[_i])))
-        _k = (_most if not _rest.size or not np.isfinite(_rest.max())
-              else int(np.clip(np.ceil((_gap[_i] - _rest.max()) / _px_u[_i]), 1, _most)))
-        _units[_i] += _k
-        _cash -= _k * _px_u[_i]
-        _topped += _k
+        _p, _g, _r = _px_u[_ok], (_target - _units * _px_u)[_ok], _room[_ok]
+
+        def _take(level):
+            return np.clip(np.ceil((_g - level) / _p), 0.0, _r)
+
+        _hi = float(_g.max())                        # nothing is bought above the largest gap
+        _lo = float((_g - _r * _p).min()) - 1.0      # everything affordable within the cap
+        if float((_take(_lo) * _p).sum()) <= _cash + 1e-9:
+            _hi = _lo
+        else:
+            for _ in range(200):
+                _mid = 0.5 * (_lo + _hi)
+                if float((_take(_mid) * _p).sum()) <= _cash + 1e-9:
+                    _hi = _mid
+                else:
+                    _lo = _mid
+        _k = _take(_hi)
+        if _k.sum() <= 0:                            # the next share of every name exceeds the cash
+            _i = int(np.argmax(np.where(_p <= _cash + 1e-9, _g, -np.inf)))
+            _k = np.zeros_like(_g)
+            _k[_i] = 1.0
+        _units[_ok] += _k
+        _cash -= float((_k * _p).sum())
+        _topped += int(_k.sum())
     out["units"] = _units
     out["value"] = out["units"] * out["price"]
     # Rows that hold no share even after the top-up (the price exceeds the cash left or the
