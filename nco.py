@@ -94,6 +94,7 @@ import numpy as np
 import pandas as pd
 
 from cvgrid import STATE_ORDER, STATE_UNITS, graded_units
+from strategies import BAND_MIN, strategy_weights
 
 # Minimum return observations before a covariance estimate is trusted: MIN_OBS
 # outright, and at least one observation per asset (T >= n). One per asset is a
@@ -604,6 +605,46 @@ METHOD_SPECS = {
                      "Nifty 50 +0.33% / +1.72% / +1.59%/yr, Dow 30 +0.77% / +0.57% / +0.29%/yr — "
                      "none significant (largest per-era t 1.07; full-span Nifty vs CVG t 1.17), "
                      "every-name books; -0.38%/yr vs CVG on a point-in-time Dow"),
+        "sip_default": False,
+    },
+    # ── Two indicator-scored strategies, ported from the strategy library ────
+    # (strategies.py). Each scores the day's snapshot — no covariance, no price
+    # history — weights every name by its score through the source's [1%, 10%]
+    # band, and fills the book in score order. research/indicator_styles.py
+    # measures both against the shipped styles.
+    "MMAST": {
+        "label": "Momentum Masters",
+        "short": "MMAST",
+        "family": "accumulation",
+        "formula": ("score = (0.4 RSI strength + 0.3 oscillator momentum + 0.3 z-score velocity) "
+                    "× trend (1.5 golden cross · 1.0 above the 90- and 200-day means · 0.5 above "
+                    "the 200 · 0.1 below) · weight ∝ score, clipped to [1%, 10%]"),
+        "tagline": "Trend following: RSI, oscillator and z-score momentum, weighted by trend",
+        "uses_clusters": False,
+        "uses_momentum": False,
+        "uses_cvg": False,
+        "rc_target": "none",
+        "needs_covariance": False,
+        "evidence": "Measured in research/indicator_styles.py.",
+        "long_run": "",
+        "sip_default": False,
+    },
+    "VSURF": {
+        "label": "Volatility Surfer",
+        "short": "VSURF",
+        "family": "accumulation",
+        "formula": ("score = Bollinger breakout (proximity to the upper 2σ band of the 20-day mean) "
+                    "× squeeze bonus (band width < 5%: 1.5, < 10%: 1.2) × oscillator / z-score "
+                    "confirmation × trend (1.0 above the 90-week mean · 0.5 above the 20-day · "
+                    "0.1 below) · weight ∝ score, clipped to [1%, 10%]"),
+        "tagline": "Breakouts from tight ranges, confirmed by oscillator and z-score",
+        "uses_clusters": False,
+        "uses_momentum": False,
+        "uses_cvg": False,
+        "rc_target": "none",
+        "needs_covariance": False,
+        "evidence": "Measured in research/indicator_styles.py.",
+        "long_run": "",
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -1279,6 +1320,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # weight formula rather than a stylistic choice.
     mom = pd.Series(np.nan, index=alloc_names)
     _mmom: Optional[dict] = None
+    _scored: Optional[pd.DataFrame] = None
     _hrp_windows: Optional[List[int]] = None
     _floored_names: set = set()
     # The covariance the ALLOCATOR optimised against. The convergence diagnostic
@@ -1303,6 +1345,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         _read = cvg_readings(history, alloc_names)
         w, alloc_names = cvg_weights(_read)
         dh = _read.reindex(alloc_names)
+    elif _m in ("MMAST", "VSURF"):
+        # Scored from the day's snapshot, weighted through the source's band, and
+        # REORDERED by score so the stable top-N below takes the highest scores first.
+        w, alloc_names, _scored = strategy_weights(history, alloc_names, _m)
     elif _m == "MMOM":
         # The grid's weights, then the momentum overlay on top: + λ · rank / N,
         # its strength set by the bear gate and the volatility scale, no name
@@ -1568,6 +1614,15 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     if _hrp_windows is not None:
         # The staggered windows HRP averaged (sessions back = HRP_STEP × each entry).
         out.attrs["nco_hrp_windows"] = list(_hrp_windows)
+    if _scored is not None:
+        # The indicator strategies' read of the day: how many names scored above zero (the rest
+        # sit at the 1e-6 "inclusive" score), how many sit at the band's 1% floor before top-N,
+        # and the score of each holding.
+        _sc = _scored["score"]
+        out.attrs["nco_strategy_scored"] = int((_sc > 1e-5).sum())
+        out.attrs["nco_strategy_universe"] = int(len(_sc))
+        out.attrs["nco_strategy_floor"] = int((_sc / max(float(_sc.sum()), 1e-300) < BAND_MIN).sum())
+        out.attrs["nco_strategy_score"] = {str(k): float(v) for k, v in _sc.reindex(out["symbol"]).items()}
     out.attrs["nco_dead_quotes"] = dict(rets.attrs.get("dead", {}))
     out.attrs["nco_degenerate"] = dict(rets.attrs.get("degenerate", {}))
     # The set the ALLOCATOR worked over, and the (possibly smaller) set the risk
