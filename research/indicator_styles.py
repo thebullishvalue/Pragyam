@@ -35,7 +35,44 @@ PRE-REGISTRATION (written before either strategy was run on these panels)
     THEN        both styles are added to the app whatever the verdict, with this evidence stated
                 in their registry entries (as for ERC and HRP, which do not beat Equal Weight).
 
-Run:  python research/indicator_styles.py        (~10 min; reads the cached panels and snapshots)
+RESULT (2026-11-02) — NEITHER BEATS THE EXISTING STYLES: 0 of 6 cells each. Both trail Equal Weight.
+Every name held, net CAGR %/yr; margin over the best shipped style in the cell (paired monthly t):
+
+                         Nifty 50                              Dow 30
+                   E1       E2       E3              E1       E2       E3
+  best shipped   20.73M   21.54M   24.77M          15.16M   19.07M   15.40M     (M = Managed Momentum)
+  EW             18.69    18.99    22.57           14.39    18.32    14.23
+  MMAST          13.86    13.47    20.72           14.91    17.05    11.95
+    margin       −6.87    −8.07    −4.06           −0.25    −2.02    −3.45
+    (t)          (−2.04)  (−3.64)  (−1.92)         (−0.20)  (−1.21)  (−1.56)
+  VSURF          13.57    13.42    20.34           12.19    15.14    10.47
+    margin       −7.15    −8.12    −4.44           −2.97    −3.93    −4.93
+    (t)          (−2.43)  (−3.32)  (−1.70)         (−1.51)  (−2.13)  (−1.90)
+
+  Full span (Feb 2007 → Sep 2026), CAGR / vol / ret-vol / maxDD / turnover:
+    Nifty  EW 20.10 / 22.2 / 0.94 / −56.5 / 0.37 · MMAST 16.05 / 20.4 / 0.84 / −56.8 / 4.00
+           VSURF 15.80 / 20.3 / 0.83 / −54.9 / 5.02 · MMOM 22.35 · CVG 21.00
+    Dow    EW 15.52 / 16.5 / 0.96 / −39.9 / 0.27 · MMAST 14.53 / 16.1 / 0.93 / −41.0 / 4.09
+           VSURF 12.48 / 16.3 / 0.81 / −43.7 / 4.97 · MMOM 16.42 · CVG 15.80
+  ETF book (Mar 2025 →): MMAST 17.18, VSURF 15.52 vs EW 17.58, MMOM 19.59.
+  Point-in-time Dow E3: MMAST 7.99, VSURF 6.87 vs CVG 11.56, MMOM 11.18, EW 11.00.
+  Cut books: Nifty 50 at 30 positions MMAST 15.56, VSURF 14.95 vs EW 20.73, MMOM 22.85 (full span);
+  Dow 30 at 15: the one positive cell anywhere is MMAST Dow E1 +1.85 over MMOM (t 0.53).
+  The shipped styles reproduce v12.2's published figures to ±0.01 on the rebuilt panels.
+
+  · Why: both scores are short-horizon chasers. Their rank correlation with the past month's return
+    is 0.58 / 0.49 (Nifty) and 0.59 / 0.48 (Dow), with 12-1 momentum only 0.30 / 0.11 and 0.28 /
+    0.09. Their rank IC with next month's return is negative: MMAST −0.019 (t −1.3) / −0.010
+    (t −0.7), VSURF −0.035 (t −2.7) / −0.033 (t −2.3) — short-term reversal (past 1-month return IC
+    −0.022 on Nifty), which 12-1 momentum avoids by skipping the latest month (IC +0.027).
+  · Costs are not the cause: gross minus net is 0.46 / 0.57 %/yr on Nifty and 0.14 / 0.17 on the
+    Dow at 4-5x/yr turnover. The shortfall is in the signal.
+  · Mock check (synthetic markets, not evidence about real ones): both win big where trends
+    persist, match EW where nothing persists, and lose where trends reverse — they behave as
+    designed; the real panels behave like the last case.
+
+Run:  python research/indicator_styles.py [universe ...]     (~15 min for all four; reads the cached
+      panels, snapshots and close histories)
 """
 from __future__ import annotations
 
@@ -109,15 +146,15 @@ def books(u: str) -> dict:
     d = pickle.load(open(P.PKL, "rb")) if pit else ss.load(u, holdout=True)
     snaps = snaps_of(u)
     members = P.member if pit else None
-    W = {m: cand_weights(d, snaps, m, members) for m in CANDS}
-    W["MMOM"] = mmom_weights(u, d, snaps, members)
     init = ss.Ctx.__init__
-    if pit:
+    if pit:                     # each day's members are the allocation universe, for every book
         def pit_init(self, data, a):
             init(self, data, a)
             self.priced = pd.Index([s for s in self.priced if P.member(s, a)])
         ss.Ctx.__init__ = pit_init
     try:
+        W = {m: cand_weights(d, snaps, m, members) for m in CANDS}
+        W["MMOM"] = mmom_weights(u, d, snaps, members)
         out = {}
         for n in ((None, CUT[u]) if u in CUT else (None,)):
             r = ss.baselines(d, n)
@@ -147,7 +184,7 @@ def main() -> None:
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 30)
     verdict = {}
-    for u in ("nifty_50", "dow_30", "etf_27", "dow_pit"):
+    for u in (sys.argv[1:] or ("nifty_50", "dow_30", "etf_27", "dow_pit")):
         R = books(u)
         eras = (list(ss.ERAS) if u in ("nifty_50", "dow_30")
                 else [("E3", "2020-01-01", None)] if u == "dow_pit" else [("window", None, None)])
