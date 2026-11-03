@@ -1,12 +1,16 @@
 """
-PRAGYAM — two indicator-scored strategies: Volatility Surfer and Momentum Masters
-══════════════════════════════════════════════════════════════════════════════
+research/indicator_strategies.py — Volatility Surfer and Momentum Masters, ported for testing.
+
+RESEARCH ONLY — NOT SHIPPED. Both were tested against the five shipped styles in
+research/indicator_styles.py and beat none of the six era cells (they trail Equal Weight by about
+4 %/yr on Nifty 50): nothing ships unless it beats the existing styles, so neither is a Pragyam
+style and nothing in the app imports this module.
 
 Ported from the strategy library `strategies.py` (VolatilitySurfer, MomentumMasters), which
 scores a day's indicator snapshot and weights every name by its score. The scoring, the data
-cleaning and the weight band are carried over as written; only the plumbing changed, so the
-two run through Pragyam's shared pipeline like every other style (nco.compute_nco_portfolio:
-the top N by weight, the 10% cap, whole shares).
+cleaning and the weight band are carried over as written (equal to the source classes to 5.6e-17
+over 300 random snapshots); the research harness then applies the book every style is measured
+on (the top N by weight, the 10% cap, monthly, net of costs).
 
     MOMENTUM MASTERS   trend following. A soft trend multiplier from price against its 90- and
                        200-day means (1.5 golden cross · 1.0 above both · 0.5 above the 200 ·

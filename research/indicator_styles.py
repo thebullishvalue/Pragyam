@@ -34,6 +34,10 @@ PRE-REGISTRATION (written before either strategy was run on these panels)
                 30 positions, the app's default; Dow 30 at 15).
     THEN        both styles are added to the app whatever the verdict, with this evidence stated
                 in their registry entries (as for ERC and HRP, which do not beat Equal Weight).
+                AMENDED AFTER THE VERDICT by the owner's rule: nothing ships unless it beats the
+                existing styles. Neither did, so neither is in the app; the port moved to
+                research/indicator_strategies.py and this harness now computes the same weights
+                from it directly (equal to the nco path the result was measured on; see below).
 
 RESULT (2026-11-02) — NEITHER BEATS THE EXISTING STYLES: 0 of 6 cells each. Both trail Equal Weight.
 Every name held, net CAGR %/yr; margin over the best shipped style in the cell (paired monthly t):
@@ -90,6 +94,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
+import indicator_strategies as IS                 # noqa: E402
 import mmom_ship as M                             # noqa: E402
 import style_blends as sb                         # noqa: E402
 import style_search as ss                         # noqa: E402
@@ -115,15 +120,20 @@ def snaps_of(u: str) -> list:
 
 
 def cand_weights(d: dict, snaps: list, method: str, members=None) -> dict:
-    """The candidate's raw weights on every rebalance day, through nco.compute_nco_portfolio.
-    The strategies read only the day's snapshot, so that is all `hist` needs to carry."""
+    """The candidate's raw weights on every rebalance day: the band weights over the day's priced
+    names, in score order (indicator_strategies.strategy_weights). The RESULT below was measured
+    through nco.compute_nco_portfolio(method=...) at a44dddb, which gave these same weights."""
     pos = {pd.Timestamp(t): i for i, (t, _) in enumerate(snaps)}
     out = {}
     for a in d["months"][:-1]:
         snap = snaps[pos[a]][1]
         if members is not None:
             snap = snap[snap["symbol"].map(lambda x: members(x, a))].reset_index(drop=True)
-        out[a] = sb.raw([(a, snap)], method)
+        last = snap.drop_duplicates("symbol", keep="last")
+        px = pd.to_numeric(last["price"], errors="coerce")
+        priced = [s for s, p in zip(last["symbol"], px) if np.isfinite(p) and p > 0]
+        w, order, _ = IS.strategy_weights([(a, snap)], priced, method)
+        out[a] = pd.Series(w / w.sum(), index=order)
     return out
 
 

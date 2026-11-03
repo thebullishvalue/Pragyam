@@ -2,7 +2,7 @@
 import sys, warnings; warnings.filterwarnings("ignore")
 sys.path.insert(0, "/home/user/Pragyam"); sys.path.insert(0, "/home/user/Pragyam/research")
 import numpy as np, pandas as pd
-import style_search as ss, style_blends as sb, strategies as ST
+import style_search as ss, style_blends as sb, indicator_strategies as ST
 from scipy.stats import spearmanr
 for u in ("nifty_50", "dow_30"):
     d = ss.load(u, holdout=True); snaps = sb.snapshots(u); pos = {pd.Timestamp(t): i for i, (t, _) in enumerate(snaps)}
@@ -32,7 +32,12 @@ for u in ("nifty_50", "dow_30"):
     # gross vs net
     R = {}
     for m in ("MMAST", "VSURF"):
-        W = {a: sb.raw([(a, snaps[pos[a]][1])], m) for a in months[:-1]}
+        W = {}
+        for a in months[:-1]:
+            sn = snaps[pos[a]][1].drop_duplicates("symbol", keep="last")
+            pr = [s for s, p in zip(sn["symbol"], pd.to_numeric(sn["price"], errors="coerce")) if np.isfinite(p) and p > 0]
+            w, order, _ = ST.strategy_weights([(a, sn)], pr, m)
+            W[a] = pd.Series(w / w.sum(), index=order)
         r = ss.run(lambda c, W=W: W[c.date], d)
         g_ = r["gross"]; nav = (1 + g_).prod() ** (12 / len(g_)) - 1
         print(f"   {m}: gross CAGR {nav*100:.2f} · net {ss.metrics(r)['cagr']:.2f} · cost drag {nav*100 - ss.metrics(r)['cagr']:.2f} %/yr · turnover {r['to'].mean()*12:.2f}x")
