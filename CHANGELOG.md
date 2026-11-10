@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.0] - 2026-11-10
+
+The Conviction-Value Grid (CVG) and Managed Momentum (MMOM) are removed, with everything that
+existed only to feed them. The selectable styles are Equal Weight, ERC and HRP; each builds the
+same book it built in 12.2.1. Major version: two selectable styles and their `nco` API are gone.
+
+### Removed
+- **Styles:** `CVG` and `MMOM` from `nco.METHOD_SPECS` and `nco.METHOD_ORDER`, with the grid's
+  readings and weights (`cvg_readings`, `cvg_units`, `cvg_weights`, `CVG_FIELDS`, `CVG_TEXT`,
+  `CVG_GRADED`), Managed Momentum's overlay (`mmom_overlay`, `mmom_gate`, `mmom_scale`,
+  `mmom_momentum`, `mmom_ranks`, `mmom_windows`, the `MMOM_*` constants), the `uses_cvg` registry
+  key, `compute_nco_portfolio`'s `price_history` argument, the per-holding grid columns and every
+  `nco_cvg_*` / `nco_mmom_*` attr.
+- **Modules:** `cvgrid.py`, `pragati.py`, `samanvaya.py` and `intraday.py` — the conviction and
+  value tapes, the 3 × 3 state map, the macro hedge and the intraday ladder.
+- **Data:** the tape columns in `backdata.COLUMN_ORDER`; `backdata.fetch_macro_drivers`; the
+  `readings_start` argument and the eight years of bars the app fetched for the tapes (a run now
+  downloads only the window it estimates on); `backdata.fetch_close_history` and
+  `mask_dead_quotes` (Managed Momentum's close history since 2006, and its cache in `app.py`).
+  The dead-quote rule itself is unchanged in `nco.build_returns_matrix`.
+- **Screen:** the holdings table's State / Map units / Push / Conv / Value tape / Days / 12-1 %
+  columns, the Conviction-Value Map, the state census and the watchlist, the Momentum Overlay
+  strip, the Conviction / Value / Push rows of the risk-profile heatmap, the grid and overlay rows
+  in the run log and the System tab, the overlay notices, and both styles' comparison books (and
+  the Style Comparison's "built on less history" caveats, which only Managed Momentum produced).
+- **Research:** `audit_cvg.py`, `audit_mmom.py`, `cvg_flip.py`, `cvg_mom.py`, `cvg_reweight.py`,
+  `cvg_v9.py`, `mmom_ship.py`, `style_search_holdout.py`, and the style-search candidates built on
+  the grid's weights (`candidates/a_reversal.py`, `b_momentum.py`, `d_anomaly.py`,
+  `e_ensemble.py`).
+
+### Changed
+- `research/style_blends.py`, `style_search.py` and `style_search_pit.py` build EW, ERC, HRP and
+  HRP+EW only, so `audit_hrp.py`, `etf_blends.py` and `candidates/c_weighting.py` still run. The
+  CVG and Managed Momentum figures in their RESULT blocks are kept as the record.
+- README, landing page, sidebar help and System tab describe three styles.
+
 ## [12.2.1] - 2026-11-10
 
 ### Fixed

@@ -1,6 +1,10 @@
 """
 research/style_blends.py — every shipped style head to head, and four blends of HRP, CVG and 1/N.
 
+v13.0 removed the Conviction-Value Grid and Managed Momentum from the product. This harness
+now builds EW, ERC, HRP and HRP+EW only; the CVG figures recorded below are the results as run
+before that, and are kept as the record.
+
 PRE-REGISTRATION (fixed before any number below was seen)
 ─────────────────────────────────────────────────────────
 The four shipped styles, each exactly as nco.compute_nco_portfolio builds it:
@@ -118,7 +122,6 @@ warnings.filterwarnings("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-import cvgrid                                     # noqa: E402
 import nco                                        # noqa: E402
 
 CAPITAL, CAP, MIN_NAMES, ROLL, STALE_RUN = 1e10, 0.10, 10, 36, 10
@@ -127,11 +130,9 @@ CAPITAL, CAP, MIN_NAMES, ROLL, STALE_RUN = 1e10, 0.10, 10, 36, 10
 # weights are identical on 253 or 400 (returns are cut to the 252-row lookback either way).
 PANEL = 400
 START, END = datetime(2006, 1, 1), datetime(2026, 10, 2)
-assert cvgrid.STATE_UNITS["DISLOCATED"] == 4.0, "the shipped CVG units are the control"
 
-METHOD = {"EW": "EQUAL", "ERC": "ERC", "HRP": "HRP", "CVG": "CVG"}
-BLENDS = {"HRP+CVG": ("HRP", "CVG"), "HRP+EW": ("HRP", "EW"), "CVG+EW": ("CVG", "EW"),
-          "HRP+CVG+EW": ("HRP", "CVG", "EW")}
+METHOD = {"EW": "EQUAL", "ERC": "ERC", "HRP": "HRP"}
+BLENDS = {"HRP+EW": ("HRP", "EW")}
 BOOK_BLENDS = {f"{k}·b": v for k, v in BLENDS.items()}       # iteration 2, every-name book only
 MEMBERS = {**BLENDS, **BOOK_BLENDS}
 KEYS = list(METHOD) + list(BLENDS)

@@ -11,10 +11,6 @@ Produces, per symbol per day (daily and weekly timeframes where noted):
   • Volume-profile features (daily): point-of-control (POC), value-area position
     (``vap`` — a volatility-normalised premium/discount to accepted value) and
     in-value position (``va_pos``). See ``compute_volume_profile``.
-  • Pragati's two tapes — conviction (pragati.py) and value, both on D · W
-    (samanvaya.py, hedged against a macro basket fetched once per panel by
-    ``fetch_macro_drivers``) — and the state they place each name in. See
-    ``cvgrid.compute_readings``.
 
 The canonical column set is ``COLUMN_ORDER``; ``generate_historical_data``
 returns a chronological list of ``(date, snapshot_df)`` tuples in that shape,
@@ -34,8 +30,6 @@ from typing import List, Tuple, Dict, Any, Optional, cast
 
 # Import circuit breaker, metrics and the console
 from circuit_breaker import yfinance_circuit, RetryWithBackoff
-from cvgrid import COLUMNS as CVG_COLUMNS, compute_readings
-from samanvaya import DRIVER_TICKERS
 from logger_config import console
 from metrics import get_metrics
 
@@ -276,8 +270,6 @@ def compute_volume_profile(
 def calculate_all_indicators(
     symbol_data: pd.DataFrame,
     oscillator_calculator: LiquidityOscillator,
-    driver_closes: Optional[pd.DataFrame] = None,
-    ticker: str = "",
 ) -> pd.DataFrame | None:
     """
     Calculate all indicators for a single symbol's full history.
@@ -285,9 +277,7 @@ def calculate_all_indicators(
     Returns a DataFrame indexed by date with columns for price, returns,
     oscillators, RSI, moving averages, deviations, and z-scores across
     daily and weekly timeframes, plus the daily volume-profile features
-    (POC, value-area position ``vap``, and in-value position ``va_pos``),
-    plus Pragati's two tapes and the Conviction-Value Grid state (``driver_closes`` feeds the value
-    tape's macro hedge; ``ticker`` sets its driver timing and home index).
+    (POC, value-area position ``vap``, and in-value position ``va_pos``).
     Returns ``None`` on empty input.
     """
     daily_data = symbol_data.copy()
@@ -342,17 +332,6 @@ def calculate_all_indicators(
     weekly_cols = [col for col in all_results_df.columns if 'weekly' in col]
     all_results_df[weekly_cols] = all_results_df[weekly_cols].ffill()
 
-    # ── Pragati's two tapes, and the Conviction-Value Grid state ─────────────
-    #  What the Conviction-Value Grid allocates from. Computed HERE because this is the
-    #  last place the full OHLCV exists: the snapshots carry close prices only,
-    #  and start after a warm-up both tapes need. Attached AFTER the weekly
-    #  forward-fill above on purpose: the weekly rungs are not resampled series
-    #  waiting to be spread across their week — they are daily readings,
-    #  reconstructed from the week as it forms.
-    dh = compute_readings(daily_data, driver_closes, ticker)
-    for col in CVG_COLUMNS:
-        all_results_df[col] = dh[col].reindex(all_results_df.index)
-
     return all_results_df
 
 
@@ -393,10 +372,6 @@ COLUMN_ORDER = [
     'dev20 latest', 'dev20 weekly',
     # Volume-profile features (daily): point-of-control + value-area position.
     'poc latest', 'vap latest', 'va_pos latest',
-    # Pragati (pragati.py, samanvaya.py) and the grid (cvgrid.py): the conviction
-    # tape and its rungs, the
-    # value tape, its chart reading, hedge weight and drivers, and the state.
-    *CVG_COLUMNS,
 ]
 
 # --- NEW: Export max indicator period ---
@@ -429,72 +404,6 @@ _RECOVERY_DELAY = 1.0             # seconds between attempts on one symbol
 # "gap we carry the last price across" are the same number by construction.
 _STALE_BARS = 5
 
-
-def fetch_macro_drivers(start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
-    """Daily closes of the value tape's macro drivers — one batch per panel.
-
-    Samanvaya's hedge basket (samanvaya.DRIVERS): US yields, bond-ETF proxies
-    for the other 10-year yields, the dollar index, energy, metals, the INR
-    crosses and the home equity indices. Shared by every name in the panel;
-    each name aligns them to its own calendar and close time.
-
-    Returns None rather than raising. The value engine runs without drivers —
-    the RV leg becomes the name's own path, the Pine's "Macro hedge: Off" —
-    so a failed fetch degrades the tape, it does not end the run. Each missing
-    driver is reported, since a basket short of a factor is a different basket.
-    """
-    try:
-        @yfinance_circuit.protect
-        @RetryWithBackoff(max_retries=2, initial_delay=2.0, backoff_factor=2.0)
-        def _download():
-            return yf.download(DRIVER_TICKERS, start=start_date, end=end_date + timedelta(days=1),
-                               progress=False, auto_adjust=True)
-
-        raw = _download()
-        close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
-        close = close.dropna(how="all", axis=1)
-    except Exception as e:
-        get_metrics().add_warning(f"Macro drivers unavailable ({type(e).__name__}: {e}) — "
-                                  "value tape runs unhedged")
-        console.warning(f"Macro drivers unavailable ({type(e).__name__}) — value tape runs unhedged")
-        return None
-    missing = [t for t in DRIVER_TICKERS if t not in close.columns]
-    if missing:
-        get_metrics().add_warning(f"{len(missing)} macro driver(s) returned no data: "
-                                  f"{', '.join(missing)} — dropped from their factors")
-        console.warning(f"Macro drivers missing: {', '.join(missing)} — dropped from their factors")
-    console.detail(f"macro drivers · {close.shape[1]} of {len(DRIVER_TICKERS)} series · "
-                   f"{len(close.index)} bars")
-    return pd.DataFrame(close)
-
-
-# A close that repeats the one before it, in a run of at least this many consecutive repeats
-# (11 identical closes), is a dead quote, not a market: yfinance carries NESTLEIND.NS flat from
-# the start of its history to Jan 2010 (986 repeats from Jan 2006; 786 inside the research
-# panels, which start Oct 2006) and BAJAJ-AUTO.NS flat for 45 around its 2008 relisting.
-# research/style_blends.py found them; the same rule (style_blends.unstale) repairs this panel.
-_DEAD_QUOTE_RUN = 10
-
-
-def mask_dead_quotes(close: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]:
-    """Unprice dead quotes: a close repeating the one before it, in a run of >= _DEAD_QUOTE_RUN
-    consecutive repeats, becomes NaN. Returns the masked frame and the count per column.
-    Causal only over the frame it is given — apply it to a frame that ends on the run date."""
-    if close is None or close.empty:
-        return close, {}
-    same = close.diff().eq(0)
-    run = same.apply(lambda c: c.groupby((~c).cumsum()).transform("sum"))
-    dead = same & (run >= _DEAD_QUOTE_RUN)
-    counts = {str(c): int(n) for c, n in dead.sum().items() if n}
-    return (close.mask(dead) if counts else close), counts
-
-
-_mask_dead = mask_dead_quotes
-
-
-class _LadderUp(Exception):
-    """Raised inside generate_historical_data to skip the intraday prefetch when the conviction
-    ladder reads D · W (pragati.LADDER != "down")."""
 
 # One-day close moves that are also overnight gaps of this size, on an Indian listing, are read
 # as corporate actions yfinance left unadjusted (MM-B3): demergers (BAJAJFINSV 2008, ADANIENT
@@ -552,8 +461,7 @@ def corporate_action_gaps(close: pd.DataFrame, open_: pd.DataFrame):
 def session_close_utc(symbol: str) -> float:
     """The LATEST UTC hour the symbol's daily bar can still be forming, all year round: NSE/BSE
     10:00 (no DST), FX and CME futures 22:00, 24h markets never (24), everything else 21:00 (a US
-    equity's 16:00 ET under EST; it closes at 20:00 under EDT, so this errs toward dropping).
-    samanvaya._close_utc's 20:30 midpoint is fine for ordering drivers, not as a cutoff."""
+    equity's 16:00 ET under EST; it closes at 20:00 under EDT, so this errs toward dropping)."""
     s = str(symbol).upper()
     if s.endswith((".NS", ".BO")) or s in ("^NSEI", "^NSEBANK", "^BSESN", "^INDIAVIX"):
         return 10.0
@@ -577,94 +485,6 @@ def back_adjust(frame: pd.DataFrame, events, columns=None) -> pd.DataFrame:
         if cols and np.isfinite(k) and k > 0:
             out.loc[out.index < t, cols] = out.loc[out.index < t, cols] * k
     return out
-
-
-def fetch_close_history(symbols: List[str], start_date: datetime,
-                        end_date: datetime, mask_dead_quotes: bool = True) -> Optional[pd.DataFrame]:
-    """Daily closes of the universe over a long window — what Managed Momentum's overlay reads.
-
-    The estimation panel (generate_historical_data) carries ~400 sessions (~19 months), enough for
-    every other style. Managed Momentum also needs the market's 24-month return for its bear
-    gate and its overlay's volatility over all the history there is for the expanding median
-    that scales it (nco.mmom_overlay) — closes only, no indicators, so one batch download.
-
-    Columns are named as the snapshots name them (".NS" dropped), the same adjusted closes the
-    panel's `price` column carries; a symbol listed twice (an ADR and its NSE line both named
-    INFY) keeps the listing that comes last in `symbols`, as the panel does. An Indian listing's
-    unadjusted corporate action (a >= 30% fall, or a doubling, on a >= 30% overnight gap) is back-adjusted
-    (corporate_action_gaps). Symbols the batch missed get the panel's
-    own second pass (_recover_missing_symbols). A close repeating the one before it in a run of
-    >= _DEAD_QUOTE_RUN consecutive repeats is set to NaN (mask_dead_quotes) — pass
-    mask_dead_quotes=False to mask later, after slicing to a run date, so that repeats after it
-    cannot decide what is masked before it. Returns None rather than raising: the overlay then
-    stands down to the grid, and the app says so.
-    """
-    if not symbols:
-        return None
-    try:
-        @yfinance_circuit.protect
-        @RetryWithBackoff(max_retries=2, initial_delay=2.0, backoff_factor=2.0)
-        def _download():
-            return yf.download(list(symbols), start=start_date, end=end_date + timedelta(days=1),
-                               progress=False)
-
-        raw = _download()
-        if isinstance(raw.columns, pd.MultiIndex) and len(symbols) > 1:
-            raw, _rec = _recover_missing_symbols(raw, list(symbols), start_date, end_date)
-            if _rec.get("recovered"):
-                console.detail(f"close history · re-fetched {len(_rec['recovered'])} symbol(s) "
-                               f"the batch missed: {', '.join(_rec['recovered'][:12])}")
-        close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]].set_axis(
-            [symbols[0]], axis=1)
-        close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all", axis=1)
-        _open = (raw["Open"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Open"]].set_axis(
-            [symbols[0]], axis=1)) if "Open" in raw.columns.get_level_values(0) else None
-    except Exception as e:
-        get_metrics().add_warning(f"Close history unavailable ({type(e).__name__}: {e}) — "
-                                  "Managed Momentum stands down to the grid")
-        console.warning(f"Close history unavailable ({type(e).__name__}) — "
-                        "Managed Momentum stands down to the grid")
-        return None
-    if close.empty:
-        return None
-    close.index = pd.DatetimeIndex(close.index).tz_localize(None).normalize()
-    close = close[~close.index.duplicated(keep="last")].sort_index()
-    close = close.loc[:pd.Timestamp(end_date).normalize()]
-    if _open is not None:
-        _open = _open.set_axis(pd.DatetimeIndex(_open.index).tz_localize(None).normalize(), axis=0)
-        _open = _open[~_open.index.duplicated(keep="last")]
-        _ev, _bad = corporate_action_gaps(close, _open)
-        for _c, _t0, _t1 in _bad:
-            close.loc[(close.index >= _t0) & (close.index < _t1), _c] = np.nan
-        if _ev:
-            close = back_adjust(close, _ev)
-            console.detail("close history · corporate-action gaps back-adjusted: " + ", ".join(
-                f"{c.replace('.NS', '')} {t:%Y-%m-%d} ×{k:.3f}" for c, t, k in _ev))
-        if _bad:
-            console.detail("close history · bad prints unpriced: " + ", ".join(
-                f"{c.replace('.NS', '')} {t0:%Y-%m-%d}" for c, t0, _ in _bad))
-    if mask_dead_quotes:
-        close, _dead = _mask_dead(close)
-        if _dead:
-            console.detail("close history · unpriced dead quotes: "
-                           + ", ".join(f"{c.replace('.NS', '')} {n}" for c, n in _dead.items()))
-    # One listing per stripped name: the LAST in the caller's list order, as the snapshot rows
-    # and nco.cvg_readings (keep="last") resolve it — not yfinance's alphabetical column order,
-    # which for ['INFY.NS', 'INFY'] gave the grid the ADR and the overlay the NSE line (MM-B11).
-    # Only true duplicates are resolved; a column that matches no requested string exactly
-    # (yfinance normalising a ticker's case) is kept, as before.
-    _order = {str(s).upper(): i for i, s in enumerate(symbols)}
-    _rank: Dict[str, int] = {}
-    _keep: Dict[str, int] = {}
-    for j, c in enumerate(close.columns):
-        k, r = str(c).replace(".NS", ""), _order.get(str(c).upper(), -1)
-        if k not in _rank or r >= _rank[k]:
-            _rank[k], _keep[k] = r, j
-    close = close.iloc[:, sorted(_keep.values())]
-    close.columns = [str(c).replace(".NS", "") for c in close.columns]
-    console.detail(f"close history · {close.shape[1]} of {len(set(symbols))} symbols · "
-                   f"{close.index[0]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d}")
-    return close
 
 
 def _unfetched_symbols(close: pd.DataFrame, symbols: List[str]) -> List[str]:
@@ -828,7 +648,6 @@ def generate_historical_data(
     symbols_to_process: List[str],
     start_date: datetime,
     end_date: datetime,
-    readings_start: Optional[datetime] = None,
 ) -> List[Tuple[datetime, pd.DataFrame]]:
     """
     Generate historical indicator snapshots for a list of symbols.
@@ -844,11 +663,6 @@ def generate_historical_data(
         symbols_to_process: Stock ticker symbols (e.g. ``["RELIANCE.NS"]``).
         start_date: Beginning of the snapshot window (must include warmup).
         end_date: End of the snapshot window.
-        readings_start: When earlier than start_date, the bars and macro drivers are fetched
-            from here so the tapes run over that longer history (their quiet regime ranks
-            800 bars and the push gate warms up over ~450), while snapshots are emitted for
-            the same dates as without it (CVG-B4: on a ~19-month window 1 name in 8 sat in
-            a different grid state than on full-history tapes).
 
     Returns:
         Chronologically ordered list of ``(date, indicator_df)`` tuples.
@@ -887,7 +701,7 @@ def generate_historical_data(
     
     # Update metrics
     metrics.symbols_count = len(symbols_to_process)
-    fetch_start = min(start_date, readings_start) if readings_start is not None else start_date
+    fetch_start = start_date
     
     # === DOWNLOAD WITH CIRCUIT BREAKER + RETRY ===
     try:
@@ -912,29 +726,6 @@ def generate_historical_data(
             f"{fetch_start:%Y-%m-%d} → {end_date:%Y-%m-%d}"
         )
         all_data = download_data()
-        # The conviction ladder reads D · W since v12.2 (pragati.LADDER = "up"): no intraday
-        # frames are fetched. With LADDER = "down" every intraday frame yfinance carries is
-        # fetched once for the whole universe and read by cvgrid.compute_readings per name.
-        try:
-            import pragati as _pg
-            if _pg.LADDER != "down":
-                raise _LadderUp
-            import intraday as _idm
-            _t0 = time.time()
-            _cov = _idm.prefetch(list(symbols_to_process))
-            if _cov:
-                _n = len(set(symbols_to_process))
-                console.detail("intraday ladder · " + " · ".join(f"{f} {_cov.get(f, 0)}" for f in _idm.DAILY_FRAMES)
-                               + (f" of {_n} symbols · {_dt:.1f}s" if (_dt := time.time() - _t0) >= 0.1 else f" of {_n} symbols · cached"))
-                if _n - max(_cov.values()):
-                    console.warning(f"{_n - max(_cov.values())} symbol(s) have no intraday history — "
-                                    "their conviction reads D · W (↺)")
-            else:
-                console.detail("intraday ladder disabled — conviction reads D · W (↺)")
-        except _LadderUp:
-            pass
-        except Exception as _e:        # the tape then reads Ladder up for every name
-            console.warning(f"intraday prefetch failed ({type(_e).__name__}: {_e}) — conviction reads D · W (↺)")
         console.detail(
             f"received {len(all_data.index)} bars × "
             f"{len(getattr(all_data.get('Close', all_data), 'columns', []))} price columns"
@@ -1021,16 +812,12 @@ def generate_historical_data(
     
     all_data.columns.names = ['Indicator', 'Symbol']
     oscillator_calculator = LiquidityOscillator(length=20, impact_window=3)
-
-    # The value tape's macro basket — fetched ONCE for the whole panel, over the
-    # same window as the names, and shared by every one of them.
-    driver_closes = fetch_macro_drivers(fetch_start, end_date)
     
     # 2. --- Pre-calculate all indicators for all symbols ---
     ticker_indicator_cache = {}
     # A run before a market's close receives TODAY's bar still forming (partial volume, a
-    # moving close). Read as a finished session it moved the Nifty book 2.3-4.5% and the
-    # state of 2-18% of names depending on the hour (CVG-B2). Each name's bar for today is
+    # moving close), and every indicator and price read from it would move with the hour
+    # the run was made (CVG-B2). Each name's bar for today is
     # therefore dropped until its own market has closed (session_close_utc; 24h markets
     # never close, so their today is always forming); the calendar carry below fills that
     # date from the last completed session, so readings and price are as of that close.
@@ -1072,7 +859,7 @@ def generate_historical_data(
             
             symbol_df = symbol_df.dropna(subset=['close', 'volume'])
             # Exchange holiday prints (_holiday_dates above): not a session, so not a bar for
-            # the tape engines (CVG-B8; data hygiene, measured -0.04%/yr on Nifty).
+            # the indicators (CVG-B8; data hygiene).
             if len(_holiday_dates) and {'high', 'low'}.issubset(symbol_df.columns):
                 _flat = (symbol_df.index.isin(_holiday_dates) & (symbol_df['volume'] <= 0)
                          & (symbol_df['high'] == symbol_df['low']))
@@ -1080,8 +867,8 @@ def generate_historical_data(
                     _holiday_rows += int(_flat.sum())
                     symbol_df = symbol_df[~_flat]
             # An unadjusted demerger or mis-dated split (corporate_action_gaps) would reach the
-            # tapes as a -40% session and HRP / ERC's covariance as a -40% return: back-adjust
-            # the bars before it, as the close history does (MM-B3).
+            # indicators as a -40% session and HRP / ERC's covariance as a -40% return:
+            # back-adjust the bars before it (MM-B3).
             if {'open', 'high', 'low'}.issubset(symbol_df.columns):
                 _ev, _bad = corporate_action_gaps(symbol_df[['close']].set_axis([ticker], axis=1),
                                                   symbol_df[['open']].set_axis([ticker], axis=1))
@@ -1099,8 +886,7 @@ def generate_historical_data(
             symbol_df.name = ticker
             
             if not symbol_df.empty:
-                indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator,
-                                                         driver_closes, ticker)
+                indicators_df = calculate_all_indicators(symbol_df, oscillator_calculator)
                 # calculate_all_indicators returns None for a symbol it cannot
                 # compute. Caching that None meant the snapshot loop below
                 # dereferenced it (`full_indicator_df.index`) and took the whole
@@ -1128,7 +914,7 @@ def generate_historical_data(
             for c, t, k in _corp_events))
     if _holiday_rows:
         console.detail(f"holiday prints · dropped {_holiday_rows} flat zero-volume row(s) on "
-                       f"{len(_holiday_dates)} exchange holiday(s) before the tapes")
+                       f"{len(_holiday_dates)} exchange holiday(s) before the indicators")
     _skipped_indicators = [s for s in symbols_to_process if s not in ticker_indicator_cache]
     console.detail(
         f"indicators computed for {len(ticker_indicator_cache)} of "
@@ -1152,9 +938,6 @@ def generate_historical_data(
     # MAX_INDICATOR_PERIOD *bars* of date_range instead — the caller already
     # over-fetches enough calendar days (see _load_historical_data's x1.5+30
     # buffer) to have that many bars available before the requested window.
-    # With a longer readings history (readings_start), every bar before start_date is
-    # read by the tapes but not emitted, and the warm-up is counted from start_date, so
-    # the snapshot dates are the ones the plain window would give.
     _window = date_range[date_range >= pd.Timestamp(start_date)]
     _warm_dates = set(date_range[date_range < pd.Timestamp(start_date)]) | set(_window[:MAX_INDICATOR_PERIOD])
 

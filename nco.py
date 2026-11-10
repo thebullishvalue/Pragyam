@@ -1,8 +1,8 @@
 """
-PRAGYAM — portfolio curation: Equal Weight · ERC · HRP · Conviction-Value Grid · Managed Momentum
+PRAGYAM — portfolio curation: Equal Weight · ERC · HRP
 ══════════════════════════════════════════════════════════════════════════════
 
-The system's only curation stack. Five selectable styles (METHOD_ORDER), and every
+The system's only curation stack. Three selectable styles (METHOD_ORDER), and every
 one travels the same pipeline — eligibility, weights over the allocation universe,
 top-N by weight, the per-position cap, integer units, the same risk diagnostics —
 so any difference on screen is the weight formula and nothing else:
@@ -10,18 +10,10 @@ so any difference on screen is the weight formula and nothing else:
     EQUAL   1/N. Reads nothing; the default and the bar.
     ERC     equal risk contribution on a shrunk (Ledoit-Wolf) covariance.
     HRP     hierarchical risk parity: recursive bisection on cluster variance.
-    CVG     the Conviction-Value Grid: each name sized by its state in the 3 × 3 of
-            the Pragati indicator's conviction and value tapes (cvgrid.py).
-    MMOM    Managed Momentum: the grid's weights plus a crash-managed 12-1 momentum
-            rank (mmom_overlay), read from a long close history (`price_history`,
-            backdata.fetch_close_history); without one it stands down to the grid.
 
-Equal Weight, ERC and HRP make no return forecast of any kind; ERC and HRP select
-and weight from the return covariance structure, Equal Weight from nothing. CVG
-and MMOM read the tape instead — the grid its two tapes, MMOM also a 12-1 momentum
-rank — and read no covariance. They are bets on what the tape says, so the
-forecasting ceiling below applies to them, and each is measured against Equal
-Weight and the other styles (METHOD_SPECS[...]["evidence"]; README).
+None of them makes a return forecast of any kind: ERC and HRP select and weight
+from the return covariance structure, Equal Weight from nothing. Each is measured
+against Equal Weight and the others (METHOD_SPECS[...]["evidence"]; README).
 
 Why covariance rather than forecasts (the risk styles)
 ──────────────────────────────────────────────────────
@@ -93,8 +85,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from cvgrid import STATE_ORDER, STATE_UNITS, graded_units
-
 # Minimum return observations before a covariance estimate is trusted: MIN_OBS
 # outright, and at least one observation per asset (T >= n). One per asset is a
 # floor, not a comfort level: HRP inverts nothing and ERC solves on the
@@ -117,8 +107,10 @@ MAX_CLUSTERS = 8
 MIN_COVERAGE = 0.95
 
 # A close repeating the one before it in a run of at least this many sessions is
-# a dead quote: the same rule as backdata.mask_dead_quotes, copied here so that
-# nco does not import yfinance.
+# a dead quote, not a market: yfinance carries NESTLEIND.NS flat from the start of
+# its history to Jan 2010 (986 repeats from Jan 2006) and BAJAJ-AUTO.NS flat for 45
+# around its 2008 relisting. research/style_blends.py found them; the same rule
+# (style_blends.unstale) repairs the research panels.
 _DEAD_QUOTE_RUN = 10
 
 # A return column is degenerate, and left out of the estimation universe, when its variance
@@ -423,7 +415,6 @@ def hrp_weights(cov: np.ndarray, corr: np.ndarray) -> np.ndarray:
 #
 # `family`      accumulation | balanced | preservation | baseline
 # `uses_clusters`  whether the cluster diagnostic explains this method's weights
-# `uses_cvg` whether the weights read Pragati's two tapes (the grid-state columns)
 # `rc_target`   the risk-contribution pattern the method AIMS for, which is what
 #               the risk charts must be scored against. "equal" means the method
 #               targets identical risk shares; "cluster" balances between the
@@ -448,14 +439,12 @@ METHOD_SPECS = {
         "tagline": "Identical share per holding — the default, and the bar",
         "uses_clusters": False,
         "uses_momentum": False,
-        "uses_cvg": False,
         "rc_target": "none",
         "needs_covariance": False,
         "evidence": ("The default because nothing beat it reproducibly. Across 36 candidate allocators "
                      "on three universes, no method delivered a reproducible return "
                      "improvement: ERC gave up 0.51%/yr on Nifty 50 and 1.48% on Dow 30. "
-                     "Managed Momentum (v12.1) led it in every era tested, not significantly "
-                     "and partly on late index entrants. Lowest turnover of any style."),
+                     "Lowest turnover of any style."),
         # The evidence above in one line, against Equal Weight — the form the
         # Analytics tab's Style Comparison quotes under a one-window table.
         "long_run": "the bar: no allocator tested on three universes beat it reproducibly on return",
@@ -469,7 +458,6 @@ METHOD_SPECS = {
         "tagline": "Every holding contributes the same share of variance",
         "uses_clusters": False,
         "uses_momentum": False,
-        "uses_cvg": False,
         "rc_target": "equal",
         "needs_covariance": True,
         "evidence": ("The preferred risk-reduction style on return: it beats HRP on the "
@@ -496,7 +484,6 @@ METHOD_SPECS = {
         # diagnostic for HRP too.
         "uses_clusters": False,
         "uses_momentum": False,
-        "uses_cvg": False,
         "rc_target": "cluster",
         "needs_covariance": True,
         "evidence": ("The deepest volatility and drawdown cut of the styles on the in-repo "
@@ -512,98 +499,6 @@ METHOD_SPECS = {
         "long_run": ("-0.54%/yr on Nifty 50 and -2.47% on Dow 30 (2007-26, every name held), "
                      "the deepest volatility and drawdown cut: volatility 18.8 / 14.2, "
                      "max drawdown -49.3% / -36.4%"),
-        "sip_default": False,
-    },
-    # ── Conviction-Value Grid · the 3 × 3 state book ─────────────────────────
-    # pragati.pine read through both of its tapes (both on D · W) —
-    # conviction (who controls: the rows) and value (rich or cheap against the
-    # macro drivers, Samanvaya's engine: the columns) — each name placed in one
-    # of nine states and sized by its state. The pane's histogram runs the rows:
-    # a name changes row only when the push is behind the change (cvgrid.py).
-    # Reads NO covariance: like Equal Weight it allocates over every priced
-    # symbol, and the risk diagnostics are a mirror rather than a target.
-    "CVG": {
-        "label": "Conviction-Value Grid",
-        "short": "CVG",
-        "family": "accumulation",
-        "formula": ("graded 3 × 3 — cell units up: turned 3 · building 1.5 · paid 0.75 · "
-                    "faint: basing 1.5 · idle 1 · stalling 0.75 · down: dislocated 4 · "
-                    "fading 1.5 · distribution 0.25; shaded within each cell by the tapes' "
-                    "intensity; rows move only on a confirmed push"),
-        "tagline": "Nine states from conviction × value; the histogram moves the rows",
-        "uses_clusters": False,
-        "uses_momentum": False,
-        "uses_cvg": True,
-        "rc_target": "none",
-        "needs_covariance": False,
-        "evidence": ("Units re-measured in v8 (research/cvg_reweight.py; monthly, every name "
-                     "held, net of 10bp India / 3bp US costs; chosen before 2018, confirmed "
-                     "after). Against the seed units it adds +0.42%/yr (t 0.6) then +0.98% "
-                     "(t 1.5) on Nifty 50 and +0.55% (t 1.0) then +0.89% (t 1.0) on Dow 30, "
-                     "at lower turnover. Against Equal Weight: Nifty +0.83%/yr (t 2.1) then "
-                     "+0.47% (t 1.3); Dow -0.23% then +0.90% (t 2.4). The ETF book (1-27 "
-                     "funds from 2012) is too thin to test. v12: Dislocated 3 → 4 beat 3 in all "
-                     "three eras (Nifty +0.29 / +0.13 / +0.10 %/yr, Dow +0.04 / +0.02 / +0.07); "
-                     "since v12.2 the conviction tape reads D · W, the tape these figures were "
-                     "measured on (v12.0-12.1 read Ladder down, whose scale shrank as intraday "
-                     "rungs were added). "
-                     "Several designs were tried on these panels, so read every t as directional."),
-        "long_run": ("vs Equal Weight, before / after 2018: Nifty 50 +0.83% / +0.47%/yr, "
-                     "Dow 30 -0.23% / +0.90%/yr — at 1.2-1.3x monthly turnover"),
-        "sip_default": False,
-    },
-    # ── Managed Momentum · the grid plus a crash-managed 12-1 overlay (v12.1) ─
-    # CVG's weights, plus λ · rank(12-1 momentum) / N. The overlay stands down
-    # (strength 0) while the equal-weighted market's 24-month return is
-    # negative, shrinks while its own volatility runs above its long-run median
-    # and grows (up to MMOM_SCALE_CAP) while it runs below. Every name keeps at
-    # least MMOM_FLOOR of its CVG weight. Reads no
-    # covariance, like the grid it is built on; reads a long close history for
-    # the overlay (backdata.fetch_close_history), and stands down to the grid
-    # when that fetch fails (the estimation panel cannot read the gate).
-    "MMOM": {
-        "label": "Managed Momentum",
-        "short": "MMOM",
-        "family": "accumulation",
-        "formula": ("CVG weights + λ · rank(12-1 momentum) / N, λ = 1 · off while the market's "
-                    "24-month return is negative · scaled by min(1.5, median / current) overlay "
-                    "volatility · no name below ¼ of its CVG weight"),
-        "tagline": "The grid plus a 12-1 momentum overlay that stands down in bear markets",
-        "uses_clusters": False,
-        "uses_momentum": True,
-        "uses_cvg": True,
-        "rc_target": "none",
-        "needs_covariance": False,
-        "evidence": ("Found by the v12.1 style search (research/style_search*.py: five families, "
-                     "43 configurations, chosen on 2007-19, run once on 2020+) and re-measured "
-                     "as shipped in v12.2 (research/mmom_ship.py --app-history: the app's close "
-                     "history from 2006, monthly, every name held, net of 10bp India / 3bp US "
-                     "costs, yfinance's unadjusted demergers repaired, the two-sided volatility "
-                     "scale). Against the best of the eight earlier styles and blends in each era "
-                     "(2007-13 / 2014-19 / 2020+): Nifty 50 +0.33 / +1.72 / +1.59 %/yr, Dow 30 "
-                     "+0.77 / +0.57 / +0.29; +2.01 %/yr over Equal Weight on the 27-fund ETF book "
-                     "(19 months). Full span: Nifty 22.36% vs CVG 20.99%, Dow 16.42% vs 15.80%, "
-                     "at CVG's volatility and 1.3x its turnover. None of it is significant: the "
-                     "largest per-era t over the best earlier style is 1.07; over the full span "
-                     "Nifty leads CVG by +1.37 %/yr (t 1.17) and Equal Weight by +2.27 (t 2.11), "
-                     "nominal. The Nifty 2007-13 lead (+0.33 over the staggered HRP) is thin. The "
-                     "shipped form is a post-holdout variant (λ, floor, month-to-date volatility, "
-                     "the two-sided scale) of one of 43 tries, so none of it survives a "
-                     "family-wise correction, nor the survivorship of today's constituents: the "
-                     "2020+ edge sits in a few names, led by late index entrants (BSE, TRENT, BEL, "
-                     "ADANIENT; NVDA, AMZN, CRM). On a point-in-time Dow, its overlay reading only "
-                     "that day's members, it trails CVG by 0.38 %/yr (t -0.45); no point-in-time "
-                     "Nifty was tested. Its crash gate reads today's constituents, a laxer market "
-                     "than an index (an index gate measured worse), at the month's first session. "
-                     "In a book cut below the universe the names held are mostly the 12-1 "
-                     "leaders: ahead of the grid on Nifty 50 at 30 positions, 1.8-4.3 %/yr behind "
-                     "it on the Dow 2020+ at 25-10 positions and 1.9-5.0 behind on a "
-                     "point-in-time Dow (measured on v12.1). In a full book expect CVG-like "
-                     "results, not a reliable premium."),
-        "long_run": ("vs the best of the eight earlier styles and blends, 2007-13 / 2014-19 / 2020+: "
-                     "Nifty 50 +0.33% / +1.72% / +1.59%/yr, Dow 30 +0.77% / +0.57% / +0.29%/yr — "
-                     "none significant (largest per-era t 1.07; full-span Nifty vs CVG t 1.17), "
-                     "every-name books; -0.38%/yr vs CVG on a point-in-time Dow"),
         "sip_default": False,
     },
     # ── Implemented, deliberately NOT surfaced in the UI ─────────────────────
@@ -623,7 +518,6 @@ METHOD_SPECS = {
         "tagline": "Research only — did not survive the ERC solver fix",
         "uses_clusters": False,
         "uses_momentum": True,
-        "uses_cvg": False,
         "rc_target": "equal",
         "needs_covariance": True,
         "evidence": ("NOT SHIPPED. Against a corrected ERC base it beat equal weight in 0 "
@@ -636,10 +530,9 @@ METHOD_SPECS = {
 }
 
 # Selectable styles, in display order: the default first, then the
-# risk-reduction family ordered by how well it does its job per unit of trading,
-# then the styles that read the tape: the grid, and the grid with its momentum
-# overlay. ERC_MOM is implemented but intentionally absent — see its spec above.
-METHOD_ORDER = ("EQUAL", "ERC", "HRP", "CVG", "MMOM")
+# risk-reduction family ordered by how well it does its job per unit of trading.
+# ERC_MOM is implemented but intentionally absent — see its spec above.
+METHOD_ORDER = ("EQUAL", "ERC", "HRP")
 METHODS = METHOD_ORDER
 
 # Momentum tilt strength. 0.5 is the measured setting; the parameter surface is
@@ -648,199 +541,6 @@ METHODS = METHOD_ORDER
 MOMENTUM_LAMBDA = 0.5
 MOMENTUM_LOOKBACK = 252
 MOMENTUM_SKIP = 21
-
-# ── Managed Momentum · the grid plus a crash-managed 12-1 momentum overlay ────
-# Found by the v12.1 style search (research/style_search*.py) and re-measured as
-# shipped in research/mmom_ship.py. The overlay is the literature's, at its own
-# defaults: 12-1 momentum (Jegadeesh & Titman 1993) added on top of CVG's
-# weights — value and momentum are negatively correlated everywhere (Asness,
-# Moskowitz & Pedersen 2013) — switched OFF while the equal-weighted market's
-# 24-month return is negative, the state in which momentum crashes (Daniel &
-# Moskowitz 2016), and scaled DOWN while the overlay's own six-month volatility
-# runs above its long-run median, and UP, to 1.5x, while it runs below (Barroso & Santa-Clara
-# 2015; two-sided since v12.2).
-MMOM_LAMBDA = 1.0          # overlay strength: weight_i = cvg_i + λ · rank_i / N
-MMOM_LOOK = 252            # 12-1: the total return from t-252 to t-21
-MMOM_SKIP = 21
-MMOM_GATE = 504            # bars of market return the bear gate reads (24 months)
-MMOM_VOL_WIN = 126         # bars of overlay return its volatility is measured over
-MMOM_FLOOR = 0.25          # no name below this share of its CVG weight: the grid's own floor
-                           # to neutral (Distribution 0.25 : Idle 1), so every weight stays positive
-                           # and the book always fills its count (held only if top-N reaches it)
-MMOM_MIN_RANKED = 10       # fewer momentum-scored names than this: no overlay
-MMOM_MIN_VOL_MONTHS = 7    # month-start volatility readings before the scale may act
-MMOM_HISTORY_START = "2006-01-01"   # the close history app.py fetches for the overlay
-MMOM_MIN_HISTORY = MMOM_GATE + 1    # rows before the overlay may act, whatever the source (MM-B5)
-# The volatility scale is min(MMOM_SCALE_CAP, median / now): the overlay shrinks while its own
-# volatility runs above its long-run median and grows, up to 1.5x, while it runs below — volatility
-# targeting in both directions (Barroso & Santa-Clara 2015; Moreira & Muir 2017). Pre-registered
-# (research/audit_mmom.py, MM-O1 BSC_UP15) and re-measured on the v12.2 code and data: ahead of the
-# one-sided scale (cap 1) in all six era cells — Nifty 50 +0.28 / +0.14 / +0.22 %/yr, Dow 30 +0.05 /
-# +0.18 / +0.01 — and level on the point-in-time Dow (+0.006); none significant.
-MMOM_SCALE_CAP = 1.5
-# The windows above count ROWS of a 5-day calendar. A panel with > 300 rows in its trailing
-# 365 days (Crypto, or a Custom List mixing 7-day and 5-day calendars) reads the same spans
-# in 7-day rows; read as 5-day rows they were ~8-1 momentum, a 16.5-month gate and a 4-month
-# volatility window, and the Crypto gate read shut at -22% on a +26% market (MM-B2).
-MMOM_WINDOWS_7D = dict(look=365, skip=30, gate=730, vol_win=183, ann=365.0)
-
-
-def mmom_windows(index) -> dict:
-    """The overlay's row windows for the panel's own calendar (rows in the trailing 365 days)."""
-    ix = pd.DatetimeIndex(index) if len(index) else pd.DatetimeIndex([])
-    bpy = int((ix > ix[-1] - pd.Timedelta(days=365)).sum()) if len(ix) else 0
-    if bpy > 300:
-        return dict(MMOM_WINDOWS_7D, bpy=bpy, calendar="7-day")
-    return dict(look=MMOM_LOOK, skip=MMOM_SKIP, gate=MMOM_GATE, vol_win=MMOM_VOL_WIN, ann=252.0,
-                bpy=bpy, calendar="5-day")
-
-
-def mmom_ranks(score: pd.Series, index) -> pd.Series:
-    """Centred cross-sectional rank in [-1, 1] over the names with a score; the rest sit at 0."""
-    s = pd.to_numeric(score.reindex(index), errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    if len(s) < MMOM_MIN_RANKED:
-        return pd.Series(0.0, index=index)
-    r = s.rank(method="average")
-    return (2.0 * (r - 1.0) / (len(s) - 1.0) - 1.0).reindex(index).fillna(0.0)
-
-
-def mmom_momentum(closes: pd.DataFrame, names, look: int = MMOM_LOOK,
-                  skip: int = MMOM_SKIP) -> pd.Series:
-    """12-1 total return as of the panel's last row. `closes` carried over gaps of <= 5 sessions."""
-    if closes is None or len(closes) < look + 1:
-        return pd.Series(np.nan, index=list(names))
-    p1 = closes.iloc[-1 - skip].reindex(names)
-    p0 = closes.iloc[-1 - look].reindex(names)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return (p1 / p0 - 1.0).replace([np.inf, -np.inf], np.nan)
-
-
-def mmom_gate(prices: pd.DataFrame, gate: int = MMOM_GATE,
-              look: int = MMOM_LOOK) -> Tuple[float, float]:
-    """(gate, market return): 0 while the equal-weighted market's 24-month return is negative.
-
-    The market is the mean daily return of every name priced that day. With less than a year
-    of history the gate cannot be read and stays open (1); with less than 24 months it reads
-    what there is — app.py logs the span either way.
-    """
-    # Closes carried over gaps of <= 5 sessions first, as momentum and the research panel read
-    # them: uncarried, every return across a missing quote was lost (MM-B1).
-    mkt = prices.ffill(limit=5).pct_change(fill_method=None).mean(axis=1).dropna()
-    n = min(gate, len(mkt))
-    if n < look:
-        return 1.0, float("nan")
-    ret = float(np.prod(1.0 + mkt.iloc[-n:].to_numpy()) - 1.0)
-    return (0.0 if ret < 0.0 else 1.0), ret
-
-
-def mmom_scale(prices: pd.DataFrame, look: int = MMOM_LOOK, skip: int = MMOM_SKIP,
-               vol_win: int = MMOM_VOL_WIN, ann: float = 252.0) -> Tuple[float, float, float, int]:
-    """(scale, current vol, median vol, months): Barroso & Santa-Clara's scale for the overlay.
-
-    The unit overlay — the rank / N weights re-formed at every month start and held to the next,
-    the current month to date included — is priced from the closes; its 126-day realised
-    volatility today is set against the median of that volatility at every month start up to
-    and including today (an expanding median: nothing after today enters it). The scale is
-    min(MMOM_SCALE_CAP, median / today): it shrinks the overlay while its volatility runs above
-    the median and grows it, up to 1.5x, while it runs below. Below MMOM_MIN_VOL_MONTHS
-    readings it stays at 1.
-    """
-    if prices is None or len(prices) == 0 or not isinstance(prices.index, pd.DatetimeIndex):
-        return 1.0, float("nan"), float("nan"), 0
-    idx = prices.index
-    starts = list(pd.Series(idx, index=idx).groupby([idx.year, idx.month]).first())
-    if not starts:
-        return 1.0, float("nan"), float("nan"), 0
-    pos = {d: i for i, d in enumerate(idx)}
-    carried = prices.ffill(limit=5)
-    rets = carried.pct_change(fill_method=None)                # MM-B1: carried, as the gate
-    bounds = list(zip(starts[:-1], starts[1:]))
-    if idx[-1] > starts[-1]:
-        bounds.append((starts[-1], idx[-1]))                 # the month to date
-    pieces = []
-    for m0, m1 in bounds:
-        i0, i1 = pos[m0], pos[m1]
-        if i0 < look:
-            continue
-        row = prices.iloc[i0]
-        names = prices.columns[row.notna() & (row > 0)]
-        u = mmom_ranks(mmom_momentum(carried.iloc[: i0 + 1], names, look, skip), names)
-        if not (u != 0).any():
-            continue
-        rr = rets.iloc[i0 + 1: i1 + 1].reindex(columns=names).fillna(0.0)
-        pieces.append(pd.Series(rr.to_numpy() @ (u.to_numpy() / len(names)), index=rr.index))
-    if not pieces:
-        return 1.0, float("nan"), float("nan"), 0
-    sig = pd.concat(pieces).rolling(vol_win).std(ddof=1) * np.sqrt(ann)
-    at = sig.reindex([d for d in starts if d in sig.index]).dropna()
-    now = float(sig.iloc[-1])
-    if len(at) < MMOM_MIN_VOL_MONTHS or not np.isfinite(now) or now <= 0:
-        return 1.0, now, float(at.median()) if len(at) else float("nan"), int(len(at))
-    target = float(at.median())
-    return float(min(MMOM_SCALE_CAP, target / now)), now, target, int(len(at))
-
-
-def _close_panel(prices: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
-    """A caller's close panel made safe to slice by date: a naive DatetimeIndex, sorted, one row
-    per day and one column per symbol (the last of each, as the snapshot panel keeps). None when
-    it is empty or its index is not dates."""
-    if prices is None or len(prices) == 0:
-        return None
-    try:
-        ix = pd.DatetimeIndex(pd.to_datetime(prices.index))
-    except (TypeError, ValueError):
-        return None
-    if ix.tz is not None:
-        ix = ix.tz_localize(None)
-    p = prices.set_axis(ix, axis=0)
-    p = p.loc[:, ~p.columns.duplicated(keep="last")]
-    return p[~p.index.duplicated(keep="last")].sort_index()
-
-
-def mmom_overlay(prices: pd.DataFrame, names) -> Tuple[pd.Series, pd.Series, dict]:
-    """(rank, 12-1 momentum, diagnostics) — the overlay Managed Momentum adds to CVG.
-
-    `prices` is a wide close panel, date × symbol, ending on the rebalance date: every name in
-    the universe (the gate's market), not only `names` (the ranks).
-    """
-    names = list(names)
-    if prices is None:
-        prices = pd.DataFrame()
-    if len(prices) and not isinstance(prices.index, pd.DatetimeIndex):
-        try:
-            prices = prices.set_axis(pd.DatetimeIndex(pd.to_datetime(prices.index)), axis=0)
-        except (TypeError, ValueError):
-            prices = pd.DataFrame()
-    if len(prices):
-        # A close <= 0 is not a price (CL=F printed -37.63 on 2020-04-20): read as one it made
-        # -306% and -127% "returns" that shut the gate and doubled the overlay's vol (MM-B7).
-        prices = prices.where(prices > 0)
-    win = mmom_windows(prices.index)
-    mom = mmom_momentum(prices.ffill(limit=5), names, win["look"], win["skip"])
-    rank = mmom_ranks(mom, names)
-    # The bear state is formed monthly (Daniel & Moskowitz), as every measured book read it: the
-    # gate reads the market as of the first session of the run date's month and holds through
-    # the month. Read daily, a book built mid-month near a flip swung between momentum and the
-    # pure grid from one day to the next (36.5% one-day turnover on Nifty 50, 2026-09-28; MM-B6).
-    # Momentum and the volatility scale still read the run date.
-    m0 = None
-    if len(prices):
-        t = prices.index[-1]
-        m0 = prices.index[(prices.index.year == t.year) & (prices.index.month == t.month)][0]
-    head = prices.loc[:m0] if m0 is not None else prices
-    gate, mkt = mmom_gate(head, win["gate"], win["look"])
-    scale, vol, vol_med, vol_months = (mmom_scale(prices, win["look"], win["skip"], win["vol_win"],
-                                                  win["ann"])
-                                       if gate > 0 else (1.0, float("nan"), float("nan"), 0))
-    return rank, mom, {
-        "gate": gate, "market_24m": mkt, "scale": scale, "strength": MMOM_LAMBDA * gate * scale,
-        "overlay_vol": vol, "overlay_vol_median": vol_med, "vol_months": vol_months,
-        "ranked": int(mom.notna().sum()), "history_days": int(len(prices)),
-        "history_start": prices.index[0] if len(prices) else None,
-        "windows": win, "history_needed": int(win["gate"] + 1), "gate_read_on": m0,
-        "gate_rows": int(len(head)),
-    }
-
 
 def method_spec(method: str) -> dict:
     """Registry lookup that never raises — unknown methods degrade to Equal Weight."""
@@ -862,8 +562,8 @@ def _apply_cap(w: np.ndarray, cap: float) -> np.ndarray:
     the smallest weights gain the most, which pulls the uncapped tail toward
     equal weight ([0.5, 0.3, 0.2] at a 0.4 cap gives [0.4, 0.333, 0.267], where
     pro rata gives [0.4, 0.36, 0.24]). Pro rata was measured within noise (|Δ| <=
-    0.12%/yr on any style or era, top-15 to every name; research/audit_cvg.py
-    CVG-B11, audit_hrp.py D6), so the headroom rule is kept. Feasibility is checked first: capping n names at `cap` can only
+    0.12%/yr on any style or era, top-15 to every name; research/audit_hrp.py
+    D6), so the headroom rule is kept. Feasibility is checked first: capping n names at `cap` can only
     reach 100% when n * cap >= 1, so when the allocator concentrates into too
     few names the cap is relaxed to the tightest value that is satisfiable.
     """
@@ -1000,106 +700,6 @@ def build_price_matrix(history: Sequence[Tuple[object, pd.DataFrame]],
     return px
 
 
-# Snapshot column → the name the book carries it under. Numeric readings first,
-# then the two text fields.
-CVG_FIELDS = {
-    "conv tape": "conviction",               # the conviction tape (D · W)
-    "conv daily": "conviction_daily",   # its daily rung (the pane's trace)
-    "conv weekly": "conviction_weekly", # its reconstructed weekly rung
-    "conv ladder down": "ladder_down",       # 1 = the tape read Ladder down (off since v12.2), 0 = D · W
-    "conv hist": "hist",                     # the pane's histogram, native
-    "conv push": "push",                     # the histogram as drawn, −1 … +1
-    "value tape": "value_tape",              # the value tape, D · W (+ rich)
-    "value daily": "value_daily",       # Samanvaya's reading on the chart
-    "value hedge": "hedge",                   # share of the macro hedge applied
-    "conv push gate": "push_gate",           # +1 / −1 a confirmed push, 0 none
-    "cvg state days": "state_days",         # days in the current state
-    "cvg held": "held_row",                 # 1 = row held against the tape
-}
-CVG_TEXT = {
-    "cvg state": "state",                   # one of cvgrid.STATES
-    "conv push tier": "push_tier",           # e.g. "up · impulse · quiet"
-    "value drivers": "drivers",               # the hedge's drivers in force
-}
-
-
-def cvg_readings(history: Sequence[Tuple[object, pd.DataFrame]],
-                    symbols: List[str]) -> pd.DataFrame:
-    """Each symbol's grid readings as of the LAST snapshot in `history`.
-
-    backdata computes them over each symbol's full OHLCV history, warm-up
-    included — which is why they arrive as snapshot columns rather than being
-    rebuilt here: the snapshots carry close prices only, and start after the
-    warm-up both tapes need. A name with no reading — listed too recently, or
-    a panel cached before the columns existed — is UNREAD, never guessed.
-    """
-    out = pd.DataFrame(np.nan, index=list(symbols), columns=list(CVG_FIELDS.values()))
-    for name in CVG_TEXT.values():
-        out[name] = None
-    if history:
-        snap = history[-1][1]
-        if snap is not None and not snap.empty and "symbol" in snap.columns:
-            snap = snap.drop_duplicates("symbol", keep="last").set_index("symbol")
-            for col, name in CVG_FIELDS.items():
-                if col in snap.columns:
-                    out[name] = pd.to_numeric(snap[col], errors="coerce").reindex(out.index)
-            for col, name in CVG_TEXT.items():
-                if col in snap.columns:
-                    out[name] = snap[col].reindex(out.index)
-    st = out["state"].where(out["state"].isin(list(STATE_UNITS)), "UNREAD")
-    out["state"] = st.fillna("UNREAD").astype(str)
-    return out
-
-
-# Read the map GRADED (each name shaded within its cell, as the Pine draws the
-# tapes) rather than as flat cells. The research harness switches it off to
-# measure what the grading itself adds.
-CVG_GRADED: bool = True
-
-
-def cvg_units(readings: pd.DataFrame) -> pd.Series:
-    """Each name's weight in units on the 3 × 3 map (cvgrid.graded_units).
-
-    Flat cell units when CVG_GRADED is off. The histogram has already done
-    its work in deciding the state; on the graded map it also decides how
-    firmly a HELD row keeps its cell.
-    """
-    if not CVG_GRADED:
-        return r_units_flat(readings)
-    conv = pd.to_numeric(readings["conviction"], errors="coerce")
-    val = pd.to_numeric(readings["value_tape"], errors="coerce")
-    push = pd.to_numeric(readings["push"], errors="coerce")
-    return pd.Series([graded_units(str(s), c, v, p) for s, c, v, p in
-                      zip(readings["state"], conv, val, push)], index=readings.index, dtype=float)
-
-
-def r_units_flat(readings: pd.DataFrame) -> pd.Series:
-    """Each name's cell units, unshaded."""
-    return readings["state"].map(STATE_UNITS).fillna(STATE_UNITS["UNREAD"]).astype(float)
-
-
-def cvg_weights(readings: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
-    """Weights from each name's place on the 3 × 3 map, and the fill order.
-
-    Selection follows the weight, as for every allocator here: the heaviest
-    names first. Ties fall back to the states' own order (units, then the grid)
-    and then to the room between control and price, `conviction − value`, the
-    one ordering both tapes agree on. Every unit is strictly positive, so the
-    book always holds the N it was asked for: a punished name sits at the
-    floor, it is never dropped.
-    """
-    r = readings.copy()
-    units = cvg_units(r)
-    room = (pd.to_numeric(r["conviction"], errors="coerce")
-            - pd.to_numeric(r["value_tape"], errors="coerce")).fillna(0.0)
-    key = pd.DataFrame({"units": -units,
-                        "order": r["state"].map(STATE_ORDER).fillna(len(STATE_ORDER)),
-                        "room": -room}, index=r.index)
-    order = list(key.sort_values(["units", "order", "room"], kind="stable").index)
-    w = units.reindex(order).to_numpy(dtype=float)
-    return w / w.sum(), order
-
-
 def _is_priced(price: object) -> bool:
     """A usable, positive, finite price — the only input equal weight requires."""
     try:
@@ -1157,17 +757,13 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                           method: str = "HRP",
                           max_pos_pct: float = 0.10,
                           lookback: int = 252,
-                          price_history: Optional[pd.DataFrame] = None,
                           ) -> pd.DataFrame:
     """Curate a portfolio with one of the registered styles (METHOD_SPECS).
 
     Selection AND weighting both come from the allocator: weights are computed
     over every eligible symbol, the top `num_positions` by weight are kept, and
     those are renormalized. Equal Weight, ERC and HRP forecast nothing (ERC and
-    HRP weight from the covariance); the Conviction-Value Grid sizes by the
-    tape's state, and Managed Momentum adds a 12-1 momentum overlay to it,
-    reading `price_history` — a wide close panel, date × symbol, cut here to the
-    book's date — and standing down to the grid without it.
+    HRP weight from the covariance, Equal Weight from nothing).
 
     ELIGIBILITY IS PER-STYLE, because it is a property of the weight formula.
     Styles that read the covariance (`needs_covariance` in METHOD_SPECS) can only
@@ -1179,9 +775,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     of book weight they describe (1.0 for every covariance-driven style).
 
     A per-position cap is applied (relaxed to 1/n when n makes it infeasible),
-    but NO book-level floor: a floor would fight the method. (Managed Momentum's
-    MMOM_FLOOR is inside its weight formula — no name below a quarter of its grid
-    weight — not a floor on the book.) The entire point is that a
+    but NO book-level floor: a floor would fight the method. The entire point is that a
     redundant asset — one whose risk is already carried by a cluster peer —
     SHOULD receive a small weight. Forcing it up to 1% would re-introduce the
     concentration the clustering exists to remove.
@@ -1278,9 +872,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # do NOT share is the eligibility rule above, which is a property of the
     # weight formula rather than a stylistic choice.
     mom = pd.Series(np.nan, index=alloc_names)
-    _mmom: Optional[dict] = None
     _hrp_windows: Optional[List[int]] = None
-    _floored_names: set = set()
     # The covariance the ALLOCATOR optimised against. The convergence diagnostic
     # below must be measured on this matrix, not on the sample covariance used
     # for reporting: ERC solves on the shrunk estimate, so scoring its solution
@@ -1288,57 +880,9 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     # that in fact converged exactly. Two different matrices, two different
     # questions — keep them apart.
     solver_cov = cov
-    # The grid's readings, per allocation name. Read only on a CVG run: every
-    # other style's output columns stay empty, so no chart can imply a reading
-    # the book did not use.
-    _uses_dh = bool(_spec.get("uses_cvg", False))
-    dh: Optional[pd.DataFrame] = None
 
     if _m == "EQUAL":
         w = np.full(len(alloc_names), 1.0 / len(alloc_names))
-    elif _m == "CVG":
-        # Sized by STATE from the two tapes; no covariance is read. The
-        # allocation names are REORDERED into the order the book fills in, so
-        # the stable top-N below takes core names first and the floor last.
-        _read = cvg_readings(history, alloc_names)
-        w, alloc_names = cvg_weights(_read)
-        dh = _read.reindex(alloc_names)
-    elif _m == "MMOM":
-        # The grid's weights, then the momentum overlay on top: + λ · rank / N,
-        # its strength set by the bear gate and the volatility scale, no name
-        # below MMOM_FLOOR of its CVG weight. The overlay reads `price_history`
-        # (the long close panel) when given, else the estimation panel — whose
-        # ~400 sessions (~19 months) cannot read the gate's 24 months, so the
-        # overlay then stands down to the grid (nco_mmom_stood_down says why).
-        _read = cvg_readings(history, alloc_names)
-        _c, alloc_names = cvg_weights(_read)
-        dh = _read.reindex(alloc_names)
-        # Never past the book's own date: a close history cached to a later day
-        # must not lend the overlay tomorrow's market.
-        _ph = _close_panel(price_history)
-        if _ph is not None and not _ph.empty and history:
-            _ph = _ph.loc[:pd.Timestamp(history[-1][0]).normalize()]
-        _from_close = _ph is not None and not _ph.empty
-        _px = _ph if _from_close else build_price_matrix(history)
-        _rank, _mom, _mmom = mmom_overlay(_px, alloc_names)
-        _last = (_px.ffill(limit=5).iloc[-1] if len(_px) else pd.Series(dtype=float))
-        _mmom["coverage"] = float(np.mean([np.isfinite(float(_last.get(s, np.nan)))
-                                           for s in alloc_names])) if alloc_names else 0.0
-        _mmom["source"] = "close history" if _from_close else "estimation panel"
-        _mmom["stood_down"] = None
-        # A history short of the gate's 24 months (the ~400-session estimation panel, a run
-        # date before ~2008, a Custom List of recent listings) cannot read its own crash
-        # guard: the overlay stands down to the grid rather than run at full strength
-        # unguarded, whichever history it read (MM-B5; it used to test the fallback only).
-        if _mmom["gate_rows"] < _mmom["history_needed"]:
-            _mmom.update(strength=0.0, stood_down=f"{_mmom['source']} too short for the 24-month gate")
-        _cw = pd.Series(_c, index=alloc_names)
-        _tilted = _cw + _mmom["strength"] * _rank / len(_cw)
-        _floored = _tilted < MMOM_FLOOR * _cw
-        _floored_names = set(_floored.index[_floored.to_numpy()])
-        w = np.maximum(_tilted, MMOM_FLOOR * _cw).to_numpy(dtype=float)
-        mom = _mom.reindex(alloc_names)
-        _mmom["floored"] = int(len(_floored_names))
     elif cov is None or corr is None:
         # Unreachable as the registry stands: every covariance-driven style
         # returned above when the covariance was not estimable. Kept as a hard
@@ -1412,11 +956,6 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     cap_eff = max(max_pos_pct, 1.0 / n)
 
     sel = list(chosen.index)
-    if _mmom is not None:
-        # The floor is counted over the universe before top-N; this is how many of those the
-        # book actually holds: usually none below the universe size, though a floored
-        # Dislocated name can outweigh an unfloored Idle one and make the cut.
-        _mmom["floored_held"] = int(sum(s in _floored_names for s in sel))
     # Which HOLDINGS carry a covariance estimate. Identical to `sel` for every
     # covariance-driven style. On an equal-weight book it can be a strict subset,
     # and the diagnostics below are then reported over that subset with the share
@@ -1463,12 +1002,6 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
                                 for s, ok in zip(sel, covered) if ok]
 
     px_arr = np.array([float(prices.get(s, np.nan)) for s in sel], dtype=float)
-    # Grid readings per holding, for the same reason momentum is carried: the
-    # table and charts show the reading that set the weight, not a
-    # re-derivation. Empty for every other style.
-    _dh_sel = (dh.reindex(sel) if dh is not None
-               else pd.DataFrame(index=sel, columns=[*CVG_FIELDS.values(),
-                                                     *CVG_TEXT.values()]))
     # Momentum is carried per-holding so the risk profile chart can show the
     # tilt that was actually applied, not a re-derivation of it. Methods that do
     # not use momentum emit NaN, and the chart drops the row.
@@ -1486,13 +1019,6 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         "corr_to_book": corr_to_book,
         "momentum": _mom_sel.to_numpy(dtype=float),
         "momentum_z": _mom_z.to_numpy(dtype=float),
-        **{name: pd.to_numeric(_dh_sel[name], errors="coerce").to_numpy(dtype=float)
-           for name in CVG_FIELDS.values()},
-        **{name: _dh_sel[name].to_numpy(dtype=object) for name in CVG_TEXT.values()},
-        "state_units": (_dh_sel["state"].map(STATE_UNITS).to_numpy(dtype=float)
-                        if dh is not None else np.full(len(sel), np.nan)),
-        "cvg_units": (cvg_units(_dh_sel).to_numpy(dtype=float)
-                         if dh is not None else np.full(len(sel), np.nan)),
     })
     out = out[out["price"].notna() & (out["price"] > 0)].copy()
     if out.empty:
@@ -1500,10 +1026,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out["weightage_pct"] = out["weightage_pct"] / out["weightage_pct"].sum() * 100.0
     out["units"] = np.floor((capital * out["weightage_pct"] / 100.0) / out["price"])
     # Flooring to whole shares alone left up to ~14% of capital idle on a Rs 5L, 50-name
-    # book (91.6% invested on average 2020-26, a -1.6%/yr cash drag on CVG); every
-    # measured figure assumes a fully invested book. The leftover is spent one share at a
-    # time on the holding furthest below its target value, never past the position cap,
-    # until no further share is affordable (research/audit_cvg.py, CVG-B3).
+    # book (91.6% invested on average 2020-26); every measured figure assumes a fully
+    # invested book. The leftover is spent one share at a time on the holding furthest
+    # below its target value, never past the position cap, until no further share is
+    # affordable (the v12.2 audit).
     _units, _px_u = out["units"].to_numpy(dtype=float), out["price"].to_numpy(dtype=float)
     _target = capital * out["weightage_pct"].to_numpy(dtype=float) / 100.0
     _cap_value = max(cap_eff, 1.0 / len(out)) * capital + 1e-9
@@ -1548,8 +1074,8 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
     out["value"] = out["units"] * out["price"]
     # Rows that hold no share even after the top-up (the price exceeds the cash left or the
     # cap): in the book, unfunded. Any
-    # style can produce them (a small weight on an expensive name); the grid's floor and
-    # Managed Momentum's make them likelier. Recorded so the app can say so, never hidden.
+    # style can produce them (a small weight on an expensive name). Recorded so the app
+    # can say so, never hidden.
     _unfunded = out.loc[out["units"] <= 0, "symbol"].astype(str).tolist()
 
     out.attrs["nco_method"] = _m
@@ -1632,65 +1158,10 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         else "universe" if len(alloc_names) <= num_positions or n_nonzero >= num_positions
         else "allocator_zeroed")
     out.attrs["nco_momentum_names"] = int(_mom_sel.notna().sum())
-    out.attrs["nco_momentum_lambda"] = (float(_mmom["strength"]) if _mmom is not None
-                                        else float(MOMENTUM_LAMBDA) if _spec["uses_momentum"]
+    out.attrs["nco_momentum_lambda"] = (float(MOMENTUM_LAMBDA) if _spec["uses_momentum"]
                                         else 0.0)
     out.attrs["nco_momentum_applied"] = bool(
-        _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2
-        and (_mmom is None or (_mmom["strength"] > 0 and _mmom["ranked"] >= MMOM_MIN_RANKED)))
-    # Managed Momentum's overlay, as applied today: the bear gate (1 open, 0 shut) and the
-    # market return it read, the volatility scale and the readings behind it, the strength
-    # that results (λ · gate · scale), how many names were ranked and how many sat at the
-    # floor, and which history the overlay read. Absent for every other style.
-    if _mmom is not None:
-        for _k, _v in _mmom.items():
-            out.attrs[f"nco_mmom_{_k}"] = _v
-        out.attrs["nco_mmom_lambda"] = float(MMOM_LAMBDA)
-        out.attrs["nco_mmom_floor"] = float(MMOM_FLOOR)
-        out.attrs["nco_mmom_history_short"] = bool(_mmom["gate_rows"] < _mmom["history_needed"])
-    # The grid, over the WHOLE allocation universe as well as the book: the states
-    # every name sits in (the census), the readings behind them (for the conviction-value
-    # map and the watchlist, which show names the book holds at the floor or not
-    # at all), and how far the value tape's macro hedge was earned. `applied` is
-    # False when no name had a reading — every name is then UNREAD at the same unit
-    # (1), the book is 1/N, and the UI must say so. Beside read names 1 unit is BELOW
-    # the read average (~1.29 graded units on Nifty and Dow, 1.34 on the ETF book): a
-    # young listing or fund is held at ~0.78x until both its tapes calibrate (CVG-B13).
-    out.attrs["nco_uses_cvg"] = _uses_dh
-    if _uses_dh and dh is not None:
-        _held = set(out["symbol"])
-        _uni = dh.assign(symbol=list(dh.index), held=[s in _held for s in dh.index])
-        _uni["weight_pct"] = _uni["symbol"].map(
-            dict(zip(out["symbol"], out["weightage_pct"]))).fillna(0.0)
-        _uni["units"] = cvg_units(_uni).to_numpy(dtype=float)
-        _read = int((_uni["state"] != "UNREAD").sum())
-        out.attrs["nco_cvg_universe"] = _uni.reset_index(drop=True)
-        out.attrs["nco_cvg_names"] = _read
-        out.attrs["nco_cvg_census"] = {k: int(v) for k, v in
-                                          _uni["state"].value_counts().items()}
-        out.attrs["nco_cvg_book_census"] = {k: int(v) for k, v in
-                                               out["state"].value_counts().items()}
-        # The histogram's part: how many names it could read, how many it
-        # confirms each way, how many it cannot (turning or quiet), and how
-        # many rows it is holding against their tape right now.
-        _g = pd.to_numeric(_uni["push_gate"], errors="coerce")
-        out.attrs["nco_cvg_push_read"] = int(_g.notna().sum())
-        out.attrs["nco_cvg_confirm_up"] = int((_g > 0).sum())
-        out.attrs["nco_cvg_confirm_down"] = int((_g < 0).sum())
-        out.attrs["nco_cvg_unconfirmed"] = int((_g == 0).sum())
-        out.attrs["nco_cvg_quiet"] = int(_uni["push_tier"].astype(str).str.contains("quiet").sum())
-        out.attrs["nco_cvg_held"] = int((pd.to_numeric(_uni["held_row"], errors="coerce") > 0).sum())
-        # The conviction ladder each name read today: DOWN (intraday rungs) or D · W ↺.
-        _ld = pd.to_numeric(_uni["ladder_down"] if "ladder_down" in _uni else pd.Series(dtype=float), errors="coerce")
-        out.attrs["nco_cvg_ladder_down"] = int((_ld == 1).sum())
-        out.attrs["nco_cvg_ladder_up"] = int((_ld == 0).sum())
-        out.attrs["nco_cvg_graded"] = CVG_GRADED
-        _h = pd.to_numeric(_uni["hedge"], errors="coerce").dropna()
-        out.attrs["nco_cvg_hedge_median"] = float(_h.median()) if len(_h) else float("nan")
-        out.attrs["nco_cvg_applied"] = _read > 0
-    else:
-        out.attrs["nco_cvg_names"] = 0
-        out.attrs["nco_cvg_applied"] = False
+        _spec["uses_momentum"] and _mom_sel.notna().sum() >= 2)
     # Full correlation matrix plus the cluster ordering, so the UI can draw the
     # correlation structure of the estimation universe. Ordering by the Ward
     # clusters is what makes the block structure visible; it is a diagnostic for
@@ -1704,7 +1175,7 @@ def compute_nco_portfolio(history: Sequence[Tuple[object, pd.DataFrame]],
         out.attrs["cluster_order"] = _order
         out.attrs["cluster_labels"] = dict(lab_by_name)
     # Stable, so ties keep the order the allocator filled them in: universe
-    # order for 1/N, state-then-room for the grid.
+    # order for 1/N.
     return out.sort_values("weightage_pct", ascending=False, kind="stable").reset_index(drop=True)
 
 
@@ -1716,21 +1187,8 @@ __all__ = [
     "MOMENTUM_LAMBDA",
     "MOMENTUM_LOOKBACK",
     "MOMENTUM_SKIP",
-    "MMOM_LAMBDA",
-    "MMOM_FLOOR",
-    "MMOM_GATE",
-    "MMOM_HISTORY_START",
-    "MMOM_MIN_HISTORY",
-    "mmom_windows",
     "hrp_staggered",
     "HRP_WINDOWS",
-    "mmom_overlay",
-    "mmom_gate",
-    "mmom_scale",
-    "mmom_momentum",
-    "mmom_ranks",
-    "CVG_FIELDS",
-    "CVG_TEXT",
     "correlation_distance",
     "inverse_variance",
     "ledoit_wolf",
@@ -1738,9 +1196,6 @@ __all__ = [
     "risk_contributions",
     "hrp_weights",
     "erc_weights",
-    "cvg_readings",
-    "cvg_units",
-    "cvg_weights",
     "momentum_scores",
     "rank_z",
     "apply_momentum_tilt",

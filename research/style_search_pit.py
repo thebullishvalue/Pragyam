@@ -1,6 +1,11 @@
 """
 research/style_search_pit.py — the Dow 30 holdout re-read on point-in-time membership (a sensitivity).
 
+v13.0 removed the Conviction-Value Grid and Managed Momentum from the product, and the
+holdout's finalists (style_search_holdout.py) with them. main() now reports EW, ERC, HRP and
+HRP+EW only; the CVG and managed_mom figures recorded below are the results as run before
+that, and are kept as the record. build() and member() also serve research/audit_hrp.py.
+
 REGISTERED AFTER THE HOLDOUT WAS SEEN — a check on it, not a new test. The style search's holdout
 (research/style_search_holdout.py) found managed_mom clearing all six cells. Its E3 margin over CVG
 on the Dow (+2.0 pts summed) is a small residual of larger bets, led by NVDA (+5.8), with NKE +2.0,
@@ -50,7 +55,6 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import style_blends as sb                         # noqa: E402
 import style_search as ss                         # noqa: E402
-import style_search_holdout as H                  # noqa: E402
 
 ADDED = ("AXP", "INTC", "PFE", "XOM", "RTX")
 JOINED = {"CRM": "2020-08-31", "AMGN": "2020-08-31", "HON": "2020-08-31", "AMZN": "2024-02-26",
@@ -112,9 +116,8 @@ def main() -> None:
         self.priced = pd.Index([s for s in self.priced if member(s, a)])
     ss.Ctx.__init__ = pit_init
     base = ss.baselines(d)
-    cands = {H._label(p, n, q): ss.run(H.build_fn(p, n, q, f, d), d) for p, n, q, f in H.FINALISTS}
     ss.Ctx.__init__ = init
-    e3 = {k: ss._era(v, "2020-01-01", None) for k, v in {**base, **cands}.items()}
+    e3 = {k: ss._era(v, "2020-01-01", None) for k, v in base.items()}
     t = pd.DataFrame({k: ss.metrics(v) for k, v in e3.items()}).T
     best = t.loc[list(ss.BASE), "cagr"].idxmax()
     t["vs_best"] = t["cagr"] - t.loc[best, "cagr"]

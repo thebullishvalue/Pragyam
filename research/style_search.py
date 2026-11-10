@@ -1,6 +1,10 @@
 """
 research/style_search.py — the shared harness for the style search: is there a style that beats all eight?
 
+v13.0 removed the Conviction-Value Grid and Managed Momentum from the product. The baselines
+are now EW, ERC, HRP and HRP+EW only; the CVG figures recorded below are the results as run
+before that, and are kept as the record.
+
 THE QUESTION
 ────────────
 research/style_blends.py and research/etf_blends.py measured the four shipped styles (EW, ERC, HRP,
@@ -65,7 +69,7 @@ DISC_END = pd.Timestamp("2020-01-01")
 UNIV = {"nifty_50": ("Nifty 50", 10.0), "dow_30": ("Dow 30", 3.0), "etf_27": ("ETF book (27)", 10.0)}
 ETF_YOUNG = ("NIFTYIETF", "CHEMICAL", "GROWWPOWER")
 ERAS = (("E1", None, "2014-01-01"), ("E2", "2014-01-01", "2020-01-01"), ("E3", "2020-01-01", None))
-BASE = ("EW", "ERC", "HRP", "CVG", "HRP+CVG", "HRP+EW", "CVG+EW", "HRP+CVG+EW")
+BASE = ("EW", "ERC", "HRP", "HRP+EW")
 
 
 class Ctx:
@@ -157,7 +161,7 @@ def run(fn, data: dict, n=None) -> pd.DataFrame:
 
 
 def baselines(data: dict, n=None) -> dict:
-    """The eight existing styles, rebuilt from the stored raw weights through `run`."""
+    """The existing styles (BASE), rebuilt from the stored raw weights through `run`."""
     fns = {k: (lambda c, k=k: c.raw[k]) for k in sb.METHOD}
     fns.update({k: (lambda c, mem=mem: sb.blend([c.raw[m] for m in mem])) for k, mem in sb.BLENDS.items()})
     return {k: run(f, data, n) for k, f in fns.items()}

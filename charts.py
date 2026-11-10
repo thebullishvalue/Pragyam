@@ -17,7 +17,6 @@ import numpy as np
 
 from ui.theme import (chart_color, chart_layout, chart_rgba, diverging_scale,
                       panel_bg, style_axes)
-from ui.shared import mmom_state
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,17 +179,7 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
       Volatility    its own annualized volatility
       Independence  1 - |correlation to the finished book|
       Momentum      the 12-1 rank score (only for methods that tilt on it, and
-                    only while the tilt is applied — a Managed Momentum book
-                    whose bear gate is shut reads none)
-      Conviction    Pragati's conviction tape — green where buyers control
-      Value         Pragati's value tape — green where price is cheap
-      Push          Pragati's histogram as drawn — green where conviction is
-                    being pushed up
-                    (all three only on a book built on the grid — the
-                    Conviction-Value Grid or Managed Momentum — which reads them)
-
-    A Managed Momentum book carries both blocks: the Momentum row, then the
-    three tape rows.
+                    only while the tilt is applied)
 
     Colour is a within-row percentile, so each dimension is read against its own
     peers rather than on incompatible absolute scales.
@@ -223,22 +212,16 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
 
     attrs = getattr(portfolio, "attrs", {}) or {}
     rc_target = attrs.get("nco_rc_target", "none")
-    # A style that reads momentum but did not apply it today is drawn without
-    # the row: its weights are the grid's, and a Momentum row would imply a
-    # tilt the book lacks. For Managed Momentum that is a shut bear gate, or
-    # too few names with a 12-1 return to rank (the ranks are then all 0) —
-    # read through mmom_state so this chart and the tab's caption agree.
-    _mm = mmom_state(attrs)
+    # A style that reads momentum but did not apply it (too few names with a
+    # full 12-1 window to rank) is drawn without the row: a Momentum row would
+    # imply a tilt the book lacks.
     uses_momentum = (bool(attrs.get("nco_uses_momentum", False))
-                     and (bool(attrs.get("nco_momentum_applied", True)) if _mm is None
-                          else _mm["tilted"]))
-    uses_cvg = bool(attrs.get("nco_uses_cvg", False))
+                     and bool(attrs.get("nco_momentum_applied", True)))
 
     df = portfolio.copy()
     for c, default in (("risk_contribution", np.nan), ("volatility", np.nan),
                        ("corr_to_book", np.nan), ("cluster", 0),
-                       ("momentum_z", np.nan), ("conviction", np.nan),
-                       ("value_tape", np.nan), ("push", np.nan)):
+                       ("momentum_z", np.nan)):
         if c not in df.columns:
             df[c] = default
     # Cluster first, then weight — so structurally similar holdings sit together
@@ -256,9 +239,6 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
     vol = pd.to_numeric(df["volatility"], errors="coerce")
     indep = 1.0 - pd.to_numeric(df["corr_to_book"], errors="coerce").abs()
     momz = pd.to_numeric(df["momentum_z"], errors="coerce")
-    conv = pd.to_numeric(df["conviction"], errors="coerce")
-    val = pd.to_numeric(df["value_tape"], errors="coerce")
-    push = pd.to_numeric(df["push"], errors="coerce")
 
     # Score the risk-share row against the method's OWN objective (see docstring).
     rc_key = -(rc - eq_share).abs() if rc_target == "equal" else -rc
@@ -275,12 +255,6 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
         # Shown only when a tilt was actually applied, so the chart never
         # implies a factor the book does not use.
         cols.append(("Momentum", momz, momz, "{:+.2f}"))
-    if uses_cvg and (conv.notna().any() or val.notna().any()):
-        # Same rule for Pragati's two tapes. Green is buyers in control, and
-        # price cheap — the readings the book's weights were sized from.
-        cols.append(("Conviction", conv, conv, "{:+.0f}"))
-        cols.append(("Value", val, -val, "{:+.0f}"))
-        cols.append(("Push", push, push, "{:+.2f}"))
 
     z, text = [], []
     for _, raw, key, fmt in cols:
@@ -482,124 +456,6 @@ def create_cluster_correlation_heatmap(corr: "pd.DataFrame | None",
     style_axes(fig)
     fig.update_xaxes(tickangle=-60, tickfont=dict(size=8))
     fig.update_yaxes(tickfont=dict(size=8), autorange="reversed")
-    return fig
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONVICTION-VALUE GRID · THE MAP
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def create_conviction_value_map(universe: "pd.DataFrame | None") -> go.Figure:
-    """Every name placed by Pragati's two tapes — what the Conviction-Value Grid sized,
-    and what Managed Momentum's overlay is added to.
-
-    Conviction across, value up (+ rich). The dotted lines are each tape's own
-    knee — the inner zone at ±30, θ at ±42.9 — and they cut the plane into the
-    states the weights come from:
-
-        left third     conviction DOWN     dislocated · fading · distribution
-        middle band    conviction FAINT    basing · idle · stalling
-        right third    conviction UP       turned · building · paid
-
-    A point sits where its TAPES are; its colour is its STATE. The histogram
-    moves a name's row only on a confirmed push, so a point coloured for a
-    region it does not sit in is a row being held — hover says so.
-
-    Colour is the state's tone (ui.shared.CVG_TONE), the same everywhere the
-    state appears. A FILLED marker is a holding, sized by its weight; a RING is
-    a name the book was not asked to hold (N below the universe). Names with no
-    calibrated tape have no coordinates and are counted, not drawn.
-
-    Tinted regions carry a claim only where the state does: idle is left as
-    panel, because a faint tape at a fair price has nothing to say.
-    """
-    from cvgrid import STATE_LABEL
-    from pragati import INNER_ZONE
-    from samanvaya import THETA_OSC
-    from ui.shared import CVG_TONE
-
-    fig = go.Figure()
-    if universe is None or getattr(universe, "empty", True):
-        fig.update_layout(**chart_layout(height=420))
-        return fig
-
-    u = universe.copy()
-    u["conviction"] = pd.to_numeric(u["conviction"], errors="coerce")
-    u["value_tape"] = pd.to_numeric(u["value_tape"], errors="coerce")
-    u = u[u["conviction"].notna() & u["value_tape"].notna()]
-
-    z, th, lim = INNER_ZONE, THETA_OSC, 100.0
-    # Region tints, faint: the plane's structure without competing with points.
-    for x0, x1, y0, y1, tone, a in (
-        (z, lim, -lim, th, "emerald", 0.07),        # turned + building: the core
-        (z, lim, th, lim, "amber", 0.08),           # paid
-        (-lim, -z, -lim, -th, "cyan", 0.08),        # dislocated: the watchlist
-        (-lim, -z, -th, th, "rose", 0.05),          # fading
-        (-lim, -z, th, lim, "rose", 0.10),          # distribution
-        (-z, z, -lim, -th, "cyan", 0.05),           # basing
-        (-z, z, th, lim, "amber", 0.05),            # stalling
-    ):
-        fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1, layer="below",
-                      line=dict(width=0), fillcolor=chart_rgba(tone, a))
-    for x in (-z, z):
-        fig.add_vline(x=x, line=dict(color=chart_rgba("slate", 0.55), width=1, dash="dot"))
-    for y in (-th, th):
-        fig.add_hline(y=y, line=dict(color=chart_rgba("slate", 0.55), width=1, dash="dot"))
-
-    # State names, in each region's own tone, tucked into its outer corner.
-    for x, y, xa, ya, code in (
-        (lim, -lim, "right", "bottom", "TURNED"), (lim, 0.0, "right", "middle", "BUILDING"),
-        (lim, lim, "right", "top", "PAID"),
-        (0.0, -lim, "center", "bottom", "BASING"), (0.0, 0.0, "center", "middle", "IDLE"),
-        (0.0, lim, "center", "top", "STALLING"),
-        (-lim, -lim, "left", "bottom", "DISLOCATED"), (-lim, 0.0, "left", "middle", "FADING"),
-        (-lim, lim, "left", "top", "DISTRIBUTION"),
-    ):
-        label = STATE_LABEL[code].upper()
-        fig.add_annotation(x=x, y=y, xanchor=xa, yanchor=ya, showarrow=False, text=label,
-                           font=dict(size=9, family="JetBrains Mono, monospace",
-                                     color=chart_rgba(CVG_TONE[code], 0.9)))
-
-    held = u["held"].astype(bool) if "held" in u.columns else pd.Series(True, index=u.index)
-    wpct = pd.to_numeric(u.get("weight_pct", 0.0), errors="coerce").fillna(0.0)
-    wmax = float(wpct.max()) if len(wpct) and wpct.max() > 0 else 1.0
-    show_text = len(u) <= 35
-    for code in CVG_TONE:
-        part = u[u["state"] == code]
-        if part.empty:
-            continue
-        h = held.loc[part.index]
-        col = COLORS[CVG_TONE[code]]
-        size = (7.0 + 11.0 * (wpct.loc[part.index] / wmax)).where(h, 8.0)
-        fig.add_trace(go.Scatter(
-            x=part["conviction"], y=part["value_tape"], mode="markers+text" if show_text else "markers",
-            name=STATE_LABEL[code],
-            text=part["symbol"] if show_text else None, textposition="top center",
-            textfont=dict(size=8, family="JetBrains Mono, monospace", color=chart_rgba("slate", 0.95)),
-            marker=dict(size=size.tolist(), color=[col if x else "rgba(0,0,0,0)" for x in h],
-                        line=dict(width=1.4, color=col)),
-            customdata=list(zip(part["symbol"],
-                                [STATE_LABEL[code]] * len(part),
-                                pd.to_numeric(part.get("state_days", np.nan), errors="coerce").fillna(0).astype(int),
-                                wpct.loc[part.index].round(2),
-                                part.get("drivers", pd.Series("", index=part.index)).fillna("—"),
-                                part.get("push_tier", pd.Series("", index=part.index)).fillna("—"),
-                                ["<br>row held by the histogram — push not yet behind the tape"
-                                 if (pd.to_numeric(x, errors="coerce") or 0) > 0 else ""
-                                 for x in part.get("held_row", pd.Series(0, index=part.index))])),
-            hovertemplate=("<b>%{customdata[0]}</b> · %{customdata[1]} for %{customdata[2]}d"
-                           "<br>Conviction %{x:+.0f} · Value %{y:+.0f}"
-                           "<br>Push %{customdata[5]} · weight %{customdata[3]}%%{customdata[6]}"
-                           "<br><span style='opacity:0.7;'>hedged vs %{customdata[4]}</span><extra></extra>"),
-        ))
-
-    fig.update_layout(**chart_layout(height=460, show_legend=False,
-                                     margin=dict(t=16, l=56, r=16, b=48)))
-    style_axes(fig, y_title="Value tape · rich ↑ cheap ↓", x_title="Conviction tape · sellers ← → buyers",
-               y_range=[-lim - 4, lim + 4])
-    fig.update_xaxes(range=[-lim - 4, lim + 4], zeroline=False)
-    fig.update_yaxes(zeroline=False)
     return fig
 
 

@@ -2,14 +2,11 @@
 PRAGYAM — Portfolio Intelligence (Streamlit App)
 ══════════════════════════════════════════════════════════════════════════════
 
-Portfolio curation in five weighting styles, over ETF, index, commodity,
+Portfolio curation in three weighting styles, over ETF, index, commodity,
 currency, crypto or uploaded universes.
 
 Architecture:
-  nco.py            → Equal Weight / ERC / HRP / Conviction-Value Grid / Managed Momentum curation
-  pragati.py        → pragati.pine's conviction tape and histogram
-  cvgrid.py         → the Conviction-Value Grid: states and graded map
-  samanvaya.py      → Samanvaya's value tape (the macro-hedged value engine)
+  nco.py            → Equal Weight / ERC / HRP curation
   regime.py         → MarketRegimeDetector (fixed 8-factor) — context only
   backdata.py       → generate_historical_data(), compute_volume_profile()
   analytics.py      → portfolio-vs-benchmark performance metrics
@@ -35,15 +32,12 @@ nothing: Equal Weight reads nothing, and ERC and HRP allocate from the
 covariance structure, which is estimable where expected returns are not. ERC
 and HRP target RISK, and do not claim excess return: measured across
 two disjoint periods, HRP gives up ~1%/yr against equal weight and buys a ~20%
-cut in volatility and drawdown. The Conviction-Value Grid and Managed Momentum
-read the tape (Managed Momentum also 12-1 momentum) — forecasting, under the
-same bound, and measured as such in nco.METHOD_SPECS.
+cut in volatility and drawdown.
 
 Pipeline:
   Phase 1: Data fetching + regime detection (context)
   Phase 2: Curation — Equal Weight (reads nothing), ERC or HRP (the return
-           covariance), the Conviction-Value Grid (the tape) or Managed Momentum
-           (the tape and 12-1 momentum)
+           covariance)
 
 Result tabs: Portfolio (holdings + risk profile + cluster structure) ·
 Analytics (book vs benchmark vs equal-weight shadow vs the other styles'
@@ -71,8 +65,7 @@ log = get_console()
 
 from metrics import get_metrics
 from ui.theme import inject_css, VERSION, PRODUCT_NAME, COMPANY, progress_bar
-from ui.shared import (NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, mmom_coverage_caveat,
-                       mmom_floor_text, mmom_history_caveat, mmom_state, num, style_spec,
+from ui.shared import (NCO_STYLES, REGIME_FACTOR_ORDER, STYLE_LABELS, num, style_spec,
                        unfunded_symbols)
 from ui.tabs import (
     render_analytics_tab,
@@ -102,8 +95,6 @@ from regime import (
     get_regime_history_series,
 )
 from backdata import (
-    fetch_close_history,
-    mask_dead_quotes,
     generate_historical_data,
     get_default_universe,
     MAX_INDICATOR_PERIOD,
@@ -113,10 +104,7 @@ from universe import (
     render_universe_selector,
 )
 from nco import (compute_nco_portfolio, METHOD_SPECS, METHOD_ORDER, method_spec, MIN_OBS,
-                 build_price_matrix, mmom_windows,
-                 MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP,
-                 MMOM_HISTORY_START, MMOM_MIN_RANKED, MMOM_MIN_VOL_MONTHS, MMOM_SCALE_CAP)
-from cvgrid import STATE_LABEL as CVG_STATE_LABEL, STATES as CVG_STATES
+                 MIN_COVERAGE, MOMENTUM_LOOKBACK, MOMENTUM_SKIP)
 
 try:
     from charts import (
@@ -277,72 +265,13 @@ def _log_recovery(step, previous) -> None:
         step.note(f"second pass skipped ({report['skipped_reason']})")
 
 
-def _log_mmom_overlay(step, at: dict) -> None:
-    """Managed Momentum's overlay as applied today, on the step that allocated it.
-
-    Strength is λ × gate × scale, and each factor is printed beside what it
-    read, so a book that came out as the plain grid (gate shut) or with a
-    shrunken overlay says why. The history the overlay read closes the block,
-    with a warning when it could not hold the bear gate's 24 months — and, on
-    the estimation-panel fallback, that the overlay stood down to the grid.
-    The floor is reported as nco counts it: over the universe before top-N,
-    and how many of those the book holds.
-    """
-    s = mmom_state(at)
-    if s is None:
-        return
-    gate, mkt, scale, vol = s["gate"], s["market"], s["scale"], s["vol"]
-    _down = s["stood_down"]
-    step.item("Momentum overlay",
-              f"strength 0.00 — stood down: {_down}; the book is the grid's" if _down else
-              f"strength {s['strength']:.2f} = λ {s['lam']:g} × gate "
-              + (f"{gate:.0f}" if gate is not None else "—")
-              + " × scale " + (f"{scale:.2f}" if scale is not None else "—")
-              + f" · added as strength × rank / N, N = the {s['universe']} names allocated over")
-    step.item("Bear gate",
-              f"not read — {s['gate_days']} sessions to the month's first, {s['gate_needs']} needed"
-              if _down else
-              "not read — under a year of history, held open" if mkt is None else
-              f"SHUT — equal-weighted market {mkt:+.1%} over {s['window']} · overlay off, "
-              "the book is the grid's" if gate == 0 else
-              f"open — equal-weighted market {mkt:+.1%} over {s['window']}")
-    step.item("Volatility scale",
-              "not read — overlay stood down" if _down else
-              "not read — gate shut" if gate == 0 else
-              f"1.00 — {s['months']} month-start readings, {MMOM_MIN_VOL_MONTHS} needed "
-              "before it acts" if not s["scale_acts"] else
-              "1.00 — no current volatility reading" if vol is None else
-              f"{scale or 1.0:.2f} = min({MMOM_SCALE_CAP:g}, median {s['vol_median'] or 0.0:.1%} / current "
-              f"{vol:.1%}) · {s['months']} month-start readings")
-    step.item("Ranked", f"{s['ranked']} of {s['universe']} names carry a 12-1 return"
-              + ("" if s["ranks_enough"] else f" — under {MMOM_MIN_RANKED}, so no overlay"))
-    step.item("Floor", mmom_floor_text(s))
-    step.item("History", f"{s['source']} · "
-              + (f"from {s['start']:%Y-%m-%d} · " if s["start"] is not None else "")
-              + f"{s['days']} sessions"
-              + (f" ({s['gate_days']} to the month's first — short of the gate's "
-                 f"{s['gate_needs']})" if s["short"] else "")
-              + (f" · {s['coverage']:.0%} of names with a close"
-                 if s["coverage"] is not None and s["coverage"] < 1 else ""))
-    if not s["whole"] and s["tilted"]:
-        step.detail(f"top {at.get('nco_positions_requested', 0)} of {s['universe']} by weight: "
-                    "momentum can also change which names make the book")
-    _cav = mmom_history_caveat(s)
-    if _cav is not None:
-        step.note(_cav[1])
-    _cov = mmom_coverage_caveat(s)
-    if _cov is not None:
-        step.note(f"{_cov[0]} — {_cov[1]}")
-
-
 def _symbols_from_key(symbols_key: str) -> List[str]:
     """The symbols a cache key names: ``UNIVERSE:<name>|<index>``, else the default universe.
 
-    One resolver for both cached fetches below, so the panel and the close
-    history can never be read over two different universes. Raises when the
-    key resolves to nothing; each caller decides what that costs. A Custom
-    List key carries a third part, ``|sha1:<digest>`` of its symbols
-    (_custom_list_digest): it exists only to key the caches, and is ignored here.
+    Raises when the key resolves to nothing; the caller decides what that
+    costs. A Custom List key carries a third part, ``|sha1:<digest>`` of its
+    symbols (_custom_list_digest): it exists only to key the cache, and is
+    ignored here.
     """
     if symbols_key.startswith("UNIVERSE:"):
         universe_name, index = (symbols_key.replace("UNIVERSE:", "", 1).split("|") + ["None"])[:2]
@@ -355,18 +284,14 @@ def _symbols_from_key(symbols_key: str) -> List[str]:
     return list(symbols_list)
 
 
-_READINGS_YEARS = 8   # history the tapes are computed over (quiet regime 800 bars, push gate ~450)
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: str) -> List[Tuple[datetime, pd.DataFrame]]:
     """Fetch and cache historical indicator snapshots from yfinance.
 
-    Snapshots carry Pragati's two tapes and the grid state (backdata.COLUMN_ORDER), and
-    the fetch includes the value tape's macro drivers. This docstring is part
-    of the cache key — st.cache_data hashes the function's source — so editing
-    it retires any panel cached before a schema change rather than serving it
-    for the rest of the TTL.
+    Snapshots carry the indicator columns of backdata.COLUMN_ORDER. This
+    docstring is part of the cache key — st.cache_data hashes the function's
+    source — so editing it retires any panel cached before a schema change
+    rather than serving it for the rest of the TTL.
     """
     _PANEL_FETCHES["n"] += 1
     # Announced here rather than by the caller: reaching this line IS the cache
@@ -385,10 +310,6 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
             symbols_to_process=symbols_list,
             start_date=end_date - timedelta(days=int((lookback_files + MAX_INDICATOR_PERIOD) * 1.5) + 30),
             end_date=end_date,
-            # The tapes read _READINGS_YEARS of bars, the snapshots stay this window: on the
-            # window alone 1 name in 8 sat in a different grid state than the full-history
-            # tapes the evidence was measured on (CVG-B4).
-            readings_start=end_date - timedelta(days=int(_READINGS_YEARS * 365.25)),
         )
     except Exception as e:
         # Logged as well as surfaced: the browser message disappears on the next
@@ -398,64 +319,13 @@ def _load_historical_data(end_date: datetime, lookback_files: int, symbols_key: 
         return []
 
 
-# The same hit/miss counter as _PANEL_FETCHES, for the close history below.
-_CLOSE_FETCHES = {"n": 0}
-
-# The styles whose weights read the long close history (compute_nco_portfolio's
-# `price_history`). Managed Momentum's overlay needs the market's 24-month
-# return for its bear gate and years of its own volatility for the expanding
-# median that scales it; every other style ignores the panel. The registry has
-# no flag for this yet, so it is named here once rather than at each call.
-_CLOSE_HISTORY_STYLES = ("MMOM",)
-
-
-def _close_fetch_count() -> int:
-    """How many close-history downloads this script run has made (0 or 1: a hit makes none)."""
-    return _CLOSE_FETCHES["n"]
-
-
-class _CloseHistoryUnavailable(RuntimeError):
-    """The close history came back empty. Raised, not returned, so it is never cached."""
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _load_close_history(symbols_key: str, day: str) -> pd.DataFrame:
-    """Daily closes of the universe from nco.MMOM_HISTORY_START to today.
-
-    What Managed Momentum's overlay reads (backdata.fetch_close_history): one
-    batch of closes, no indicators. Keyed on the UNIVERSE and today's date
-    (`day`, so the entry refreshes each day), never on the run date: yfinance
-    adjusts the whole history as of the fetch, so one fetch to today sliced at
-    the run date (`.loc[:date]`, done by the caller, and again inside nco) holds
-    the same adjusted closes a fetch ending on that date would return. Dead
-    quotes are masked by the caller AFTER that slice (mask_dead_quotes), so a
-    frozen quote's repeats after the run date cannot unprice a close before it.
-    Stepping
-    through dates on one universe costs one download (~56 s on NIFTY 500)
-    rather than one per date. st.cache_data keeps it for the hour, shared
-    across sessions in this process. A failed download RAISES rather than
-    returning None: st.cache_data does not cache an exception, so a transient
-    failure is retried on the next run instead of being served for the rest of
-    the TTL. The caller turns it into the documented fallback — the overlay
-    stands down on the estimation panel, and says so.
-    """
-    _CLOSE_FETCHES["n"] += 1
-    log.detail(f"cache MISS — fetching daily closes {MMOM_HISTORY_START} → {day} from yfinance")
-    symbols_list = _symbols_from_key(symbols_key)
-    close = fetch_close_history(symbols_list, datetime.fromisoformat(MMOM_HISTORY_START),
-                                datetime.fromisoformat(day), mask_dead_quotes=False)
-    if close is None or close.empty:
-        raise _CloseHistoryUnavailable("no closes returned")
-    return close
-
-
 def _custom_list_digest(symbols: List[str]) -> str:
     """A stable digest of an uploaded symbol list, for the cache keys.
 
     ``UNIVERSE:Custom List|<index>`` names no symbols — resolve_universe reads
     them from session state — so two uploads could share a key and the cached
-    panel and close history of the first be served for the second. The sha1 of
-    the sorted symbols makes the key the list itself.
+    panel of the first be served for the second. The sha1 of the sorted
+    symbols makes the key the list itself.
     """
     import hashlib
     return hashlib.sha1(",".join(sorted(str(x) for x in symbols)).encode()).hexdigest()[:16]
@@ -626,13 +496,11 @@ def _render_header() -> None:
 #: panels cannot drift apart in structure the way three hand-written HTML
 #: blocks did.
 _SYSTEM_PANELS = (
-    ("portfolio", "PORTFOLIO", "Five weighting styles",
+    ("portfolio", "PORTFOLIO", "Three weighting styles",
      "Equal Weight, ERC and HRP forecast nothing — the book spreads risk across distinct "
-     "exposures rather than picking winners. The grid sizes by Pragati's tapes, and Managed "
-     "Momentum adds a 12-1 momentum overlay to it.",
+     "exposures rather than picking winners.",
      (("Cluster", "Ward on correlation distance"),
-      ("Allocate", "1/N · equal risk · cluster bisection · conviction-value grid · "
-                   "grid + managed momentum"),
+      ("Allocate", "1/N · equal risk · cluster bisection"),
       ("Targets", "Volatility and drawdown"))),
     ("regime", "REGIME", "Eight-factor context",
      "A fixed-weight composite of eight measured factors over a rolling window. "
@@ -813,19 +681,6 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
             "body": "The book is unaffected — this style reads no covariance — but the "
                     "cluster, risk and correlation diagnostics are unavailable.",
         })
-    # Managed Momentum's overlay reads the long close history. When that fetch
-    # fails, the estimation panel (~400 sessions, ~19 months) cannot hold the
-    # bear gate's 24 months, and the overlay STANDS DOWN: strength 0, the book is
-    # the grid's. A run dated near the start of the history is short the same
-    # way and stands down too (v12.2: whatever history it read). Either way the
-    # reader is told, in the words mmom_history_caveat gives every surface.
-    _mm = mmom_state(at)
-    _cav = mmom_history_caveat(_mm)
-    if _cav is not None:
-        out.append({"kind": "warning", "title": _cav[0], "body": _cav[1]})
-    _cov = mmom_coverage_caveat(_mm)
-    if _cov is not None:
-        out.append({"kind": "info", "title": _cov[0], "body": _cov[1]})
     # Rows whose weight buys less than one share at this capital: held at 0 units.
     # Any style can produce them, and the book reads complete until you look at
     # the Units column, so they are named here.
@@ -1188,11 +1043,9 @@ def _run_analysis(
         with log.task("Historical panel",
                       f"{LOOKBACK_FILES}-day lookback · {len(symbols_list)} symbols") as _t:
             _t.item("Anchor", selected_date.strftime("%Y-%m-%d"))
-            _bars_start = selected_date - timedelta(days=int(_READINGS_YEARS * 365.25))
             _t.item("Download window",
-                    f"{_bars_start:%Y-%m-%d} → {selected_date:%Y-%m-%d} "
-                    f"({_READINGS_YEARS} years of bars, which the tapes read) · snapshots from "
-                    f"{_panel_start:%Y-%m-%d} ({MAX_INDICATOR_PERIOD} warmup bars)")
+                    f"{_panel_start:%Y-%m-%d} → {selected_date:%Y-%m-%d} · snapshots after "
+                    f"{MAX_INDICATOR_PERIOD} warmup bars")
             _fetches_before = _panel_fetch_count()
             _rec_before = getattr(metrics, "data_recovery", None)
             all_hist = _load_historical_data(selected_date, LOOKBACK_FILES, symbols_key)
@@ -1292,10 +1145,9 @@ def _run_analysis(
 
         # PHASE 2: CURATION
         #
-        # Five styles, one pipeline. Equal Weight reads nothing; ERC and HRP
-        # weight from the return covariance; the Conviction-Value Grid sizes by
-        # Pragati's tapes, and Managed Momentum adds a 12-1 momentum overlay to
-        # the grid. There is no conviction score, no regime passport and no
+        # Three styles, one pipeline. Equal Weight reads nothing; ERC and HRP
+        # weight from the return covariance. There is no conviction score, no
+        # regime passport and no
         # strategy layer — all three were removed after measurement showed the
         # conviction blend had no cross-sectional predictive power on this
         # universe (IC ~0.00-0.04, sign unstable) and the 95-strategy library
@@ -1305,9 +1157,7 @@ def _run_analysis(
         # Grinold's Fundamental Law bounds excess return from FORECASTING at
         # IR = IC x sqrt(BR) x TC — about 1%/yr here (rho 0.517, ~1.9 effective
         # bets). It does not constrain Equal Weight, ERC or HRP, which forecast
-        # nothing. Reading the tape is forecasting, and so is ranking momentum,
-        # so the grid and Managed Momentum sit under it. See nco.py for the
-        # measured results.
+        # nothing. See nco.py for the measured results.
         metrics.start_phase("curation")
         if investment_style in NCO_STYLES:
             _method = NCO_STYLES[investment_style]
@@ -1321,9 +1171,6 @@ def _run_analysis(
                 "EQUAL":  ("Measuring Risk Structure", "1/N · clustering for diagnostics only"),
                 "ERC":    ("Solving Equal Risk Contribution", "cyclical coordinate descent"),
                 "HRP":    ("Clustering Risk Structure", "correlation-distance hierarchy"),
-                "CVG": ("Reading Pragati's Tapes", "conviction × value, both on D · W"),
-                "MMOM": ("Reading Tapes and Momentum", "the grid · 12-1 overlay, gated and "
-                                                       "volatility-scaled"),
             }.get(_method, ("Measuring Risk Structure", _spec["formula"]))
             progress_bar(progress_container, 40, _stage40[0],
                          f"{_spec['short']} · {_stage40[1]}")
@@ -1374,90 +1221,9 @@ def _run_analysis(
                             f"{_nco_hist[0][0]:%Y-%m-%d} → {_nco_hist[-1][0]:%Y-%m-%d}")
                     _t.ok(f"{len(_nco_hist)} trading days")
 
-                # The long close history, for the styles whose weights read it.
-                # Every style in METHOD_ORDER is built on every run — this book,
-                # then the others as comparison books — so it is fetched whenever
-                # one of them reads it. It is cached on the universe and today's
-                # date, fetched to today and sliced here to the run date, so a
-                # universe costs one download a day whatever dates are run on it
-                # (the entry lives for the hour, shared across sessions). None is
-                # the documented fallback: on the estimation panel the overlay
-                # stands down to the grid, and says so.
-                _price_history: Optional[pd.DataFrame] = None
-                _close_readers = [k for k in dict.fromkeys((_method, *METHOD_ORDER))
-                                  if k in _CLOSE_HISTORY_STYLES]
-                if _close_readers:
-                    progress_bar(progress_container, 50, "Loading Close History",
-                                 f"daily closes since {MMOM_HISTORY_START[:4]} · "
-                                 f"{len(symbols_list)} symbols")
-                    with log.task("Close history",
-                                  f"daily closes since {MMOM_HISTORY_START} · momentum overlay") as _t:
-                        _t.item("Read by", " · ".join(
-                            f"{METHOD_SPECS[k]['label']} "
-                            + ("(this book)" if k == _method else "(comparison book)")
-                            for k in _close_readers))
-                        _today = date.today().isoformat()
-                        _t.item("Requested", f"{MMOM_HISTORY_START} → {_today} · "
-                                             f"{len(symbols_list)} symbols · read to "
-                                             f"{selected_date:%Y-%m-%d}")
-                        _fetches_before = _close_fetch_count()
-                        _close_err: Optional[Exception] = None
-                        try:
-                            _price_history = _load_close_history(symbols_key, _today)
-                        except Exception as _e:
-                            _price_history, _close_err = None, _e
-                        if _close_err is None and _close_fetch_count() == _fetches_before:
-                            _t.detail(f"cache HIT — closes to {_today} reused (cached for the "
-                                      "hour, shared across sessions)")
-                        if _price_history is not None and not _price_history.empty:
-                            # The cache holds closes to today; the overlay reads to the run
-                            # date (nco cuts there too) — the same adjusted closes a fetch
-                            # ending on that date returns. Dead quotes are masked only now,
-                            # on the sliced frame, so nothing after the run date decides it.
-                            _price_history, _dead = mask_dead_quotes(_price_history.loc[
-                                :pd.Timestamp(selected_date).normalize()])
-                            if _dead:
-                                _t.detail("dead quotes unpriced (≥ 10 repeated closes): "
-                                          + ", ".join(f"{c.replace('.NS', '')} {n}"
-                                                      for c, n in _dead.items()))
-                        if _price_history is None or _price_history.empty:
-                            _price_history = None
-                            _t.warn("unavailable"
-                                    + (f" ({type(_close_err).__name__}: {_close_err})"
-                                       if _close_err is not None else " to this date")
-                                    + f" — the overlay has only the {len(_nco_hist)}-session "
-                                      "estimation panel, under the "
-                                      f"{mmom_windows(build_price_matrix(_nco_hist).index)['gate'] + 1} "
-                                      "its 24-month bear gate needs, so it stands down to the grid")
-                        else:
-                            _ph_last = _price_history.index[-1]
-                            _t.item("Span", f"{_price_history.index[0]:%Y-%m-%d} → "
-                                            f"{_ph_last:%Y-%m-%d}")
-                            _t.item("Symbols", f"{_price_history.shape[1]} of "
-                                               f"{len(symbols_list)} with closes")
-                            _no_close = [x for x in dict.fromkeys(
-                                str(y).replace(".NS", "") for y in symbols_list)
-                                if x not in _price_history.columns]
-                            if _no_close:
-                                _t.note(f"{len(_no_close)} of {len(symbols_list)} symbols have no "
-                                        "close history: they carry no momentum rank and are "
-                                        "absent from the gate's market — "
-                                        + ", ".join(_no_close[:12])
-                                        + (f" … (+{len(_no_close) - 12})"
-                                           if len(_no_close) > 12 else ""))
-                            if _ph_last.normalize() < pd.Timestamp(_nco_hist[-1][0]).normalize():
-                                _t.note(f"ends {_ph_last:%Y-%m-%d}, before the panel's last "
-                                        f"snapshot ({_nco_hist[-1][0]:%Y-%m-%d}) — the overlay "
-                                        "reads momentum as of its own last close")
-                            _t.ok(f"{len(_price_history)} trading days · "
-                                  f"{_price_history.shape[1]} symbols")
-
                 _stage60 = ("Bisecting by Cluster Variance" if _method == "HRP"
                             else "Allocating Across Clusters" if _spec["uses_clusters"]
                             else "Balancing Risk Contributions" if _spec["rc_target"] == "equal"
-                            else "Sizing by Grid State and Momentum"
-                            if _spec.get("uses_cvg") and _spec.get("uses_momentum")
-                            else "Sizing by Grid State" if _spec.get("uses_cvg")
                             else "Sizing Positions")
                 progress_bar(progress_container, 60, _stage60,
                              f"{len(_prices)} symbols · {_spec['short']}")
@@ -1471,48 +1237,10 @@ def _run_analysis(
                     _book = compute_nco_portfolio(
                         _nco_hist, _prices, capital, num_positions,
                         method=_method, max_pos_pct=st.session_state.max_pos_pct,
-                        price_history=_price_history,
                     )
                     if _book.empty:
                         _t.fail("no book — see the reason below")
                     else:
-                        if _book.attrs.get("nco_uses_cvg"):
-                            # What the weights were read from, over the whole
-                            # universe: how many names both tapes reached, where
-                            # they placed them, and how far the value tape's
-                            # hedge was earned.
-                            _ba = _book.attrs
-                            _cz = _ba.get("nco_cvg_census") or {}
-                            _t.item("Grid readings",
-                                    f"{_ba.get('nco_cvg_names', 0)} of "
-                                    f"{_ba.get('nco_universe', 0)} names read on both tapes")
-                            _t.item("States", " · ".join(
-                                f"{CVG_STATE_LABEL[c]} {_cz[c]}"
-                                for c, *_ in CVG_STATES if _cz.get(c)))
-                            _t.item("Conviction ladder",
-                                    "D · W (daily + weekly) for every name"
-                                    if not _ba.get("nco_cvg_ladder_down") else
-                                    f"down {_ba.get('nco_cvg_ladder_down', 0)} · "
-                                    f"D · W ↺ {_ba.get('nco_cvg_ladder_up', 0)} "
-                                    "(↺ = no calibrated intraday history yet)")
-                            _t.item("Histogram", "runs the rows · "
-                                    f"{_ba.get('nco_cvg_confirm_up', 0)} confirm up · "
-                                    f"{_ba.get('nco_cvg_confirm_down', 0)} confirm down · "
-                                    f"{_ba.get('nco_cvg_unconfirmed', 0)} cannot · "
-                                    f"{_ba.get('nco_cvg_held', 0)} rows held")
-                            _t.item("Map", "graded — shaded within each cell by the tapes' intensity"
-                                    if _ba.get("nco_cvg_graded") else "flat cells")
-                            _hm = num(_ba.get("nco_cvg_hedge_median"))
-                            _t.item("Value hedge", "median applied "
-                                    + (f"{_hm:.0%}" if _hm is not None else "—")
-                                    + " · weighed by its own out-of-sample skill")
-                            if not _ba.get("nco_cvg_applied"):
-                                _t.note("no name read on both tapes — every name is UNREAD at "
-                                        "the neutral unit and this book is 1/N"
-                                        + (" before the momentum overlay"
-                                           if "nco_mmom_strength" in _ba else ""))
-                        if "nco_mmom_strength" in _book.attrs:
-                            _log_mmom_overlay(_t, _book.attrs)
                         _ba = _book.attrs
                         if _spec.get("needs_covariance", True):
                             # What the covariance was estimated on: T rows over n names, so a
@@ -1562,15 +1290,15 @@ def _run_analysis(
                     (f"{investment_style} could not build a portfolio — fewer than two names "
                      f"({_book.attrs.get('nco_n_est', 0)}) carry {MIN_COVERAGE:.0%} of the "
                      "estimation window with a usable return series, and a covariance needs at "
-                     "least two. A universe with more long-listed names, or Equal Weight / the "
-                     "Conviction-Value Grid (which read no covariance), will build."
+                     "least two. A universe with more long-listed names, or Equal Weight "
+                     "(which reads no covariance), will build."
                      if int(_book.attrs.get('nco_n_est', 0) or 0) < 2 else
                      f"{investment_style} could not build a portfolio — the return "
                      f"covariance was not estimable: {_book.attrs.get('nco_obs', 0)} overlapping "
                      f"daily returns for {_book.attrs.get('nco_n_est', 0)} names with enough "
                      f"history, and it needs at least {MIN_OBS} rows and one per name. A larger "
-                     "universe makes this worse; a smaller one, or Equal Weight / the "
-                     "Conviction-Value Grid (which read no covariance), will build.")
+                     "universe makes this worse; a smaller one, or Equal Weight (which "
+                     "reads no covariance), will build.")
                     if _needs_cov else
                     f"{investment_style} could not build a portfolio — no symbol in this "
                     "universe returned a usable price for the selected date. Check the "
@@ -1644,10 +1372,8 @@ def _run_analysis(
                         + ("(target 0.00)" if _spec["rc_target"] == "equal" else "(not targeted)")
                         + (f" · concentration {_conc:.2f}x equal share"
                            if _conc is not None else " · concentration —"))
-                # The ERC + momentum tilt's window. Managed Momentum's overlay is
-                # logged where its weights are, in the Allocate step above — its
-                # window, gate and scale are not the tilt's.
-                if _spec["uses_momentum"] and "nco_mmom_strength" not in _at:
+                # The ERC + momentum tilt's window.
+                if _spec["uses_momentum"]:
                     _t.item("Momentum tilt",
                             f"{_at.get('nco_momentum_names', 0)} names scored "
                             f"({MOMENTUM_LOOKBACK}-{MOMENTUM_SKIP} window) · "
@@ -1719,9 +1445,6 @@ def _run_analysis(
                          " · ".join(METHOD_SPECS[k]["short"] for k in _peer_codes))
             _peers: Dict[str, pd.DataFrame] = {}
             _peer_notes: Dict[str, str] = {}
-            # Built, but on less input than the style asks for (today only a
-            # Managed Momentum book whose overlay read a short history).
-            _peer_caveats: Dict[str, str] = {}
             with log.task("Comparison books",
                           "the other styles, from this run's inputs") as _t:
                 for _pm in _peer_codes:
@@ -1730,7 +1453,6 @@ def _run_analysis(
                         _pb = compute_nco_portfolio(
                             _nco_hist, _prices, capital, num_positions,
                             method=_pm, max_pos_pct=st.session_state.max_pos_pct,
-                            price_history=_price_history,
                         )
                         _why = ("no estimable covariance for this universe and date"
                                 if _pspec.get("needs_covariance", True)
@@ -1750,38 +1472,10 @@ def _run_analysis(
                         "units": pd.to_numeric(_pb["units"], errors="coerce").to_numpy(),
                         "value": pd.to_numeric(_pb["value"], errors="coerce").to_numpy(),
                     })
-                    _pa = _pb.attrs
-                    _pmm = mmom_state(_pa)
-                    if _pmm is not None:
-                        # The overlay in one line: a comparison book is a
-                        # reference, and its full readout belongs to a run of
-                        # that style. What it read is kept for the comparison,
-                        # which must say when that was less than it asks for —
-                        # or when the overlay stood down and the book is the grid's.
-                        _t.item(_pspec["label"],
-                                f"{len(_pb)} positions · "
-                                + (f"overlay stood down ({_pmm['stood_down']})"
-                                   if _pmm["stood_down"] else
-                                   f"overlay strength {_pmm['strength']:.2f} · gate "
-                                   + ("SHUT" if _pmm["gate"] == 0 else "open"))
-                                + f" · {_pmm['source']}")
-                        if _pmm["stood_down"]:
-                            _peer_caveats[_pm] = (
-                                f"its overlay stood down ({_pmm['stood_down']}: "
-                                f"{_pmm['days']} sessions, {_pmm['gate_needs']} needed), so "
-                                "it is the grid's book")
-                            _t.note(f"{_pspec['label']}: {_peer_caveats[_pm]}")
-                        elif _pmm["fell_back"] or _pmm["short"]:
-                            _peer_caveats[_pm] = (
-                                f"its overlay read {_pmm['days']} sessions ({_pmm['source']}), "
-                                "under the 24 months its bear gate reads")
-                            _t.note(f"{_pspec['label']}: {_peer_caveats[_pm]}")
-                    else:
-                        _t.item(_pspec["label"], f"{len(_pb)} positions")
+                    _t.item(_pspec["label"], f"{len(_pb)} positions")
                 _t.ok(f"{len(_peers)} of {len(_peer_codes)} built")
             st.session_state.run_context["peers"] = _peers
             st.session_state.run_context["peer_notes"] = _peer_notes
-            st.session_state.run_context["peer_caveats"] = _peer_caveats
 
             metrics.end_phase("curation", success=True)
             metrics.symbols_count = _book.attrs.get("nco_universe", len(_book))
@@ -1790,7 +1484,6 @@ def _run_analysis(
             metrics.end_phase("total_execution", success=True)
             progress_bar(progress_container, 100, "Analysis Complete",
                          f"{len(_book)} positions · {_spec['short']}")
-            _mm = mmom_state(_at)
             log.summary("Execution Summary", {
                 "Run ID": current_run_id[-12:],
                 "Curation": f"{_spec['label']} ({_spec['family']})",
@@ -1800,14 +1493,6 @@ def _run_analysis(
                 "Risk Dispersion": f"{_disp:.3f}" if _disp is not None else "—",
                 "Risk Concentration": f"{_conc:.2f}x" if _conc is not None else "—",
                 "Ex-ante Vol": f"{_pvol:.2%}" if _pvol is not None else "—",
-                **({"Momentum Overlay":
-                    (f"stood down — {_mm['stood_down']}; the book is the grid's"
-                     if _mm["stood_down"] else
-                     f"strength {_mm['strength']:.2f} · gate "
-                     + ("shut" if _mm["gate"] == 0 else "open")
-                     + ("" if _mm["ranks_enough"] else " · nothing ranked, no tilt"))
-                    + f" · {_mm['source']}"}
-                   if _mm is not None else {}),
                 **({"Below One Share": ", ".join(unfunded_symbols(_at))}
                    if unfunded_symbols(_at) else {}),
                 "Status": "SUCCESS",
@@ -1911,18 +1596,15 @@ def main():
             # Not "Investment Objective": no option here expresses an objective.
             # All are allocation methods over the same universe. Equal Weight, ERC
             # and HRP forecast nothing (Equal Weight reads nothing, ERC and HRP only
-            # the covariance); the grid and Managed Momentum read the tape — and
-            # Managed Momentum 12-1 momentum — which is forecasting, but none of them
-            # states a goal. So the honest question is HOW capital is split, not
-            # what the user is trying to achieve.
+            # the covariance), and none of them states a goal. So the honest
+            # question is HOW capital is split, not what the user is trying to
+            # achieve.
             "Weighting method",
             options=STYLE_LABELS,
             index=0,                      # Equal Weight — nothing measured beat it reproducibly
             help=(
                 "Equal Weight, ERC and HRP forecast nothing: ERC and HRP weight from the "
-                "return covariance, and Equal Weight reads nothing at all. The "
-                "Conviction-Value Grid reads the tape, and Managed Momentum reads the tape "
-                "and 12-1 momentum.\n\n"
+                "return covariance, and Equal Weight reads nothing at all.\n\n"
                 "**Equal Weight** (default) — 1/N. Across 36 candidate allocators on "
                 "three universes, nothing produced a reproducible return improvement "
                 "over it. Lowest turnover of any style.\n\n"
@@ -1937,26 +1619,6 @@ def main():
                 "Dow 30 against Equal Weight) and about 1.7x its turnover. Every "
                 "figure holds every name; at 30 of 50 positions the book is the 30 "
                 "lowest-variance names.\n\n"
-                "**Conviction-Value Grid** — Pragati's 3 × 3: conviction (up / faint / down) × "
-                "value (cheap / fair / rich) places every name in one of nine states, and the "
-                "state is its weight — core 3 units, the floor 0.25 — graded within each cell "
-                "by how intensely the tapes are drawn. The histogram runs the rows: a name "
-                "only changes row once the push is behind it. Reads no covariance. Measured "
-                f"{METHOD_SPECS['CVG']['long_run']}; several designs were tried on these "
-                "panels, so read it as directional.\n\n"
-                "**Managed Momentum** — the grid's weights plus a 12-1 momentum overlay, "
-                "λ · rank / N, N the names allocated over. The overlay stands down while the "
-                "equal-weighted market's 24-month return is negative, shrinks while its own "
-                "volatility runs above its median and grows, up to 1.5×, while it runs below. "
-                "No weight falls below a quarter of the "
-                "grid's, so the book always fills the positions you ask for; when they cover "
-                "the whole universe every name stays held, and below that momentum can also "
-                "change which names make the cut. Found by a style search over 43 "
-                "configurations: ahead of the best of the eight earlier styles and blends in "
-                "all six era cells on today's constituents, none of it significant; behind "
-                "the grid on a point-in-time Dow. Below the universe's size momentum mostly "
-                "picks the names held — ahead of the grid on Nifty 50 at 30 positions, well "
-                "behind it on the Dow. In a full book, expect results like the grid's.\n\n"
                 "Every style returns exactly the number of positions you select. "
                 "Max Diversification was evaluated and withdrawn: it is a corner-solution "
                 "optimiser that zeroes names out, so it returned 10 holdings when 15 were "
@@ -1973,7 +1635,7 @@ def main():
         st.session_state.selected_universe = universe
         st.session_state.selected_index = selected_index
 
-        # The cache key every fetch is stored under (panel, close history, regime).
+        # The cache key every fetch is stored under (panel, regime).
         # A Custom List's name and index say nothing about which symbols were
         # uploaded — resolve_universe reads them from session state — so its key
         # also carries a digest of the list itself, or a second upload would be
