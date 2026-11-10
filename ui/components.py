@@ -91,8 +91,14 @@ def get_icon(name: str, size: int = 18, stroke_width: float | None = None) -> st
 
     # Strip whatever the literal declared, so the result cannot inherit a
     # per-icon weight or terminal style.
+    # Only on the outer <svg> tag: <rect> carries its own width/height, and
+    # stripping those drew the cpu / grid / briefcase icons blank or dotted.
+    head, sep, body = base_svg.partition(">")
     for attr in ("width", "height", "stroke-width", "stroke-linecap", "stroke-linejoin"):
-        base_svg = re.sub(rf'\s+{attr}="[^"]*"', "", base_svg)
+        head = re.sub(rf'\s+{attr}="[^"]*"', "", head)
+    for attr in ("stroke-width", "stroke-linecap", "stroke-linejoin"):
+        body = re.sub(rf'\s+{attr}="[^"]*"', "", body)
+    base_svg = head + sep + body
 
     sw = ICON_STROKE if stroke_width is None else min(float(stroke_width), 1.75)
     return base_svg.replace(
@@ -1048,7 +1054,10 @@ def render_data_table(
     <tbody>{''.join(body_rows)}</tbody>
     </table></div></body></html>"""
 
-    _components_html(table_html, height=iframe_h, scrolling=False)
+    # +8: the panel pads the table's element container by --s2 (8px) under its
+    # header (theme.css); the container's height is the one given here, so the
+    # padding must be added to it or it comes out of the table.
+    _components_html(table_html, height=iframe_h + 8, scrolling=False)
 
 
 def render_warning_box(title: str, content: str) -> None:

@@ -2555,7 +2555,11 @@
 /* The embedded table needs breathing room under the panel header: its own
    sticky column-header row is opaque and was landing directly against the
    panel's header rule, so the two read as one doubled, overlapping band. */
-[class*="st-key-panel-"] [data-testid="stIFrame"] { margin-top: var(--s2); }
+/* As padding on the iframe's element container, not a margin on the iframe:
+   the container takes its height from the iframe, so a margin pushed the
+   table 8px past its own box and the panel cut off its last 8px (measured). */
+[class*="st-key-panel-"] [data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]),
+[class*="st-key-panel-"] [data-testid="stElementContainer"]:has(> iframe) { padding-top: var(--s2) !important; }
 
 /* The table iframe sits flush inside its panel — the frame, radius and
    header all belong to the panel, so the embed must contribute no chrome of
@@ -2838,8 +2842,11 @@
     :root { --col-min: 200px; --page-pad: var(--s5); }
     /* The rail is a quarter of an iPad's width. Narrowed here, not hidden:
        the instrument selector is how you change what every page is about. */
-    [data-testid="stSidebar"] { min-width: 200px !important; max-width: 200px !important; }
-    [data-testid="stSidebar"] > div { min-width: 200px !important; }
+    /* OPEN rail only. Unscoped, this floor also held the COLLAPSED rail at
+       200px in the layout: Streamlit slides it off-screen but the page kept
+       its slot, leaving a 200px blank strip on iPad portrait (measured). */
+    [data-testid="stSidebar"][aria-expanded="true"] { min-width: 200px !important; max-width: 200px !important; }
+    [data-testid="stSidebar"][aria-expanded="true"] > div { min-width: 200px !important; }
 }
 @media (max-width: 768px) {                         /* iPad portrait */
     :root { --col-min: 180px; }

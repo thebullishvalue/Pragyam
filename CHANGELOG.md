@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [12.2.1] - 2026-11-10
+
+### Fixed
+- **iPad portrait: a blank strip when the sidebar is collapsed.** At 1024px and below the
+  narrow-rail floor (200px) also held the collapsed sidebar's slot in the layout; it now applies
+  only while the sidebar is open.
+- **Icons drawn from `<rect>`** (cpu, grid, briefcase) rendered blank or dotted: icon
+  normalisation stripped width/height from inner elements, not only the outer `<svg>`.
+- **Tables lost their bottom 8px**: the gap under the panel header was a margin on the table's
+  iframe that its container did not account for; it is now container padding the iframe height
+  includes.
+- Same fixes as Tattva 2.8.1, Nishkarsh 2.5.2–2.5.3 and Nivesa 3.0.1.
+
 ## [12.2.0] - 2026-10-06
 
 An audit release. CVG, HRP and Managed Momentum were each audited by a committee (three readers,
