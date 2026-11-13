@@ -2177,7 +2177,13 @@
    reset wiped the fill BaseWeb paints on the day's inner box: the chosen day showed
    no fill at all. The fill goes back on that box, from our accent. */
 [data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected"] > div {
-    background-color: var(--accent) !important; color: #FFFFFF !important;
+    background-color: transparent !important; color: #FFFFFF !important;
+}
+/* One disc, not a square inside a ring: BaseWeb draws the chosen day's ring on the
+   CELL's own ::after (a 42px circle, z-index -1, behind the number); that ring is
+   what gets the fill. */
+[data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected"]::after {
+    background-color: var(--accent) !important; border-color: var(--accent) !important;
 }
 [data-baseweb="calendar"] [aria-disabled="true"],
 [data-baseweb="calendar"] [aria-disabled="true"] > div {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.3] - 2026-11-13
+
+### Fixed
+- **The chosen day reads as one disc.** The previous fix filled the day's inner box while BaseWeb
+  still drew its own selection ring around it (a square inside a circle). The fill now goes on that
+  ring (the cell's `::after`) and the inner box stays clear: one accent disc with a white number,
+  in both appearances.
+
 ## [13.0.2] - 2026-11-13
 
 ### Fixed
