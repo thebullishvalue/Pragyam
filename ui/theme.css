@@ -2172,6 +2172,13 @@
 [data-baseweb="calendar"] [aria-selected="true"]:hover > div {
     background-color: var(--accent) !important; color: #FFFFFF !important;
 }
+/* The chosen day. This BaseWeb build marks it with aria-label="Selected. ...",
+   not aria-selected, so the rule above never matched, and the blanket transparent
+   reset wiped the fill BaseWeb paints on the day's inner box: the chosen day showed
+   no fill at all. The fill goes back on that box, from our accent. */
+[data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected"] > div {
+    background-color: var(--accent) !important; color: #FFFFFF !important;
+}
 [data-baseweb="calendar"] [aria-disabled="true"],
 [data-baseweb="calendar"] [aria-disabled="true"] > div {
     color: var(--ink-quaternary) !important;
