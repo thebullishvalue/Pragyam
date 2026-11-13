@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.4] - 2026-11-13
+### Fixed
+- **Nothing sits on a panel's edge.**
+  - *Charts.* The chart box's 8px padding only displaced the figure, because Streamlit fixes that box
+    at the figure's height: 8px out of its bottom (onto a footer's rule, or under the panel's
+    clipping edge: the x labels, a bottom legend) and, on phones, 16px past the panel's right edge
+    (the last x tick read "10(", the legend's end was cut). The top and bottom inset is now padding
+    on the chart's container, and the figure fits inside it; the side inset is the figure's own
+    margins (`PLOTLY_MARGIN` l/r +8; the three charts that set their own, the same).
+  - *A panel's last line.* Streamlit gives every markdown block a -16px bottom margin, so a panel
+    that clips at `overflow: hidden` ended 16px before its body did. Body markdown inside a panel
+    keeps a zero margin, so a wrapped last line is no longer cut on a phone.
+  - *Panel headers.* A long context line (instrument · window · units) wraps at word breaks instead
+    of running off the panel on a phone.
+
 ## [13.0.3] - 2026-11-13
 
 ### Fixed

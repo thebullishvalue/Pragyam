@@ -35,7 +35,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v13.0.3"
+VERSION = "v13.0.4"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -363,7 +363,7 @@ PLOTLY_LEGEND = dict(
 #: at y=1.02 needs room ABOVE the plot area to sit in, and the single fixed
 #: t=20 this used to be clipped every legended chart in the app while wasting
 #: the same 20px on every chart without one.
-PLOTLY_MARGIN = dict(t=28, l=52, r=16, b=38)
+PLOTLY_MARGIN = dict(t=28, l=60, r=24, b=38)
 
 # ── The one Plotly config, passed to EVERY st.plotly_chart in the app ────────
 # This existed as PLOTLY_MODEBAR and was never wired to a single call site, so

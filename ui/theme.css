@@ -2545,12 +2545,36 @@
    reading as a white block laid over a wider grey band, which is exactly what
    it was. Full-bleed horizontally: the canvas now spans the same width as the
    header above it, so there is nothing behind it to show. Plotly's own left
-   and right margins (52/16) still inset the plotting area from the panel
+   and right margins (60/24) still inset the plotting area from the panel
    edge, so nothing is drawn tight against the border. */
 [class*="st-key-panel-"] .stPlotlyChart {
     background: transparent; border: none; border-radius: 0;
-    padding: var(--s2) 0 0;
+    padding: 0;
 }
+/* The chart's inset lives OUTSIDE the chart box. Streamlit fixes the chart's
+   element container at the figure's height and Plotly fills the box it is
+   given, so padding on the chart box only displaced the figure: 8px down
+   pushed its bottom out of the container (onto a footer's rule, or under the
+   panel's clipping edge: the x labels, the legend), and 8px each side pushed
+   it 16px past the panel's right edge ("100" read "10("). Top and bottom are
+   padding on the container (the figure fits inside it); left and right are
+   the figure's own margins (PLOTLY_MARGIN l/r + 8). */
+[class*="st-key-panel-"] [data-testid="stElementContainer"]:has(.stPlotlyChart) {
+    padding: var(--s2) 0 !important;
+}
+/* Streamlit gives every markdown block a -16px bottom margin (to cancel a
+   paragraph's own). Inside a panel, which clips at overflow: hidden, that made
+   the panel 16px shorter than its body: the copy's last line touched or was cut
+   by the bottom edge once text wrapped to more lines (phones). Body markdown only;
+   the panel header keeps Streamlit's spacing. */
+[class*="st-key-panel-"] [data-testid="stMarkdownContainer"]:not(:has(> .panel-hdr)) {
+    margin-bottom: 0 !important;
+}
+/* A panel header's context line (instrument · window · units) was nowrap, so a
+   long one ran past the panel on a phone and was cut mid-word at the clipping
+   edge. It wraps at word breaks instead; on a desktop it still fits one line. */
+.panel-hdr .ph-left { min-width: 0; }
+.panel-hdr .ph-context { white-space: normal !important; overflow-wrap: anywhere; }
 /* Plotly's toolbar, brought into the system: hidden until the pointer is in
    the panel, muted, and never coloured. */
 [class*="st-key-panel-"] .modebar-container { top: var(--s2) !important; right: var(--s2) !important; }

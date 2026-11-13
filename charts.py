@@ -282,7 +282,7 @@ def create_risk_allocation_heatmap(portfolio: pd.DataFrame) -> go.Figure:
     _lab = max((len(str(s)) for s in df["symbol"]), default=8)
     fig.update_layout(**chart_layout(
         height=max(200, 46 * len(labels) + 90), show_legend=False,
-        margin=dict(t=12, l=96, r=16, b=min(150, 38 + int(_lab * 5.5))),
+        margin=dict(t=12, l=104, r=24, b=min(150, 38 + int(_lab * 5.5))),
     ))
     style_axes(fig)
     fig.update_xaxes(tickangle=-60, tickfont=dict(size=9))
@@ -386,7 +386,7 @@ def create_risk_contribution_chart(portfolio: pd.DataFrame) -> go.Figure:
     _lab = max((len(str(s)) for s in df["symbol"]), default=8)
     fig.update_layout(**chart_layout(
         height=max(300, 26 * 10 + 120), show_legend=True,
-        margin=dict(t=44, l=52, r=16, b=min(150, 38 + int(_lab * 5.5))),
+        margin=dict(t=44, l=60, r=24, b=min(150, 38 + int(_lab * 5.5))),
     ))
     fig.update_layout(
         barmode="group", bargap=0.25, bargroupgap=0.08,
@@ -451,7 +451,7 @@ def create_cluster_correlation_heatmap(corr: "pd.DataFrame | None",
     _lab = max((len(str(s)) for s in syms), default=8)
     fig.update_layout(**chart_layout(
         height=size, show_legend=False,
-        margin=dict(t=12, l=96, r=16, b=min(150, 38 + int(_lab * 5.5))),
+        margin=dict(t=12, l=104, r=24, b=min(150, 38 + int(_lab * 5.5))),
     ))
     style_axes(fig)
     fig.update_xaxes(tickangle=-60, tickfont=dict(size=8))
