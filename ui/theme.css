@@ -3327,7 +3327,11 @@ html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { lette
    mono at the field's size (they were 16px Source Sans). The rail's buttons
    share one tracking (one app's rail kept 0.1em). */
 [data-baseweb="tag"] span, [data-baseweb="tag"] [title] { font-family: var(--mono) !important; font-size: var(--fs-xs) !important; }
-[data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spacing: 0.06em !important; }
+html body [data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spacing: 0.06em !important; }
+/* Streamlit gives every markdown heading a hidden anchor-link icon (a docs-site
+   affordance). Hidden, it still sat on the heading's line: a KPI value's box
+   grew to 53px around a 21px line, and a long value broke early to make room. */
+[data-testid="stHeaderActionElements"] { display: none !important; }
 /* The ticker's separators had no face of their own (16px Source Sans between
    11px mono quotes), and a slider's value took Streamlit's. */
 .ticker .tt-sep { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-quaternary); }
