@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.7] - 2026-11-14
+### Fixed
+- **One button face across the family.** Measured in all eight apps, in Paper and Slate, at rest
+  and on hover, the primary (run) button had drifted into several faces: a grey rim on the accent
+  fill and a light-grey hover with dark type (Paper's generic button rules outranked the primary's
+  own), a dark label on the accent (a Paper rule inking every markdown paragraph reached the
+  button's label — Sanket's Run Screener), and Streamlit's own sans at 8px corners (Pragyam). The
+  generic rules no longer match the primary at all, and one face is stated once: accent fill and
+  rim, white mono label, uppercase, 6px corners, each appearance's own darker accent on hover.
+- **One segmented control.** The appearance switch's idle segments are unfilled with tertiary ink
+  in every app (one filled them grey, one white, with three different label inks).
+
 ## [13.0.6] - 2026-11-14
 ### Fixed
 - **A panel's opening copy keeps its gap below the header's rule.** The header is markdown, and
