@@ -3235,3 +3235,13 @@ input::placeholder, textarea::placeholder { color: var(--ink-quaternary) !import
     .st-key-chart-contribution text.bartext { display: none; }
     .st-key-chart-sd-grid-map g.textpoint { display: none; }
 }
+
+/* A panel's header is markdown, and Streamlit's -16px bottom margin on every
+   markdown block pulled the panel's opening copy up under the header's rule:
+   the first line sat 2px below the line (measured), where Arthagati's
+   one-block panels give it 16px. When text follows a header, the header keeps
+   its full height. Charts and tables carry their own top inset and are
+   unchanged. */
+[class*="st-key-panel-"] [data-testid="stElementContainer"]:has(.panel-hdr):has(+ [data-testid="stElementContainer"] [data-testid="stMarkdownContainer"]) [data-testid="stMarkdownContainer"]:has(> .panel-hdr) {
+    margin-bottom: 0 !important;
+}
