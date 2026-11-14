@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.10] - 2026-11-14
+### Fixed
+- **Every label in the system's own faces.** Measured in all eight apps: every button, segmented
+  control, tab and expander title rendered its label in Streamlit's Source Sans at 14-16px (the
+  control was styled, but Streamlit wraps the label in a container that sets its own font). Labels
+  now inherit their control's face; the ticker's separators, slider values and multiselect tags
+  take the system's mono; one widget micro-label everywhere; page names at the rail's 12px; titles
+  break into balanced lines instead of leaving one word on the last line.
+- **One vertical rhythm.** A section's rule sat 24-72px below the block above it depending on what
+  that block was; KPI cards sat flush on the panel below them; stacked card rows touched. Now:
+  blocks in a section 16px apart, a boundary (section rule, page footer) 40px below the block
+  above, a header 24px above its first block, a caption 8px under the block it describes. No
+  doubled rule under a tab bar.
+- **Rows keep one line and one height.** Cards in a row share the row's height (a row read
+  162/132/132/147/147px); a row of buttons no longer drops its last button onto a line of its own
+  on a tablet, and its buttons match when one label wraps.
+- Section titles in Title Case and descriptions in sentence case throughout.
+
 ## [13.0.9] - 2026-11-14
 ### Fixed
 - **Nothing hidden under a panel's header band.** Streamlit slides the element after a markdown

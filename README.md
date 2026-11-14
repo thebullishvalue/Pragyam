@@ -1,6 +1,6 @@
 # PRAGYAM (प्रज्ञम) — Portfolio Intelligence
 
-**Version:** 13.0.9
+**Version:** 13.0.10
 **Author:** @thebullishvalue
 **License:** Proprietary (See LICENSE file)
 
