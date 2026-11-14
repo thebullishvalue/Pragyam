@@ -3110,3 +3110,78 @@ input::placeholder, textarea::placeholder { color: var(--ink-quaternary) !import
     .metric-card .value, .metric-card h2,
     .command-bar .cb-instrument .sym, .command-bar .cb-quote .px { color: #000; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FIDELITY — measured defects, fixed at the rule that caused them
+   Found by a scan of every page, tab and expander at 1440 / 1024 / 834 /
+   390 px in Paper and Slate. Each rule names what it measured.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* A panel's header row (title left, control right) never wrapped: on a phone
+   the control was pushed wholly outside the panel and clipped (the 3M…ALL
+   window strip sat at x 373-589 in a panel ending at 374 — invisible and
+   untappable). The row wraps; the header shrinks and wraps its own text, and
+   the control drops to its own line, still on the right. */
+[class*="st-key-panelrow-"] { flex-wrap: wrap !important; row-gap: var(--s2) !important; }
+[class*="st-key-panelrow-"] > [data-testid="stElementContainer"]:has(.panel-hdr) {
+    flex: 1 1 auto !important; min-width: 0 !important;
+}
+[class*="st-key-panelrow-"] > [data-testid="stElementContainer"]:not(:has(.panel-hdr)) {
+    margin-left: auto !important;
+}
+
+/* The rail's tagline was one line with an ellipsis and lost its last word at
+   every width ("… PORTFOLIO LE…"). The 64px brand band holds two lines. */
+[data-testid="stSidebar"] .nav-brand .tagline {
+    white-space: normal !important; overflow: visible !important;
+    text-overflow: clip !important; line-height: 1.35;
+}
+/* Page names in the rail were cut with an ellipsis on the 200px iPad rail
+   ("Record Transac…", "Configurat…"). They wrap instead. */
+[data-testid="stSidebarNavLink"] { height: auto !important; }
+[data-testid="stSidebarNavLink"] span:not([data-testid="stIconMaterial"]) {
+    white-space: normal !important; overflow: visible !important;
+    text-overflow: clip !important; line-height: 1.3 !important; height: auto !important;
+}
+
+/* The instrument chip clips at overflow: hidden with a 1.15 line box, which
+   cut 2px off the tops of its capitals. Two pixels of room inside the clip,
+   given back outside it, so the bar keeps its height. */
+.command-bar .cb-instrument .sym { padding-block: 2px; margin-block: -2px; }
+
+/* A slider's min/max labels appear on hover in the NATIVE theme's text colour
+   (near-white at 60%) — invisible on Paper. Its value takes the accent. */
+[data-testid="stSliderTickBar"], [data-testid="stSliderTickBar"] * { color: var(--ink-tertiary) !important; }
+[data-testid="stSliderThumbValue"] { color: var(--accent) !important; }
+
+/* A text input measured 40px against 38px for every number input and select:
+   BaseWeb's wrapper keeps a 1px transparent border around the field's own.
+   In a two-column form each text field pushed its column 2px further down
+   (0 → 2 → 4px by the third row). The field's token border is the only one. */
+.stTextInput [data-baseweb="input"], .stTextInput [data-baseweb="base-input"],
+.stNumberInput [data-baseweb="input"], .stNumberInput [data-baseweb="base-input"] {
+    background: transparent !important; border-width: 0 !important;
+}
+
+/* Expanders: the summary row took the native near-black and the open body
+   the native near-white border — both from the fixed dark native theme, so
+   on Paper a black bar and an invisible rule. Painted from tokens. */
+[data-testid="stExpander"] summary { background: transparent !important; color: var(--ink-secondary) !important; }
+[data-testid="stExpander"] summary:hover { background: var(--surface-2) !important; color: var(--ink) !important; }
+[data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span { color: inherit !important; }
+[data-testid="stExpanderDetails"] { border-color: var(--line) !important; }
+
+/* Toasts were the native near-black card on Paper. */
+[data-testid="stToast"] {
+    background: var(--surface-1) !important; color: var(--ink) !important;
+    border: 1px solid var(--line-strong) !important; box-shadow: var(--shadow-pop) !important;
+}
+[data-testid="stToast"] p, [data-testid="stToast"] span:not([data-testid="stIconMaterial"]) { color: var(--ink) !important; }
+
+/* Heatmaps that print a value in every cell: a value's width is fixed and a
+   cell's is not, so below the width where they fit the values ran into each
+   other (the monthly table's 13 columns on a phone; the holdings fingerprint's
+   one column per holding on a phone or tablet). There the cells keep their
+   colour and the value moves to the tap readout. */
+@media (max-width: 640px) { .st-key-chart-monthly-heatmap g.heatmap-label { display: none; } }
+@media (max-width: 1100px) { .st-key-chart-risk-alloc g.heatmap-label { display: none; } }
