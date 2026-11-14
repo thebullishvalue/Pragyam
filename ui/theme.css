@@ -3398,3 +3398,26 @@ html body [data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spaci
 [data-baseweb="tab-panel"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-of-type .section-hdr {
     border-top: none !important; margin-top: 0 !important; padding-top: calc(var(--s4) + 3px) !important;
 }
+/* (9) A row of buttons stays one row. The family's 200px column floor is for
+   cards; a row of three download buttons on a tablet with the rail open needed
+   632px of 594 and dropped its third button onto a line of its own. Columns
+   that hold only a button may shrink (their labels already wrap). */
+[data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has([data-testid="stDownloadButton"], [data-testid="stButton"]):not(:has([class*="st-key-panel-"], .metric-card, [data-testid="stTextInput"], [data-baseweb="select"])) {
+    min-width: 0 !important;
+}
+/* …and its buttons share one height: when one label wraps, its neighbours
+   stretch to match instead of sitting 16px shorter. */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] :is([data-testid="stDownloadButton"], [data-testid="stButton"])):not(:has([class*="st-key-panel-"], .metric-card, [data-testid="stTextInput"], [data-baseweb="select"])) {
+    align-items: stretch !important;
+}
+[data-testid="stHorizontalBlock"]:not(:has([class*="st-key-panel-"], .metric-card, [data-testid="stTextInput"], [data-baseweb="select"])) > [data-testid="stColumn"]:has(:is([data-testid="stDownloadButton"], [data-testid="stButton"])) :is([data-testid="stVerticalBlock"], [data-testid="stElementContainer"], [data-testid="stDownloadButton"], [data-testid="stDownloadButton"] > div, [data-testid="stButton"], [data-testid="stButton"] > div, [data-testid="stTooltipIcon"], [data-testid="stTooltipHoverTarget"], button) {
+    height: 100% !important;
+}
+/* (10) Cards in a row share one height. Each card sized to its own caption,
+   so a row read 162/132/132/147/147px; the row's columns stretch and every
+   card fills its column. */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .metric-card) > [data-testid="stColumn"] { align-self: stretch !important; }
+[data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.metric-card) :is([data-testid="stVerticalBlock"], [data-testid="stElementContainer"], [data-testid="stMarkdown"], [data-testid="stMarkdown"] > div, [data-testid="stMarkdownContainer"]):has(.metric-card) {
+    flex: 1 1 auto !important; height: 100% !important;
+}
+[data-testid="stHorizontalBlock"] > [data-testid="stColumn"] .metric-card { height: 100% !important; }
