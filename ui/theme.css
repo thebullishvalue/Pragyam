@@ -3308,3 +3308,67 @@ html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { lette
 [class*="st-key-panel-"] > [data-testid="stLayoutWrapper"]:has([class*="st-key-panelrow-"]) + [data-testid="stElementContainer"]:has(iframe) {
     margin-top: calc(-1 * var(--s2)) !important;
 }
+
+/* ─── TYPOGRAPHY — every label in the system's own faces ───────────────
+   Measured in all eight apps: every button, segmented control, tab and
+   expander title rendered its label in Streamlit's Source Sans at 14-16px —
+   the control was styled (mono, 10px, 600, uppercase) but Streamlit wraps the
+   label in a markdown container that sets its own font, so the control's
+   type never reached its text. The label inherits its control's face. */
+[data-testid^="stBaseButton"] [data-testid="stMarkdownContainer"], [data-testid^="stBaseButton"] p,
+[data-testid="stTab"] [data-testid="stMarkdownContainer"], [data-testid="stTab"] p,
+[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"], [data-testid="stExpander"] summary p,
+[data-testid="stSidebarNavLink"] span:not([data-testid="stIconMaterial"]) {
+    font-family: inherit !important; font-size: inherit !important;
+    font-weight: inherit !important; letter-spacing: inherit !important;
+}
+[data-testid="stSidebarNavLink"][aria-current="page"] { font-weight: 600 !important; }
+/* The ticker's separators had no face of their own (16px Source Sans between
+   11px mono quotes), and a slider's value took Streamlit's. */
+.ticker .tt-sep { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-quaternary); }
+[data-testid="stSliderThumbValue"], [data-testid="stSliderThumbValue"] * { font-family: var(--mono) !important; font-size: var(--fs-xs) !important; }
+/* One widget label everywhere — the micro-label: 9px mono, 600, uppercase,
+   tracked. Four apps already used it; one used Streamlit's 14px sans and two
+   used plain Inter in the rail. */
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label {
+    font-family: var(--mono) !important; font-size: var(--fs-3xs) !important;
+    font-weight: 600 !important; letter-spacing: 0.14em !important;
+    text-transform: uppercase !important; color: var(--ink-tertiary) !important;
+}
+/* Titles break into balanced lines (no lone word on the last line: "11 Dec /
+   2026", "Come / Back?"); prose avoids a one-word last line. */
+.section-hdr h3, .ph-title, .ph-context, .sub-head, .metric-card .label,
+.metric-card .value, .metric-card h2, .notice .n-title, .empty-state h3 { text-wrap: balance; }
+.section-hdr .desc, .panel-copy, .note, .notice .n-body, .lede, .control-hint { text-wrap: pretty; }
+
+/* ─── VERTICAL RHYTHM — one contract on every page ─────────────────────
+   Measured before: a section's rule landed 24, 32, 40, 44, 51, 56 or 72px
+   below the block above it depending on what that block was; KPI cards sat
+   flush on the panel under them and stacked card rows touched. The contract:
+   blocks in a section 16px apart (the page column's own gap); a boundary (a
+   section's rule, the page footer) 40px below the block above it; a header
+   24px above its first block; a note 8px under the block it captions; a
+   sub-heading 24px above, 8px below. */
+/* (1) Streamlit pulls every markdown block up 16px to cancel a paragraph's
+   own trailing margin. Under a component that is a box of its own there is no
+   paragraph to cancel, so the box overhung its container by 16px and ate the
+   gap (Samhita's rule, now everywhere and for every block component). Their
+   own outer margins go too: the column gap is the only spacing between blocks. */
+[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(> :is(.metric-card, .rail-readout, .interp-card, .info-box, .warning-box, .empty-state, .notice-rail, .outcome-grid, .kv-table-container, .hero-card, .system-grid, .kpi-grid, .analog-grid, .set-board, .chip-row, .analog-card, .intel-method-card, .premium-header, .lede, .note)) {
+    margin-bottom: 0 !important;
+}
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] > :is(.rail-readout, .interp-card, .info-box, .warning-box, .empty-state, .notice-rail, .outcome-grid, .kv-table-container, .hero-card, .system-grid, .kpi-grid, .analog-grid, .set-board, .chip-row, .intel-method-card, .premium-header, .lede, .note) {
+    margin-top: 0 !important; margin-bottom: 0 !important;
+}
+[class*="st-key-kpi-"] { margin-bottom: 0 !important; }
+/* (2) Panels carried a 16px bottom margin of their own: 32px between stacked
+   panels, 56px before a section, against 16 for every other block. */
+[data-testid="stMain"] [class*="st-key-panel-"] { margin-bottom: 0 !important; }
+/* (3) A boundary is 40px under the block above: the rule's 24px margin and
+   the column's 16px gap. The page footer is the same boundary. */
+.app-footer { margin-top: var(--s6) !important; }
+/* (4) A note captions the block above it: 8px under it, 16px before the next. */
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .note) { margin-top: calc(-1 * var(--s2)) !important; }
+/* (5) A sub-heading: 24px under the block above, 8px over the block it names. */
+[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(> .sub-head) { margin-bottom: 0 !important; }
+[data-testid="stMain"] .sub-head { margin: var(--s2) 0 calc(-1 * var(--s2)) !important; }
