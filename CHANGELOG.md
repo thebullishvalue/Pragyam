@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.8] - 2026-11-14
+### Changed
+- **Pragyam's panel chrome, across the family.** Every chart, table and readout panel's header
+  (its context line, meta and chip) sits on a tinted band above a rule, as Pragyam's always did,
+  so a panel reads as a labelled object and its content starts below the band; seven apps drew
+  the header on the panel's own ground, where it ran into the first table row or the top of the
+  plot. A header that shares its row with a window strip tints the whole row.
+- **Pragyam's table rhythm.** Tables take 30px rows (were 27px in most apps) with the cell padding
+  derived from the row height, so every row is exactly the height its frame is sized for: no
+  clipped last row, and no blank strip under it.
+
 ## [13.0.7] - 2026-11-14
 ### Fixed
 - **One button face across the family.** Measured in all eight apps, in Paper and Slate, at rest

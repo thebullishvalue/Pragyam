@@ -35,7 +35,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v13.0.7"
+VERSION = "v13.0.8"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
