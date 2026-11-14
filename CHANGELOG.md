@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.12] - 2026-11-14
+### Fixed
+- **A rail button's label is sized for the button.** Every button in the sidebar is a full-width
+  44px action, but its label was 10px, the size of the 30px buttons in the page and the 24px
+  theme toggle, so "RUN ANALYSIS" filled 79 of its 195px. The rail's buttons now carry the type
+  scale's 12px. Where the rail narrows to 200px (1024px and below) the tracking closes from
+  0.08em to 0.04em so the longest label still sits on one line. The theme toggle, the collapse
+  arrow and the compact buttons in the page are unchanged.
+
 ## [13.0.11] - 2026-11-14
 ### Fixed
 - **The sidebar stays open while you use a pop-up drawn from it on a phone.** Below 768px

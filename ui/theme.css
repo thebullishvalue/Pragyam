@@ -3432,3 +3432,23 @@ html body [data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spaci
     margin: 0 !important; padding: 0 !important; overflow: hidden !important;
     pointer-events: none !important;
 }
+
+/* ── A rail button's label scales with the button ─────────────────────────────
+   Every rail button is a full-width 44px action (min-height above), but its
+   label was the 10px of the 30px buttons in the page and the 24px theme
+   toggle: "RUN ANALYSIS" filled 79 of 195px. The rail's primary and secondary
+   buttons carry the type scale's 12px; the toggle (segmented control) and the
+   collapse arrow keep theirs, as do the compact buttons in the page. */
+html body [data-testid="stSidebar"] :is([data-testid="stBaseButton-primary"], [data-testid="stBaseButton-secondary"],
+    [data-testid="stBaseButton-primaryFormSubmit"], [data-testid="stBaseButton-secondaryFormSubmit"]) {
+    font-size: var(--fs-sm) !important; letter-spacing: 0.08em !important;
+}
+/* At 1024px and below the rail is 200px and its buttons 140px: the longest
+   label (Sanket's RUN CORRELATION) wrapped at 0.08em. Same size, closer
+   tracking, one line. */
+@media (max-width: 1024px) {
+    html body [data-testid="stSidebar"] :is([data-testid="stBaseButton-primary"], [data-testid="stBaseButton-secondary"],
+        [data-testid="stBaseButton-primaryFormSubmit"], [data-testid="stBaseButton-secondaryFormSubmit"]) {
+        letter-spacing: 0.04em !important;
+    }
+}
