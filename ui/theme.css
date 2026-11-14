@@ -3246,3 +3246,37 @@ input::placeholder, textarea::placeholder { color: var(--ink-quaternary) !import
 [class*="st-key-panel-"] [data-testid="stElementContainer"]:has(.panel-hdr):has(+ [data-testid="stElementContainer"] [data-testid="stMarkdownContainer"]) [data-testid="stMarkdownContainer"]:has(> .panel-hdr) {
     margin-bottom: 0 !important;
 }
+
+/* ONE PRIMARY BUTTON. Measured across the eight apps, the run button had five
+   faces: a grey rim on the accent fill (Paper's generic button rule outranked
+   the primary's border), a light-grey hover with dark type (the generic hover
+   outranked the primary's darker-accent hover), a dark label on the accent
+   (a Paper rule inking every markdown paragraph reached the button's label),
+   and Streamlit's own 13px sans with 8px corners (a generic rule that skipped
+   the primary skipped its type too). One face: accent fill and rim, white
+   mono label, 600, uppercase, the app's 6px radius. Hover keeps each
+   appearance's own darker accent; `:not(:hover)` leaves it alone. */
+html body [data-testid^="stBaseButton-primary"]:not(:hover):not(:disabled) {
+    background: var(--accent) !important; border-color: var(--accent) !important;
+}
+html body [data-testid^="stBaseButton-primary"] {
+    color: #FFFFFF !important;
+    font-family: var(--mono) !important; font-size: var(--fs-2xs) !important;
+    font-weight: 600 !important; text-transform: uppercase !important;
+    border-radius: var(--r-md) !important;
+}
+html body [data-testid^="stBaseButton-primary"] p,
+html body [data-testid^="stBaseButton-primary"] span:not([data-testid="stIconMaterial"]) {
+    color: #FFFFFF !important; font: inherit !important;
+    letter-spacing: inherit !important; text-transform: inherit !important;
+}
+
+/* ONE SEGMENTED CONTROL. Idle segments were transparent in six apps, filled
+   grey in one and white in another, with three different label inks. Idle:
+   no fill, tertiary ink; hover and the active segment keep the shared rules.
+   The label follows its button (a Paper markdown rule had inked it). */
+html body [data-testid="stButtonGroup"] button:not([data-testid$="Active"]):not(:hover) {
+    background: transparent !important; color: var(--ink-tertiary) !important;
+}
+html body [data-testid="stButtonGroup"] button p { color: inherit !important; letter-spacing: inherit !important; }
+html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { letter-spacing: 0.06em !important; }
