@@ -3185,3 +3185,53 @@ input::placeholder, textarea::placeholder { color: var(--ink-quaternary) !import
    colour and the value moves to the tap readout. */
 @media (max-width: 640px) { .st-key-chart-monthly-heatmap g.heatmap-label { display: none; } }
 @media (max-width: 1100px) { .st-key-chart-risk-alloc g.heatmap-label { display: none; } }
+
+/* A KPI card's tooltip opened to the RIGHT of an icon that sits in the card's
+   top-right corner — 220px past the card, and on the last card past the page.
+   Even hidden it counted toward the page's width: the whole page could be
+   dragged 171px sideways (179px on a phone). Anchored to the icon's right edge
+   it opens over its own card; the label keeps clear of the icon. */
+.metric-card .metric-tooltip-text { left: auto; right: 0; }
+.metric-card:has(.metric-tooltip) .label { padding-right: var(--s5); }
+@media (max-width: 640px) {
+    .metric-tooltip-text { min-width: min(220px, calc(100vw - 48px)); max-width: calc(100vw - 48px); }
+}
+
+/* Streamlit's icons are a FONT now, not an SVG, so the chevron rules that
+   coloured `svg` never reached them: the » that opens a collapsed rail (the
+   only way to the navigation on a phone or tablet) and a help mark's ⓘ were
+   the native near-white — invisible on Paper. */
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarHeader"] [data-testid="stIconMaterial"] { color: var(--ink-tertiary) !important; }
+[data-testid="stExpandSidebarButton"]:hover [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"]:hover [data-testid="stIconMaterial"] { color: var(--ink) !important; }
+[data-testid="stTooltipIcon"] [data-testid="stIconMaterial"],
+[data-testid="stTooltipHoverTarget"] [data-testid="stIconMaterial"] { color: var(--ink-quaternary) !important; }
+
+/* A widget's label outside the app's styled strips kept the native near-white
+   (a filter row's "Tier", "State", "Min coverage %" on Paper). The fallback;
+   every styled label keeps its own, more specific rule. */
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p { color: var(--ink-secondary); }
+
+/* A select's value in the 200px tablet rail was cut with an ellipsis
+   ("Benchmark Inde…"). It wraps; the box grows to hold it. */
+[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div { height: auto !important; }
+[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:first-child,
+[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div:first-child > div {
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+}
+
+/* Dense category charts on a phone or tablet: one name per bar is more names
+   than the axis has room for, and they ran into each other. Every other name
+   is shown; the bar's tap readout names every one. */
+@media (max-width: 1100px) { .st-key-chart-gain-waterfall g.xtick:nth-of-type(even) > text { display: none; } }
+@media (max-width: 640px) {
+    .st-key-chart-risk-alloc g.xtick:nth-of-type(even) > text,
+    .st-key-chart-risk-contrib g.xtick:nth-of-type(even) > text,
+    .st-key-chart-cluster-corr g.xtick:nth-of-type(even) > text { display: none; }
+    /* Value labels on the half-width contribution bars, and the screener map's
+       point names, are wider than a phone gives them: tap readout instead. */
+    .st-key-chart-contribution text.bartext { display: none; }
+    .st-key-chart-sd-grid-map g.textpoint { display: none; }
+}
