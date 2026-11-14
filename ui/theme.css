@@ -3177,6 +3177,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-quaternary) !import
     border: 1px solid var(--line-strong) !important; box-shadow: var(--shadow-pop) !important;
 }
 [data-testid="stToast"] p, [data-testid="stToast"] span:not([data-testid="stIconMaterial"]) { color: var(--ink) !important; }
+[data-testid="stToast"] [data-testid="stIconMaterial"] { color: var(--accent) !important; }
 
 /* Heatmaps that print a value in every cell: a value's width is fixed and a
    cell's is not, so below the width where they fit the values ran into each
