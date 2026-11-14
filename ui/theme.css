@@ -3323,6 +3323,11 @@ html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { lette
     font-weight: inherit !important; letter-spacing: inherit !important;
 }
 [data-testid="stSidebarNavLink"][aria-current="page"] { font-weight: 600 !important; }
+/* A multiselect's chosen values (BaseWeb tags) are values like a select's:
+   mono at the field's size (they were 16px Source Sans). The rail's buttons
+   share one tracking (one app's rail kept 0.1em). */
+[data-baseweb="tag"] span, [data-baseweb="tag"] [title] { font-family: var(--mono) !important; font-size: var(--fs-xs) !important; }
+[data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spacing: 0.06em !important; }
 /* The ticker's separators had no face of their own (16px Source Sans between
    11px mono quotes), and a slider's value took Streamlit's. */
 .ticker .tt-sep { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-quaternary); }
@@ -3372,3 +3377,20 @@ html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { lette
 /* (5) A sub-heading: 24px under the block above, 8px over the block it names. */
 [data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(> .sub-head) { margin-bottom: 0 !important; }
 [data-testid="stMain"] .sub-head { margin: var(--s2) 0 calc(-1 * var(--s2)) !important; }
+/* (6) A caption written as a control hint (most apps' notes under a chart or a
+   download button) is the same caption as a note: 8px under its block, the
+   column gap after it. It sat 21px under the block and 34px over a section. */
+[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(> .control-hint) { margin-bottom: 0 !important; }
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] > .control-hint { margin-top: 0 !important; margin-bottom: 0 !important; }
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .control-hint) { margin-top: calc(-1 * var(--s2)) !important; }
+/* (7) The landing's opening paragraph kept 32px of bottom padding — blank
+   space that read as a 72px gap before the first section. */
+[data-testid="stMain"] .lede { padding-bottom: 0 !important; }
+/* (8) No doubled rule under a tab bar. The tab bar draws its own bottom
+   border, and the first section header inside the tab drew a second rule
+   24px under it — two horizontal lines with nothing between them (Samhita's
+   rule, now everywhere). */
+[data-baseweb="tab-panel"] [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child .section-hdr,
+[data-baseweb="tab-panel"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-of-type .section-hdr {
+    border-top: none !important; margin-top: 0 !important; padding-top: calc(var(--s4) + 3px) !important;
+}
