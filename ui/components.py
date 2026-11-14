@@ -854,7 +854,7 @@ def render_data_table(
     label_col: str | None = None,
     col_labels: dict[str, str] | None = None,
     max_height: int = 520,
-    row_height: int = 31,
+    row_height: int = 30,
 ) -> None:
     """Render a DataFrame as the app's one institutional table.
 
@@ -991,7 +991,11 @@ def render_data_table(
     # table and takes the bottom off a two-row one. The header is 0.625rem at
     # 1.2 plus 0.5rem padding plus its rule = 29px.
     n_rows = len(view)
-    _HEADER_H = 29
+    _HEADER_H = 30
+    # Cell padding is DERIVED from row_height, so a row is exactly row_height
+    # tall (16.5px line + 1px rule + 2 x pad) and the frame budgeted for it has
+    # no blank strip under the last row (0.4rem made 30.3px rows against 31).
+    _pad_v = max(0.0, (row_height - 17.5) / 2)
     _SCROLL_PAD = 2                     # .tt-scroll's own padding-top
     content_h = _HEADER_H + n_rows * row_height + _SCROLL_PAD + 2
     iframe_h = min(content_h, max_height)
@@ -1038,7 +1042,7 @@ def render_data_table(
                 transition:background 120ms cubic-bezier(0.2,0,0,1); }}
     tbody tr:last-child {{ border-bottom:none; }}
     tbody tr:hover {{ background:{t['accent_hover']}; }}
-    tbody td {{ padding:0.4rem 0.75rem; color:{t['ink_primary']}; font-size:0.6875rem;
+    tbody td {{ padding:{_pad_v}px 0.75rem; color:{t['ink_primary']}; font-size:0.6875rem;
                 line-height:1.5; vertical-align:middle; white-space:nowrap; }}
     tbody td.num {{ text-align:right; }}
     tbody td.lbl {{ font-weight:600; color:{t['ink_primary']}; }}

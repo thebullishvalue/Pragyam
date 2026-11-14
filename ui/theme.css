@@ -3280,3 +3280,14 @@ html body [data-testid="stButtonGroup"] button:not([data-testid$="Active"]):not(
 }
 html body [data-testid="stButtonGroup"] button p { color: inherit !important; letter-spacing: inherit !important; }
 html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { letter-spacing: 0.06em !important; }
+
+/* ONE PANEL CHROME — Pragyam's. The header (context line, meta, chip) sits on
+   its own tinted band above a rule, so a panel reads as a labelled object and
+   its content (a chart drawn full-bleed, a table, copy) starts below the band.
+   Seven apps drew the header on the panel's own ground, where it ran straight
+   into the first table row or the top of the plot. A header that shares a row
+   with a control (window strip) tints the whole row, not just its own box. */
+.panel-hdr { background: var(--surface-2); position: relative; z-index: 1; }
+[class*="st-key-panelrow-"] { background: var(--surface-2); }
+[class*="st-key-panelrow-"] .panel-hdr { background: transparent; }
+.panel-foot { padding: var(--s2) var(--s4) var(--s3); }
