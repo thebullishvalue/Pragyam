@@ -3421,3 +3421,14 @@ html body [data-testid="stSidebar"] [data-testid^="stBaseButton"] { letter-spaci
     flex: 1 1 auto !important; height: 100% !important;
 }
 [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] .metric-card { height: 100% !important; }
+
+/* ── Sidebar pop-up guard carrier ─────────────────────────────────────────────
+   theme.py's _guard_sidebar_popovers() draws a zero-height iframe whose only
+   job is to hand the page a listener (a calendar tap must not collapse the
+   sidebar on a phone). It is not content: out of the column's flow, so it adds
+   no flex gap and takes no part in the rhythm above. */
+[data-testid="stElementContainer"]:has(> iframe[srcdoc*="sidebar-popover-guard"]) {
+    position: absolute !important; width: 0 !important; height: 0 !important;
+    margin: 0 !important; padding: 0 !important; overflow: hidden !important;
+    pointer-events: none !important;
+}

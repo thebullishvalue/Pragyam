@@ -35,7 +35,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v13.0.10"
+VERSION = "v13.0.11"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -613,6 +613,38 @@ def apply_default_hover(fig, precision: int = 2) -> None:
             tr.hovertemplate = "%{customdata[0]}<extra></extra>"
 
 
+# ── Sidebar pop-up guard ─────────────────────────────────────────────────────
+# On a screen narrower than 768px Streamlit collapses the sidebar on any press
+# outside it, so a tap dismisses the rail. A date picker's calendar is drawn in
+# a pop-up layer outside the sidebar's DOM, so the first tap on a day or a month
+# arrow counted as "outside" and the rail closed under the user's finger.
+# Dropdown menus never had the problem: they stop their own presses before
+# Streamlit's document-level listener sees them. This makes every pop-up do the
+# same, and only below 768px, where that listener acts. The iframe only hands
+# the listener to the page (so it outlives the iframe) and takes no space; the
+# CSS rule for `sidebar-popover-guard` lifts it out of the layout.
+_POPOVER_GUARD_JS = (  # no double quotes: it is embedded in one below
+    "(function(){if(window.__sidebarPopoverGuard)return;window.__sidebarPopoverGuard=true;"
+    "document.body.addEventListener('mousedown',function(e){var t=e.target;"
+    "if(window.innerWidth<768&&t&&t.closest&&t.closest('[data-baseweb=popover]'))"
+    "e.stopPropagation();});})();"
+)
+_POPOVER_GUARD_HTML = (
+    "<script>/* sidebar-popover-guard */(function(){try{var d=window.parent.document;"
+    "if(d.getElementById('sidebar-popover-guard'))return;"
+    "var s=d.createElement('script');s.id='sidebar-popover-guard';"
+    's.textContent="' + _POPOVER_GUARD_JS + '";'
+    "d.head.appendChild(s);}catch(e){}})();</script>"
+)
+
+
+def _guard_sidebar_popovers() -> None:
+    """Keep the sidebar open while a pop-up drawn from it (a calendar) is used."""
+    from streamlit.components.v1 import html as _html
+
+    _html(_POPOVER_GUARD_HTML, height=0)
+
+
 def inject_css(theme: str = "dark") -> None:
     """Inject the Obsidian Quant Terminal CSS into the Streamlit app.
 
@@ -639,6 +671,7 @@ def inject_css(theme: str = "dark") -> None:
         css += LIGHT_TOKENS
 
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    _guard_sidebar_popovers()
 
 
 # ── The run's two phases, and the percentage band each one owns ─────────────
