@@ -142,10 +142,14 @@ def create_regime_history_chart(regime_series: list) -> go.Figure:
     # Obsidian palette — the amber one in particular is now the app's caution
     # colour, so a routine "Chop" gridline was drawn in the one hue reserved
     # for a warning.
-    for y_val, color, label in [
-        (1.0, chart_rgba("emerald", 0.25), "Bull"),
-        (0.1, chart_rgba("slate", 0.3), "Chop"),
-        (-0.5, chart_rgba("rose", 0.25), "Bear"),
+    # The LINE is the quarter-strength tint; its LABEL is the tone at full
+    # strength, inside the plot above the line's right end. Drawn in the
+    # line's own 25% colour past the plot's edge, the labels were too faint to
+    # read and the panel's edge cut them.
+    for y_val, color, tone, label in [
+        (1.0, chart_rgba("emerald", 0.25), "emerald", "Bull"),
+        (0.1, chart_rgba("slate", 0.3), "slate", "Chop"),
+        (-0.5, chart_rgba("rose", 0.25), "rose", "Bear"),
     ]:
         fig.add_hline(
             y=y_val,
@@ -153,8 +157,8 @@ def create_regime_history_chart(regime_series: list) -> go.Figure:
             line_color=color,
             line_width=0.8,
             annotation_text=label,
-            annotation_position="right",
-            annotation_font=dict(color=color, size=10, family="JetBrains Mono, monospace"),
+            annotation_position="top right",
+            annotation_font=dict(color=chart_color(tone), size=10, family="JetBrains Mono, monospace"),
             annotation_font_size=9,
             opacity=0.9,
         )

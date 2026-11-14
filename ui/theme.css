@@ -3291,3 +3291,20 @@ html body [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { lette
 [class*="st-key-panelrow-"] { background: var(--surface-2); }
 [class*="st-key-panelrow-"] .panel-hdr { background: transparent; }
 .panel-foot { padding: var(--s2) var(--s4) var(--s3); }
+
+/* NOTHING UNDER THE BAND. Streamlit's -16px markdown margin slid the element
+   after a panel header 16px up beneath it — invisible while the header was
+   transparent, but the band is opaque and sits above, so it covered the top
+   of every chart: subplot titles, the labels of reference lines placed above
+   the plot (VaR, mean, average weight). When a chart follows a header, the
+   header keeps its full height and the chart's own 8px inset is its air. */
+[class*="st-key-panel-"] [data-testid="stElementContainer"]:has(.panel-hdr):has(+ [data-testid="stElementContainer"] .stPlotlyChart) [data-testid="stMarkdownContainer"]:has(> .panel-hdr) {
+    margin-bottom: 0 !important;
+}
+/* A table under a header row that also holds the window strip started 10px
+   below the band (the iframe's 8px inset plus its scroller's 2px), where under
+   a plain header the inset tucks beneath the band. The same tuck here, so the
+   column headings sit directly on the band's rule in every panel. */
+[class*="st-key-panel-"] > [data-testid="stLayoutWrapper"]:has([class*="st-key-panelrow-"]) + [data-testid="stElementContainer"]:has(iframe) {
+    margin-top: calc(-1 * var(--s2)) !important;
+}
