@@ -3452,3 +3452,17 @@ html body [data-testid="stSidebar"] :is([data-testid="stBaseButton-primary"], [d
         letter-spacing: 0.04em !important;
     }
 }
+
+/* ── Text entry writes in the page's ink ─────────────────────────────────────
+   Streamlit's base theme is the dark one, and its inputs carry that theme's
+   text colour (#E6EAF1) into the parts our rules never named: the caret, and
+   the characters typed into a select to filter it. On Paper's white fields both
+   measured 1.2:1, so the blinking line all but vanished in every text, number
+   and date field, and a search typed into "Select transaction" was near-white.
+   Both now take --ink (17.7:1 on Paper, the same light ink on Slate). The
+   select's own caret stays hidden (the rule above, more specific, wins): its
+   typed characters are their own feedback. */
+input, textarea { caret-color: var(--ink) !important; }
+[data-baseweb="select"] input {
+    color: var(--ink) !important; -webkit-text-fill-color: var(--ink) !important;
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.13] - 2026-11-16
+### Fixed
+- **The cursor and typed search text are visible on Paper.** Streamlit's base theme is the dark
+  one, and its inputs carried that theme's near-white text colour into two places the theme never
+  named: the blinking cursor in every text, number and date field, and the characters typed into
+  a dropdown to filter it ("Select transaction", "Select security"). On Paper's white fields both
+  measured 1.2:1, all but invisible. Both now take the page's ink: 17.7:1 on Paper, unchanged on
+  Slate. A dropdown keeps its hidden cursor; the letters you type are their own feedback.
+
 ## [13.0.12] - 2026-11-14
 ### Fixed
 - **A rail button's label is sized for the button.** Every button in the sidebar is a full-width
