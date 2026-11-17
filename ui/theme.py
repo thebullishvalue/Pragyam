@@ -30,12 +30,13 @@ Author: @thebullishvalue
 
 from __future__ import annotations
 
+import re
 import html
 from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v13.0.13"
+VERSION = "v13.0.14"
 PRODUCT_NAME = "Pragyam"
 COMPANY = "@thebullishvalue"
 
@@ -736,3 +737,179 @@ def apply_chart_theme(fig) -> None:
     """Apply the Obsidian Quant Terminal theme to a Plotly figure (mutates in place)."""
     fig.update_layout(**chart_layout())
     style_axes(fig)
+
+
+# ── Hover numbers Plotly would print raw ─────────────────────────────────────
+# Plotly.js 3.1 (bundled by Streamlit 1.51 and 1.52) rejects a d3 number format
+# that pairs the sign flag with a fixed precision — `%{y:+.2f}`, `%{x:+,.2f}`,
+# `%{customdata:+.0f}` — and prints the raw float in its place, in every hover
+# mode: a tooltip read "Consensus : 0.2295574715461816 · NEUTRAL". Plain formats
+# (`.2f`, `,.2f`, `.1%`) are applied. So every signed field is formatted HERE, in
+# Python (which reads the same spec), and the template points at the finished
+# string in customdata. A numeric x axis with no hover format gets one, so the
+# header of a unified hover is "3.755", not "3.754925".
+# Called by render_chart_panel on every figure, after all traces are added.
+_TPL_FIELD = re.compile(r"%\{([A-Za-z_.]+(?:\[\d+\])?)(?::([^}]*))?\}")
+_D3_SPEC = re.compile(r"(?:(.)?([<>=^]))?([+\- ])?([$#])?(0)?(\d+)?(,)?(?:\.(\d+))?(~)?([efgd%])?")
+
+
+def _fmt_d3(v, spec: str):
+    """`v` formatted as d3-format `spec` would, or None when the spec has no Python twin."""
+    m = _D3_SPEC.fullmatch(spec)
+    if m is None:
+        return None
+    fill, align, sign, sym, zero, width, comma, prec, trim, typ = m.groups()
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "—" if v is None else str(v)
+    if f != f:
+        return "—"
+    if typ is None:                       # d3's default type: shortest, trailing zeros trimmed
+        typ, trim, prec = "g", "~", prec or "12"
+    if typ == "d":
+        typ, prec = "f", "0"
+    py = (f"{fill or '' if align else ''}{align or ''}{sign or ''}{'#' if sym == '#' else ''}"
+          f"{zero or ''}{width or ''}{comma or ''}{'.' + prec if prec else ''}{typ}")
+    try:
+        s = format(f, py)
+    except ValueError:
+        return None
+    if trim:
+        tail = ""
+        if s.endswith("%"):
+            s, tail = s[:-1], "%"
+        elif "e" in s:
+            s, e = s.split("e", 1)
+            tail = "e" + e
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        s += tail
+    if sym == "$":
+        s = s[0] + "$" + s[1:] if s[:1] in "+- " else "$" + s
+    return s
+
+
+def _is_2d(vals) -> bool:
+    try:
+        first = vals[0]
+    except (TypeError, IndexError, KeyError):
+        return False
+    return hasattr(first, "__len__") and not isinstance(first, str)
+
+
+def _field_values(tr, name: str):
+    """The per-point values a template field reads, or None."""
+    if name.startswith("customdata"):
+        cd = getattr(tr, "customdata", None)
+        if cd is None:
+            return None
+        m = re.fullmatch(r"customdata\[(\d+)\]", name)
+        if m:
+            k = int(m.group(1))
+            return [row[k] if _is_2d([row]) and len(row) > k else None for row in cd]
+        return list(cd)
+    obj = tr
+    for part in name.split("."):
+        obj = getattr(obj, part, None) if obj is not None else None
+    if obj is None or isinstance(obj, (str, int, float)):
+        return None
+    return list(obj)
+
+
+def _numeric_floats(vals) -> bool:
+    """Do these axis values include a non-integer number (not a date, not a category)?"""
+    import numbers
+    seen = False
+    for v in vals[:500]:
+        if isinstance(v, bool) or not isinstance(v, numbers.Real):
+            return False
+        if float(v) != float(v):
+            continue
+        if float(v) != round(float(v)):
+            seen = True
+    return seen
+
+
+def fix_hover_formats(fig) -> None:
+    """Pre-format every signed number a hover or text template would print raw."""
+    for tr in fig.data:
+        tpls = {a: getattr(tr, a, None) for a in ("hovertemplate", "texttemplate")}
+        tpls = {a: t for a, t in tpls.items() if isinstance(t, str)}
+        fields = []
+        for a, t in tpls.items():
+            for m in _TPL_FIELD.finditer(t):
+                if m.group(2) and "+" in m.group(2) and m.group(0) not in [f[0] for f in fields]:
+                    fields.append((m.group(0), m.group(1), m.group(2)))
+        if not fields:
+            continue
+        values = {ph: _field_values(tr, name) for ph, name, _ in fields}
+        new = dict(tpls)
+        twod = [f for f in fields if values[f[0]] is not None and _is_2d(values[f[0]])
+                and not f[1].startswith("customdata")]
+        if twod:                                         # heatmap-like: z / text are grids
+            cd_free = getattr(tr, "customdata", None) is None
+            for ph, name, spec in twod:
+                grid = [[_fmt_d3(v, spec) for v in row] for row in values[ph]]
+                if any(s is None for row in grid for s in row):
+                    continue
+                if name == "text":
+                    tr.text = grid
+                    target = "%{text}"
+                elif cd_free:
+                    tr.customdata = grid
+                    cd_free = False
+                    target = "%{customdata}"
+                else:
+                    continue
+                new = {a: t.replace(ph, target) for a, t in new.items()}
+            for a, t in new.items():
+                setattr(tr, a, t)
+            continue
+        base = getattr(tr, "customdata", None)
+        one_d = False
+        if base is None:
+            n = next((len(v) for v in values.values() if v is not None), 0)
+            rows = [[] for _ in range(n)]
+        else:
+            lst = list(base)
+            if lst and _is_2d(lst):
+                rows = [list(r) for r in lst]
+            else:
+                rows, one_d = [[v] for v in lst], True
+        if not rows or len({len(r) for r in rows}) != 1:
+            continue
+        for ph, name, spec in fields:
+            vals = values[ph]
+            if vals is None or len(vals) != len(rows):
+                continue
+            strs = [_fmt_d3(v, spec) for v in vals]
+            if any(s is None for s in strs):
+                continue
+            k = len(rows[0])
+            for r, s in zip(rows, strs):
+                r.append(s)
+            new = {a: t.replace(ph, f"%{{customdata[{k}]}}") for a, t in new.items()}
+        if one_d:                                        # customdata became 2-D: column 0 is the old one
+            new = {a: re.sub(r"%\{customdata(?=[:}])", "%{customdata[0]", t) for a, t in new.items()}
+        tr.customdata = rows
+        for a, t in new.items():
+            setattr(tr, a, t)
+    # A unified hover's header is the axis value, formatted by the axis.
+    hm = getattr(fig.layout, "hovermode", None)
+    letter = "x" if hm in ("x", "x unified") else "y" if hm in ("y", "y unified") else None
+    if not letter:
+        return
+    refs = {getattr(tr, f"{letter}axis", None) or letter for tr in fig.data if hasattr(tr, f"{letter}axis")}
+    for ref in sorted(refs):
+        ax = fig.layout[f"{letter}axis{ref[1:]}"]
+        if ax.hoverformat or ax.tickformat or ax.type not in (None, "-", "linear"):
+            continue
+        vals = []
+        for tr in fig.data:
+            if hasattr(tr, f"{letter}axis") and (getattr(tr, f"{letter}axis", None) or letter) == ref:
+                v = getattr(tr, letter, None)
+                if v is not None and not isinstance(v, str):
+                    vals.extend(list(v)[:200])
+        if vals and _numeric_floats(vals):
+            ax.hoverformat = ",.3~f"
