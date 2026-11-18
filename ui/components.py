@@ -802,6 +802,38 @@ def _fmt_cell(value, precision: int) -> str:
     return html_mod.escape(str(value))
 
 
+# A number written as text: optional sign or ≈/±, optional currency, digits with
+# separators and decimals, an optional unit (%, ×, σ, pts, pp, L, Cr …), optionally a
+# range to a second such number, optionally a parenthetical ("1,625.48 (−14.5%)").
+import re as _nre
+_NUM = r"[+\-−±≈~]?\s*[₹$]?\s*\d[\d,]*(?:\.\d+)?\s*(?:%|×|x|σ|pts|pp|bps|u|L|Cr|K|M|B)?"
+_NUM_TEXT = _nre.compile(rf"^{_NUM}(?:\s*–\s*{_NUM})?(?:\s*\([^)]*\))?$")
+_EMPTY_TEXT = {"", "—", "–", "-"}
+
+
+def _is_numeric_text(s: "pd.Series") -> bool:
+    """Is this object column a column of numbers written as text?
+
+    Every non-empty value must read as a number (dashes for missing are allowed),
+    and at least one must be present: a column of dashes is not evidence either way.
+    """
+    if s.dtype != object:
+        return False
+    seen = False
+    for v in s:
+        if v is None or (isinstance(v, float) and v != v):
+            continue
+        if not isinstance(v, str):
+            return False
+        t = v.strip()
+        if t in _EMPTY_TEXT:
+            continue
+        if not _NUM_TEXT.match(t):
+            return False
+        seen = True
+    return seen
+
+
 # Column-name tokens that must stay UPPER-CASE when a raw column name is
 # prettified into a professional header ("MSF_Osc" → "MSF Osc", not "Msf Osc").
 # (Deliberately NOT including "OSC" — an oscillator column reads more
@@ -920,6 +952,13 @@ def render_data_table(
 
     cols = list(view.columns)
     numeric_cols = {c for c in cols if pd.api.types.is_numeric_dtype(view[c])}
+    # A column of numbers already formatted as text ("1,901.70", "+₹25,575", "+3.4%",
+    # "1,625.48 (−14.5%)", "325 (1 lot)") is still a column of numbers: right-aligned in
+    # the primary ink. Read by dtype alone it was text — left-aligned and tertiary, so a
+    # table of prices and P&L read as prose. The label column is never a numeric column.
+    _lbl = label_col if label_col is not None else ("__index__" if show_index else (cols[0] if cols else None))
+    text_numeric = {c for c in cols if c not in numeric_cols and c != _lbl and _is_numeric_text(view[c])}
+    numeric_cols |= text_numeric
     lower_better = (lower_is_better_cols or set()) & numeric_cols
     sign_cols = ((sign_color_cols or set()) & numeric_cols) | lower_better
     col_precision = col_precision or {}
@@ -941,6 +980,14 @@ def render_data_table(
     def _value_html(c: str, val) -> str:
         p = col_precision.get(c, precision)
         text = _fmt_cell(val, p)
+        if c in sign_cols and c in text_numeric and text != "—":
+            # A formatted number carries its sign as its first character.
+            s = str(val).strip()[:1]
+            sgn = 1 if s == "+" else -1 if s in ("−", "-") else 0
+            if c in lower_better:
+                sgn = -sgn
+            color = t["emerald"] if sgn > 0 else t["rose"] if sgn < 0 else t["ink_tertiary"]
+            return f'<span style="color:{color};font-weight:600;">{text}</span>'
         if c in sign_cols and text != "—":
             try:
                 fv = float(val)
