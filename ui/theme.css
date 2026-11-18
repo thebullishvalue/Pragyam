@@ -3466,3 +3466,24 @@ input, textarea { caret-color: var(--ink) !important; }
 [data-baseweb="select"] input {
     color: var(--ink) !important; -webkit-text-fill-color: var(--ink) !important;
 }
+
+/* ── The appearance switch reaches the rail's foot ────────────────────────────
+   The rail is meant to read identity → controls → settings, with the
+   appearance switch pinned to its foot (margin-top: auto above). Two things
+   kept it under the run button instead, in every app with a short rail:
+   the rail's content column was only as tall as its content (nothing to push
+   against), and Streamlit 1.52 wraps a keyed container in a layout wrapper,
+   so the auto margin sat on the inner block, not on the column's item. The
+   column now fills the rail and the wrapper takes the margin. A rail taller
+   than the window still scrolls as before. */
+[data-testid="stSidebarContent"] { display: flex; flex-direction: column; }
+[data-testid="stSidebarContent"] > [data-testid="stSidebarUserContent"] { flex: 1 0 auto; }
+[data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) { margin-top: auto; }
+
+/* ── A set card keyed by a side ───────────────────────────────────────────────
+   A set card's key is a set's letter in violet (Sanket's A · B · C). A card
+   keyed by a side's glyph instead (Vaaydo's ▲ long, ▼ short, × exits) carries
+   the class `side`, and the glyph takes that side's ink, as its counts do. */
+.set-card.side .sc-key { color: var(--ink-secondary); }
+.set-card.side.success .sc-key { color: var(--long); }
+.set-card.side.danger .sc-key { color: var(--short); }

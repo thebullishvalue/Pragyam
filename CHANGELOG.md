@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [13.0.15] - 2026-11-18
+### Fixed
+- **The appearance switch reaches the rail's foot.** The rail is meant to read identity →
+  controls → settings, with the Slate / Paper switch pinned to its foot. It stayed under the last
+  control instead in every app whose rail is shorter than the window: the rail's content column
+  was only as tall as its content, so there was nothing to push against, and Streamlit 1.52 wraps
+  a keyed container in a layout wrapper, so the pin sat on the inner block rather than on the
+  column's item. The column now fills the rail and the wrapper takes the pin; a rail taller than
+  the window scrolls as before. Found while bringing VAAYDO into the family.
+
 ## [13.0.14] - 2026-11-17
 ### Fixed
 - **Chart tooltips print rounded numbers.** Plotly.js 3.1, which Streamlit bundles, rejects a
