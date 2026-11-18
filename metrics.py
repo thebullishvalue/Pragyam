@@ -208,59 +208,41 @@ class ExecutionMetrics:
         }
     
     def print_summary(self, console=None):
-        """Print execution summary to console."""
+        """The run's timing and counters, as the family console's summary cards."""
         if console is None:
             from logger_config import console
+        from logger_config import fmt_elapsed
 
-        console.line()
-
-        # Timing summary
-        console.section("Timing")
-        console.item("Total Duration", f"{self.get_total_duration():.2f}s")
-
+        timing = {"Total": fmt_elapsed(self.get_total_duration())}
         for phase_name, phase in self.phases.items():
             if phase_name == "total_execution":
-                # Already reported as Total Duration above — repeating the
-                # whole run inside its own phase breakdown double-counts it.
-                continue
-            status_icon = "✓" if phase.status == "success" else "✗"
-            console.detail(f"{phase_name.replace('_', ' ').title()}: {phase.duration:.2f}s [{status_icon}]")
+                continue          # already the total; repeating it double-counts the run
+            timing[phase_name.replace("_", " ").capitalize()] = (
+                f"{fmt_elapsed(phase.duration)}" + ("" if phase.status == "success" else " · failed"))
+        console.summary("Timing", timing)
 
-        # Counters
-        console.section("Counters")
-        console.item("Symbols", self.symbols_count)
-        console.item("Days", self.days_count)
-        console.item("Strategies", self.strategies_count)
-        console.item("Portfolios Generated", self.portfolios_generated)
+        counters = {"Symbols": self.symbols_count, "Days": self.days_count,
+                    "Portfolios generated": self.portfolios_generated}
+        if self.strategies_count:
+            counters["Strategies"] = self.strategies_count
         if self.rebalances:
-            # Backtest-only counter — printing "Rebalances: 0" on every live
-            # curation run states a fact about a process that never ran.
-            console.item("Rebalances", self.rebalances)
-        
-        # Performance
+            # Backtest-only: "Rebalances 0" on a live curation states a fact about a
+            # process that never ran.
+            counters["Rebalances"] = self.rebalances
         if self.total_return != 0:
-            console.section("Performance")
-            console.item("Total Return", f"{self.total_return*100:.2f}%")
-            console.item("Sharpe Ratio", f"{self.sharpe_ratio:.2f}")
-            console.item("Max Drawdown", f"{self.max_drawdown*100:.2f}%")
-        
-        # Errors
-        if self.errors:
-            console.section("Errors")
-            for error in self.errors[:5]:  # Show first 5
-                console.error(f"[{error['type']}] {error['message']}")
-            if len(self.errors) > 5:
-                console.detail(f"... and {len(self.errors) - 5} more errors")
-        
-        # Warnings
-        if self.warnings:
-            console.section("Warnings")
-            for warning in self.warnings[:5]:  # Show first 5
-                console.warning(warning)
-            if len(self.warnings) > 5:
-                console.detail(f"... and {len(self.warnings) - 5} more warnings")
-        
-        console.line()
+            counters.update({"Total return": f"{self.total_return*100:.2f}%",
+                             "Sharpe ratio": f"{self.sharpe_ratio:.2f}",
+                             "Max drawdown": f"{self.max_drawdown*100:.2f}%"})
+        console.summary("Counters", counters)
+
+        for error in self.errors[:5]:
+            console.error(f"[{error['type']}] {error['message']}")
+        if len(self.errors) > 5:
+            console.detail(f"… and {len(self.errors) - 5} more errors")
+        for warning in self.warnings[:5]:
+            console.warning(warning)
+        if len(self.warnings) > 5:
+            console.detail(f"… and {len(self.warnings) - 5} more warnings")
 
 
 # Module-level fallback instance — used only when Streamlit's session state

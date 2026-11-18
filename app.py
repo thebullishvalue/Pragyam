@@ -189,6 +189,10 @@ def theme_choice() -> str:
 # up, some do not" looks like.
 st.session_state["theme"] = "light" if theme_choice() == "Paper" else "dark"
 inject_css(theme=st.session_state["theme"])
+# The terminal's masthead, once per process; library output joins the run trace.
+from logger_config import capture_library_output
+capture_library_output()
+log.banner(PRODUCT_NAME, VERSION, "Portfolio Curation · Live NSE Data")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -974,18 +978,17 @@ def _run_analysis(
     from logger_config import generate_run_id
     current_run_id = generate_run_id()  # Fresh ID for each analysis
     _universe_label = f"{universe} · {index}" if index else universe
-    log.main_header(f"PRAGYAM | Portfolio Intelligence | {VERSION}", {
+    log.header(f"{PRODUCT_NAME} · Portfolio curation", VERSION, run_id=current_run_id)
+    log.main_header("Request", {
         "Analysis Date": selected_date_display,
         "Universe": _universe_label,
         "Investment Style": investment_style,
         "Capital": f"₹{capital:,.0f}",
         "Positions Requested": num_positions,
         "Position Cap": f"{st.session_state.max_pos_pct*100:.0f}% per holding",
-        "Run ID": current_run_id[-12:],
-        "Started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
 
-    log.section("Data & Regime", phase="PHASE 1")
+    log.section("Data & Regime", phase="Phase 1/2")
 
     # Resolve the universe to get symbols
     #
@@ -1175,7 +1178,7 @@ def _run_analysis(
             progress_bar(progress_container, 40, _stage40[0],
                          f"{_spec['short']} · {_stage40[1]}")
 
-            log.section("Curation", phase="PHASE 2")
+            log.section("Curation", phase="Phase 2/2")
 
             # Prices are the one input EVERY style needs — a name without one
             # cannot be sized whatever the allocator decides — so what survives
@@ -1355,8 +1358,8 @@ def _run_analysis(
                            + ("(excluded from the book)" if _excl_from_book
                               else "(held, no risk diagnostics)") if _excl else ""))
                 for _sym, _d in sorted(_excl.items(), key=lambda kv: kv[1]["coverage"]):
-                    _t.item(f"  {'excluded' if _excl_from_book else 'unestimated'} {_sym}",
-                            f"{_d['obs']}/{_d['window']} obs ({_d['coverage']:.0%})")
+                    _t.detail(f"{'excluded' if _excl_from_book else 'unestimated'} {_sym} · "
+                              f"{_d['obs']}/{_d['window']} obs ({_d['coverage']:.0%})")
                 _t.item("Clustering",
                         (f"{_at.get('nco_clusters', 0)} clusters "
                          f"(silhouette {_at.get('nco_silhouette', 0):.3f})"
@@ -1484,8 +1487,7 @@ def _run_analysis(
             metrics.end_phase("total_execution", success=True)
             progress_bar(progress_container, 100, "Analysis Complete",
                          f"{len(_book)} positions · {_spec['short']}")
-            log.summary("Execution Summary", {
-                "Run ID": current_run_id[-12:],
+            log.summary("Execution summary", {
                 "Curation": f"{_spec['label']} ({_spec['family']})",
                 "Weight Formula": _spec["formula"],
                 "Clusters": _book.attrs.get("nco_clusters", 0),
@@ -1498,6 +1500,7 @@ def _run_analysis(
                 "Status": "SUCCESS",
             })
             metrics.print_summary(log)
+            log.end_run()
             progress_container.empty()
             st.toast("Analysis Complete!")
             return
@@ -1517,6 +1520,7 @@ def _run_analysis(
         log.failure("Run aborted", f"{type(e).__name__}: {e}")
         for _line in _tb.format_exc().rstrip().split("\n"):
             log.text(_line)
+        log.end_run("FAILED")
         metrics.add_error(type(e).__name__, str(e), "_run_analysis")
         st.error(f"Initialization failed: {e}")
 
