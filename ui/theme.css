@@ -3487,3 +3487,32 @@ input, textarea { caret-color: var(--ink) !important; }
 .set-card.side .sc-key { color: var(--ink-secondary); }
 .set-card.side.success .sc-key { color: var(--long); }
 .set-card.side.danger .sc-key { color: var(--short); }
+
+/* ── The landing's three segments ─────────────────────────────────────────────
+   Every member's cold start reads as Arthagati's: Engines (three system panels),
+   Inputs & Scope (a KPI strip), Run Outputs (four cards). The panels are ONE grid
+   of plain divs, not three Streamlit containers, which each shrink to their own
+   content: the panel with the longest copy stood taller and the three spec blocks
+   started at three heights. `auto 1fr auto` rows give panels of different copy one
+   height and one baseline for their specs. The four outcome cards run 4-up, then
+   2-up, then 1-up, always a full rectangle (`auto-fit` laid them out 3 + 1, the
+   fourth alone on its row). */
+.system-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--grid-gap); align-items: stretch;
+}
+.system-panel {
+    display: grid; grid-template-rows: auto 1fr auto;
+    background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg);
+    overflow: hidden; transition: border-color var(--motion-base) var(--ease-standard);
+}
+.system-panel:hover { border-color: var(--line-strong); }
+.system-panel .panel-specs { border-top: 1px solid var(--line); padding-top: var(--s3); }
+.system-panel .panel-specs .lookback-row .val { text-align: right; }
+@media (max-width: 1024px) { .system-grid { grid-template-columns: minmax(0, 1fr); } }
+.outcome-grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--grid-gap); align-items: stretch;
+}
+@media (max-width: 1200px) { .outcome-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px)  { .outcome-grid { grid-template-columns: minmax(0, 1fr); } }

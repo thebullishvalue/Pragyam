@@ -1213,3 +1213,30 @@ def render_ticker(frame, max_items: int = 24, seconds_per_item: float = 3.6) -> 
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+# ── The landing's segments ───────────────────────────────────────────────────────
+# Every member's cold start reads as Arthagati's: Engines (three panels), Inputs & Scope
+# (render_kpi_strip), Run Outputs (four cards). Panels and cards are static text, so each
+# set is ONE grid of plain divs, styled in the fidelity block of ui/theme.css: equal
+# heights and one baseline for the spec rows by construction.
+def render_system_grid(panels) -> None:
+    """Engines: one ``(name, kicker, body, ((label, value), ...))`` per panel, three of them."""
+    esc = html_mod.escape
+    st.markdown(
+        '<div class="system-grid">' + "".join(
+            '<div class="system-panel"><div class="panel-hdr"><div class="ph-left">'
+            f'<span class="ph-title">{esc(name)}</span><span class="ph-context">{esc(kicker)}</span>'
+            f'</div></div><div class="panel-copy">{esc(body)}</div><div class="panel-specs">'
+            + "".join(f'<div class="lookback-row"><span class="lbl">{esc(k)}</span>'
+                      f'<span class="val">{esc(v)}</span></div>' for k, v in specs)
+            + "</div></div>" for name, kicker, body, specs in panels) + "</div>",
+        unsafe_allow_html=True)
+
+
+def render_outcome_grid(cards) -> None:
+    """Run Outputs: one ``(title, description)`` per card; four, laid out 4-up, 2-up or 1-up."""
+    esc = html_mod.escape
+    st.markdown('<div class="outcome-grid">' + "".join(
+        f'<div class="outcome"><div class="o-t">{esc(t)}</div><div class="o-d">{esc(d)}</div></div>'
+        for t, d in cards) + "</div>", unsafe_allow_html=True)

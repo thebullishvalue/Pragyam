@@ -80,6 +80,8 @@ from ui.components import (
     render_header,
     render_kpi_strip,
     render_nav_brand,
+    render_outcome_grid,
+    render_system_grid,
     render_notice_rail,
     render_rail_readout,
     render_section_header,
@@ -495,62 +497,52 @@ def _render_header() -> None:
     )
 
 
-#: The three systems, as the cold-start screen describes them. Data, not
-#: markup — the landing page renders them through one template, so the three
-#: panels cannot drift apart in structure the way three hand-written HTML
-#: blocks did.
-_SYSTEM_PANELS = (
-    ("portfolio", "PORTFOLIO", "Three weighting styles",
-     "Equal Weight, ERC and HRP forecast nothing — the book spreads risk across distinct "
-     "exposures rather than picking winners.",
-     (("Cluster", "Ward on correlation distance"),
-      ("Allocate", "1/N · equal risk · cluster bisection"),
-      ("Targets", "Volatility and drawdown"))),
-    ("regime", "REGIME", "Eight-factor context",
-     "A fixed-weight composite of eight measured factors over a rolling window. "
-     "Context for reading the book — no weight changes because of it.",
-     (("Factors", "Momentum · trend · breadth · velocity"),
-      ("Output", "Score and confidence"),
-      ("History", "Rolling-window timeline"))),
-    ("structure", "RISK STRUCTURE", "What the allocator saw",
-     "The correlation matrix reordered by cluster, so the blocks driving the "
-     "allocation are visible — with each holding's variance share against its capital.",
-     (("Clusters", "Silhouette-selected"),
-      ("Per holding", "Weight · risk · vol · independence"),
-      ("Benchmark", "EW shadow · the other styles' books"))),
+#: The landing page's three segments, as data: Engines, Inputs & Scope, Run Outputs, in the
+#: order Arthagati reads them. Plain words first; a method's name only where it helps.
+_ENGINES = (
+    ("Portfolio", "The allocator · three styles",
+     "Builds the book in one of three ways: equal weights, an equal share of the risk for "
+     "every holding, or risk balanced across groups of holdings that move together. None of "
+     "them predicts returns; each is built to spread risk across distinct exposures rather "
+     "than to pick winners.",
+     (("Weighting", "Equal · equal risk · grouped"),
+      ("Groups", "Holdings that move together"),
+      ("Aim", "Spread risk, not pick winners"))),
+    ("Regime", "The market · context",
+     "Scores the market on eight measured factors, from momentum and trend to breadth and "
+     "volatility, and tracks how that reading has shifted over recent weeks. It is context "
+     "for reading the book: it never changes a weight.",
+     (("Factors", "Eight, fixed weights"),
+      ("Reads", "Market regime and confidence"),
+      ("History", "How it has shifted"))),
+    ("Risk Structure", "The book · from the inside",
+     "Shows the book from the inside: the groups of holdings that move together, and each "
+     "holding's share of the risk set against its share of the money, so a holding that "
+     "carries far more risk than capital stands out.",
+     (("Groups", "Found from how prices move"),
+      ("Per holding", "Risk share against capital"),
+      ("Compared with", "The equal-weight book"))),
+)
+
+_OUTPUTS = (
+    ("A curated book", "Holdings, units and value, with the rule that set each weight and the "
+                       "cap that limited it."),
+    ("Its risk structure", "Each holding's share of the risk beside its share of the money, and "
+                           "the groups the allocator worked with."),
+    ("A fair comparison", "The same holdings at equal weights, so the effect of the weighting "
+                          "choice can be seen on its own."),
+    ("Every constraint named", "What was left out, what could not be estimated, and which limit "
+                               "actually bound the book, on the page rather than in a log."),
 )
 
 
 def _render_landing_page() -> None:
-    """Cold start — a description of the product, built from the product's own parts.
+    """Cold start: the claim, then Engines, Inputs & Scope and Run Outputs (Arthagati's three).
 
-    Every block here uses the same components the analysis pages use: a section
-    header for each division, `panel()` for each engine, and `render_kpi_strip`
-    for the scope numbers.
-
-    The order is an argument, and it runs from the thing to its bounds to its
-    product: the claim, then ENGINES (what the system is made of), then INPUTS
-    & SCOPE (the bounds those engines run under), then RUN OUTPUTS (what comes
-    back). Scope led once, which put the answer to "over what?" in front of any
-    reason to ask it.
+    The claim says what the product does: it measures how the holdings move together and puts
+    each holding's share of risk next to its share of capital. The non-forecasting thesis is
+    the Portfolio panel's, not the opening line's.
     """
-    # THE CLAIM SAYS WHAT THE PRODUCT DOES.
-    #
-    # It used to read "Selection and weighting both come from the return
-    # covariance structure, and no part of the system forecasts a return" —
-    # which is a disclaimer, not a description. It led with an absence, so the
-    # first sentence of the product described something the product is not.
-    #
-    # It was also not true of all three styles: Equal Weight is deliberately no
-    # longer confined to the covariance-eligible names (see
-    # nco.compute_nco_portfolio), so neither its selection nor its weighting
-    # comes from the covariance at all.
-    #
-    # What IS true of every style, and is the actual product: it measures how
-    # the holdings move together, and it puts each holding's share of variance
-    # next to its share of capital. The non-forecasting thesis is not lost —
-    # the PORTFOLIO panel below states it, and the Coverage strip and the
-    # Targets row both carry it — it just stops being the opening line.
     st.markdown(
         """<div class="lede">
   <div class="lede-claim">The system curates a book by measuring how its holdings move
@@ -561,79 +553,39 @@ def _render_landing_page() -> None:
 </div>""",
         unsafe_allow_html=True,
     )
-
-    # ── Engines — what the thing is, before what it is bounded by ─────────
-    # This section leads. The reader has just been told what the system does;
-    # the next thing they need is what it is MADE of, not the numbers those
-    # parts are bounded by. Scope answers a question — "over what?" — that
-    # only exists once you know there is machinery to scope.
-    #
-    # Accent, not violet: every page in the app gives its LEAD section the
-    # primary accent (see "Positions", "Relative Performance"), and the lead
-    # here changed.
-    render_section_header("Engines", "Three engines, one pipeline · every style "
-                          "travels all of it", icon="cpu", accent="accent")
-    cols = st.columns(3, gap="small")
-    for col, (cls, name, kicker, body, specs) in zip(cols, _SYSTEM_PANELS):
-        with col:
-            with panel(f"landing-{cls}", name, context=kicker):
-                st.markdown(
-                    f'<div class="panel-copy">{body}</div>'
-                    '<div class="panel-specs">'
-                    + "".join(
-                        f'<div class="lookback-row"><span class="lbl">{k}</span>'
-                        f'<span class="val">{v}</span></div>'
-                        for k, v in specs
-                    )
-                    + "</div>",
-                    unsafe_allow_html=True,
-                )
-
-    # ── Inputs & Scope — the app's own KPI grammar, not a bespoke number row
-    #    Second, because these are the bounds ON the engines above: what they
-    #    can be pointed at, how much history they read, and how far any one
-    #    holding is allowed to go.
-    render_section_header("Inputs & Scope", "Styles, estimation window and position "
-                          "cap · fixed before any run", icon="layers", accent="violet")
+    render_section_header(
+        "Engines",
+        "How a book is built, the market it is built in, and what the allocation looks like "
+        "from the inside.",
+        icon="cpu",
+    )
+    render_system_grid(_ENGINES)
+    render_section_header(
+        "Inputs & Scope",
+        "The limits every run works within, set before anything is computed.",
+        icon="database",
+    )
     render_kpi_strip(
         [
             {"label": "Portfolio Styles", "value": str(len(STYLE_LABELS)),
-             "subtext": " · ".join(str(METHOD_SPECS[k]["short"]) for k in METHOD_ORDER)
-                        + " — every one travels the identical pipeline"},
-            {"label": "Estimation Window", "value": f"{_CALIBRATION_LOOKBACK_FILES}d",
-             "subtext": "Daily observations behind the covariance, over a universe that "
-                        f"must carry {MIN_COVERAGE:.0%} of it to be estimated"},
+             "subtext": "Equal weight, equal risk contribution and hierarchical risk parity, "
+                        "each built through the same steps"},
+            {"label": "History Used", "value": f"{_CALIBRATION_LOOKBACK_FILES}d",
+             "subtext": "Days of prices behind the risk estimates; a holding needs "
+                        f"{MIN_COVERAGE:.0%} of them to be estimated"},
             {"label": "Position Cap", "value": "10%",
-             "subtext": "Per holding, relaxed only where it and full allocation are not "
-                        "simultaneously satisfiable"},
+             "subtext": "The most any one holding may take, relaxed only when the book could "
+                        "not otherwise be fully invested"},
         ],
         max_cols=3,
         key="landing-coverage",   # key is CSS-visible (st-key-kpi-*); name is not
     )
-
-    # ── Run Outputs — the close of the argument ───────────────────────────
-    render_section_header("Run Outputs", "What a run hands back, on the page rather "
-                          "than in a log", icon="target", accent="emerald")
-    _out = (
-        ("A curated book", "Holdings, units and value, with the weight formula that "
-                           "produced them and the cap that bounded them."),
-        ("Its risk structure", "Each holding's share of variance against its share of "
-                               "capital, and the clusters the allocator actually saw."),
-        ("An honest comparison", "The same holdings split 1/N, so the weighting decision "
-                                 "is isolated from the selection."),
-        ("Every constraint named", "What was excluded, what could not be estimated, and "
-                                   "which limit is binding — on the page, not in a log."),
+    render_section_header(
+        "Run Outputs",
+        "Four things land on screen when a run finishes, each with what bounded it.",
+        icon="target",
     )
-    st.markdown(
-        '<div class="outcome-grid">'
-        + "".join(
-            f'<div class="outcome"><div class="o-t">{html_module.escape(t)}</div>'
-            f'<div class="o-d">{html_module.escape(d)}</div></div>'
-            for t, d in _out
-        )
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    render_outcome_grid(_OUTPUTS)
 
 
 def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
