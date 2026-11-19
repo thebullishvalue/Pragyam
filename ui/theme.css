@@ -3516,3 +3516,45 @@ input, textarea { caret-color: var(--ink) !important; }
 }
 @media (max-width: 1200px) { .outcome-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px)  { .outcome-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── The appearance switch sits at the rail's foot, on every screen ───────────────
+   Streamlit ends the rail with 6rem of padding, so the switch "pinned to the foot"
+   (margin-top: auto above) floated 96px above it on every screen; and on a rail taller
+   than the screen it sat below the fold until the rail was scrolled. The rail now ends at
+   the family's foot gap, plus a phone's home-bar inset, and the switch is sticky at the
+   bottom: where the rail fits, the auto margin seats it at the foot; where it scrolls, it
+   stays at the foot and the controls pass behind it, on the rail's own ground (every box
+   from the rail down inherits it: Slate paints the rail --surface-1, Paper --surface-2).
+   One exception, by screen size: a rail that carries the page list keeps the switch in
+   flow except on a desktop at least 820px tall. The list sits outside the controls' block, and a sticky element cannot
+   leave its block, so where a long list (Nivesa's eleven pages, taller still on a phone,
+   where its labels wrap) nearly fills the screen
+   the switch would pin at the block's top, half cut and over the controls. There it is the
+   rail's last item, 16px from its end. */
+[data-testid="stSidebarUserContent"] { padding-bottom: 0 !important; }
+[data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) {
+    padding-top: var(--s3);
+    padding-bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px));
+}
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])),
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) > [data-testid="stSidebarUserContent"],
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) > [data-testid="stSidebarUserContent"] > div,
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) > [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"],
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) { background-color: inherit; }
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) { position: sticky; bottom: 0; z-index: 3; isolation: isolate; }
+[data-testid="stSidebarContent"]:not(:has([data-testid="stSidebarNav"])) [data-testid="stLayoutWrapper"]:has(> .st-key-appearance)::before {
+    content: ""; position: absolute; z-index: -1;
+    top: 0; bottom: 0; left: -48px; right: -48px; background-color: inherit;
+}
+@media (min-height: 820px) and (min-width: 1025px) {
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarContent"] > [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebarContent"] > [data-testid="stSidebarUserContent"] > div,
+    [data-testid="stSidebarContent"] > [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"],
+    [data-testid="stSidebarContent"] [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) { background-color: inherit; }
+    [data-testid="stSidebarContent"] [data-testid="stLayoutWrapper"]:has(> .st-key-appearance) { position: sticky; bottom: 0; z-index: 3; isolation: isolate; }
+    [data-testid="stSidebarContent"] [data-testid="stLayoutWrapper"]:has(> .st-key-appearance)::before {
+        content: ""; position: absolute; z-index: -1;
+        top: 0; bottom: 0; left: -48px; right: -48px; background-color: inherit;
+    }
+}

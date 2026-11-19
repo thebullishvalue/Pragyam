@@ -76,6 +76,7 @@ from ui.tabs import (
 )
 from ui.components import (
     panel,
+    render_control_hint,
     render_empty_state,
     render_header,
     render_kpi_strip,
@@ -83,7 +84,6 @@ from ui.components import (
     render_outcome_grid,
     render_system_grid,
     render_notice_rail,
-    render_rail_readout,
     render_section_header,
     render_ticker,
     render_top_bar,
@@ -1590,6 +1590,14 @@ def main():
         universe, selected_index = render_universe_selector()
         st.session_state.selected_universe = universe
         st.session_state.selected_index = selected_index
+        # How many names the choice resolves to, under the control it describes (it was a row
+        # of a Session readout below the run button; the family's rails hold controls only).
+        try:
+            _syms, _ = resolve_universe(universe, selected_index)
+            _n = len(_syms) if _syms is not None else 0
+            render_control_hint(f"{_n} symbols · yfinance" if _n else "No symbols resolved")
+        except Exception:  # noqa: BLE001 — a hint, never a failure
+            render_control_hint("Symbols unresolved")
 
         # The cache key every fetch is stored under (panel, regime).
         # A Custom List's name and index say nothing about which symbols were
@@ -1650,31 +1658,6 @@ def main():
             }
             st.session_state["run_analysis"] = True
             st.rerun()
-
-        # Session readout — what this rail is currently pointed at. Rendered
-        # through the shared rail component rather than hand-built spec rows,
-        # so it carries the same type, alignment and tone as every other
-        # readout in the app.
-        st.markdown('<div class="sidebar-title">Session</div>', unsafe_allow_html=True)
-        try:
-            symbols_list, status_msg = resolve_universe(universe, selected_index)
-            num_symbols = len(symbols_list) if symbols_list is not None else 0
-            _rows = [("Universe", universe, "")]
-            if selected_index:
-                _rows.append(("Index", selected_index, ""))
-            _rows += [
-                ("Symbols", str(num_symbols), "accent" if num_symbols else "short"),
-                ("Source", "yfinance", ""),
-                ("Version", VERSION, ""),
-            ]
-        except Exception:
-            _rows = [
-                ("Universe", universe, ""),
-                ("Symbols", "unresolved", "short"),
-                ("Source", "yfinance", ""),
-                ("Version", VERSION, ""),
-            ]
-        render_rail_readout(_rows)
 
         # ── Appearance ────────────────────────────────────────────────────
         # LAST control in the rail, deliberately: it is the least consequential
