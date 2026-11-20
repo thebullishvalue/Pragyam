@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ---
 
+## [13.0.20] - 2026-11-20
+### Fixed
+- **A tooltip is one box, in the family's note type.** Every `help=` tip, the rail's refresh hint
+  among them, drew a box inside a box: the tooltip rule styled the tip and the wrapper Streamlit
+  nests in it alike, so it had two borders, two shadows and its padding twice. Its words kept
+  Streamlit's own markdown type (Source Sans, 14px), so a two-sentence hint stood 250px tall in a
+  narrow column. The wrapper is plain again and the words take the 10px mono note tier the rule
+  always asked for: the same hint is one box, about half as tall, with every line inside it.
+
 ## [13.0.19] - 2026-11-19
 ### Changed
 - **The rail holds controls only.** The Session readout under the controls is gone (universe,

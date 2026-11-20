@@ -3558,3 +3558,26 @@ input, textarea { caret-color: var(--ink) !important; }
         top: 0; bottom: 0; left: -48px; right: -48px; background-color: inherit;
     }
 }
+
+/* ── A tooltip is one box, in the family's note type ─────────────────────────────
+   The tooltip rule styles [role="tooltip"] and the div inside it alike, and Streamlit
+   nests one in the other, so every help= tip drew a box inside a box: two borders, two
+   shadows, the padding twice, and the words squeezed into 128px of a 204px tip. The words
+   never took the rule's type either: they sit in Streamlit's markdown, which sets its own
+   face and size (Source Sans, 14px), so a two-sentence hint stood 250px tall. The outer
+   box keeps the look; the inner div is a wrapper again; the words take the 10px mono note
+   tier the rule always asked for, and the markdown's negative bottom margin (which cancelled
+   a paragraph margin the tip no longer has) goes, or the last line falls out of the box. */
+[data-baseweb="tooltip"] > div,
+[role="tooltip"] > div {
+    background: transparent !important; border: 0 !important; border-radius: 0 !important;
+    box-shadow: none !important; padding: 0 !important; max-width: none !important;
+}
+[data-testid="stTooltipContent"] { padding: 0 !important; max-width: none !important; }
+[data-testid="stTooltipContent"],
+[data-testid="stTooltipContent"] * {
+    font-family: var(--mono) !important; font-size: var(--fs-2xs) !important;
+    line-height: 1.6 !important; color: var(--ink) !important;
+}
+[data-testid="stTooltipContent"] p,
+[data-testid="stTooltipContent"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
