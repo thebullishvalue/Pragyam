@@ -1,57 +1,65 @@
-PROPRIETARY SOFTWARE LICENSE AGREEMENT
+PRAGYAM — Proprietary Software License
+Part of the Pragyam product family
 
-Copyright (c) 2024-2026 @thebullishvalue. All Rights Reserved.
+Copyright (c) 2024–2026 @thebullishvalue. All rights reserved.
 
-NOTICE: This software and associated documentation files (the "Software") 
-are proprietary to @thebullishvalue and are protected by copyright law and 
-international treaties.
 
-GRANT OF LICENSE
-Subject to the terms of this Agreement, @thebullishvalue grants to the 
-Licensee a non-exclusive, non-transferable license to use the Software 
-solely for the Licensee's internal business purposes.
+1. Ownership
 
-RESTRICTIONS
-The Licensee shall NOT:
-1. Copy, modify, or distribute the Software
-2. Reverse engineer, decompile, or disassemble the Software
-3. Rent, lease, or lend the Software to third parties
-4. Remove or alter any proprietary notices on the Software
-5. Use the Software to develop competing products
-6. Share access credentials or API keys with unauthorized users
+   PRAGYAM, including its source code, documentation, data files, design assets,
+   models and analytical methods (together, the "Software"), is the exclusive
+   property of @thebullishvalue and is protected by copyright and other
+   intellectual-property laws.
 
-CONFIDENTIALITY
-The Software contains trade secrets and proprietary information of
-@thebullishvalue. The Licensee agrees to maintain the confidentiality
-of the Software and not disclose it to any third party.
+2. Access is not permission
 
-DISCLAIMER OF WARRANTIES
-THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS 
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+   Being able to view or obtain the Software, including through a public
+   repository, grants no right to use it. Without the prior written permission
+   of @thebullishvalue, you may not:
 
-LIMITATION OF LIABILITY
-IN NO EVENT SHALL @THEBULLISHVALUE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, 
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR IN 
-CONNECTION WITH THE USE OF THE SOFTWARE.
+     (a) copy, reproduce or modify the Software, or create works derived from it;
+     (b) distribute, publish, sublicense, sell, lease or lend the Software;
+     (c) run the Software, or a service built on it, for use by others;
+     (d) reverse-engineer, decompile or disassemble the Software, except where
+         the law expressly permits it despite this restriction;
+     (e) remove or alter any notice of copyright or ownership.
 
-INVESTMENT DISCLAIMER
-The Software is for informational and educational purposes only. It does 
-not constitute investment advice, and past performance does not guarantee 
-future results. Users should conduct their own due diligence and consult 
-with qualified financial advisors before making investment decisions.
+3. Permitted use
 
-TERMINATION
-This license is effective until terminated. @thebullishvalue may terminate 
-this license at any time if the Licensee breaches any term of this Agreement.
+   The Software may be used only by @thebullishvalue and by those it authorises
+   in writing, on the terms of that authorisation.
 
-GOVERNING LAW
-This Agreement shall be governed by the laws of India.
+4. Not investment advice
 
-CONTACT
-For licensing inquiries: thebullishvalue@gmail.com
+   The Software is a research and decision-support tool. Nothing it shows is
+   investment, financial, legal or tax advice, or a recommendation to buy or
+   sell any security. Markets carry the risk of loss, and past results,
+   including any measured or back-tested result, do not guarantee future
+   results. Every decision made with the Software is the user's own.
 
----
-@thebullishvalue
-India
-thebullishvalue@gmail.com
+5. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, ACCURACY AND NON-INFRINGEMENT.
+
+6. Limitation of liability
+
+   IN NO EVENT SHALL @thebullishvalue BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, INCLUDING ANY TRADING OR INVESTMENT LOSS, WHETHER IN AN ACTION OF
+   CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   SOFTWARE OR ITS USE.
+
+7. Third-party components
+
+   The Software relies on open-source libraries and on public market data, each
+   under its own licence or terms of use. Nothing in this licence changes those
+   terms.
+
+8. Termination
+
+   Any use in breach of these terms ends, at once, any permission to use the
+   Software.
+
+
+For permission to use the Software, contact @thebullishvalue.
