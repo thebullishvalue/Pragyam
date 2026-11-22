@@ -49,6 +49,11 @@ DEFAULT_BENCHMARK_NAME = "NIFTY 50"
 #: any window. See `alpha_period` in compute_metrics.
 CAGR_MIN_DAYS = 60
 
+# build_return_series' error when the price download itself came back empty. The
+# one error worth retrying: the Analytics tab does not cache it, where every other
+# error is a fact about the data that a retry would only repeat.
+FETCH_FAILED = "Unable to fetch historical data."
+
 TIMEFRAMES: Dict[str, Optional[int]] = {
     "1M": 30, "3M": 90, "6M": 180, "YTD": None,
     "1Y": 365, "2Y": 730, "5Y": 1825, "MAX": 3650,
@@ -502,7 +507,7 @@ def build_return_series(
                                                         benchmark_ticker, benchmark_name)
         peer_reason = "prices for its holdings could not be fetched"
     if port_prices.empty:
-        return _empty, _empty, None, "Unable to fetch historical data.", sorted(held), _empty, _empty, {}
+        return _empty, _empty, None, FETCH_FAILED, sorted(held), _empty, _empty, {}
 
     if anchor_date is not None:
         cut = pd.Timestamp(anchor_date)
@@ -604,6 +609,7 @@ def build_return_series(
 
 __all__ = [
     "CAGR_MIN_DAYS",
+    "FETCH_FAILED",
     "TIMEFRAMES",
     "RISK_FREE_RATE",
     "US_RISK_FREE_RATE",
