@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ---
 
+## [13.0.21] - 2026-11-22
+### Fixed
+- **A date more than ten years back is used, not silently replaced by today.** The date picker
+  carried Streamlit's default floor, ten years before its default value: an older date typed into
+  it stayed on screen with a red mark while the run used the last date the picker had accepted —
+  on a fresh session, today — so the book was curated today and Performance said "no forward
+  performance history yet". The picker now reaches back to 1 Jan 2000; a date before a universe's
+  own history fails its run with a message.
+- **The page says when the rail no longer matches the book.** Every page shows the last run that
+  completed, never the rail, so a date changed in the rail without pressing Run Analysis left
+  Performance reading "no forward history" for the old book. The notice rail now leads with
+  *The rail has changed since this book was curated*, naming each field that differs (date, style,
+  universe, capital, positions), and the Performance card names the rail's date beside the book's.
+- **A failed run no longer locks the pages.** `st.stop()` ended the run before its request was
+  cleared, so every later click replayed the same failed run and no page could be reached until
+  the inputs changed. The request is now consumed before it runs; a run that does not complete
+  puts the previous run's state back (Phase 1 had already replaced the regime, the training window
+  and the snapshot, so the old book showed beside the failed run's regime), and the notice rail says
+  *The last run did not complete* until one does — on the landing page when there is no earlier
+  book. An unexpected error in a run now stays on screen instead of being rerun away.
+- **A failed price download on Performance is retried, not served for half an hour.** The
+  performance series was cached with its error, so one rate-limited yfinance call showed
+  *Data unavailable* for the cache's 30 minutes. A download failure is now raised past the cache
+  and retried on the next visit; errors about the data itself are cached as before.
+
 ## [13.0.20] - 2026-11-20
 ### Fixed
 - **A tooltip is one box, in the family's note type.** Every `help=` tip, the rail's refresh hint

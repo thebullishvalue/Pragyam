@@ -228,6 +228,23 @@ def _init_session_state():
             st.session_state[key] = value
 
 
+# Every session key _run_analysis writes. A run that does not complete puts
+# these back as they were (see main()), so the pages never mix two runs.
+_RUN_STATE_KEYS = (
+    "portfolio", "run_context", "current_df", "regime_result_dict", "suggested_mix",
+    "training_data_window", "regime_history_series", "min_pos_pct_eff",
+    "max_pos_pct_eff", "debug_info",
+)
+
+
+def _run_label(date_value, style, universe, index) -> str:
+    """'01 Jun 2026 · Equal Weight · Index · NIFTY 50' — how a run is named in a notice."""
+    _d = (date_value.strftime("%d %b %Y") if isinstance(date_value, (date, datetime))
+          else str(date_value or "—"))
+    _u = f"{universe} · {index}" if index else str(universe or "—")
+    return f"{_d} · {style or '—'} · {_u}"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CACHED DATA FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -358,6 +375,12 @@ _REGIME_LOOKBACK_FILES = 100
 # fast 100-day panel; this longer panel is fetched (and cached for the hour,
 # shared across sessions) only when a run actually needs it.
 _CALIBRATION_LOOKBACK_FILES = 375
+
+# The earliest analysis date the rail offers. Wide on purpose: the Dow and the
+# older NSE listings carry yfinance history from before it, and a date earlier
+# than a universe's own history fails its run with a message rather than
+# building anything. The estimation panel reaches ~19 months before the date.
+_EARLIEST_ANALYSIS_DATE = date(2000, 1, 1)
 
 # Portfolio styles, derived from nco.METHOD_SPECS rather than hardcoded here.
 # Every style travels the identical pipeline — same eligibility filter, same
@@ -599,6 +622,55 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
     at = portfolio.attrs if hasattr(portfolio, "attrs") else {}
     spec = style_spec(ctx)
     out: "list[dict]" = []
+
+    # WHICH BOOK THIS IS. Every page reads the last run that completed, never
+    # the rail, so the rail can say one thing while the page shows another — a
+    # book curated today, with a past date in the rail, reads on Performance as
+    # "no forward history". Said first, because every figure below depends on it.
+    _book_label = html_module.escape(_run_label(
+        ctx.get("anchor_date"), ctx.get("investment_style"),
+        ctx.get("universe"), ctx.get("selected_index")))
+    _failed = st.session_state.get("run_incomplete")
+    if _failed:
+        out.append({
+            "kind": "warning",
+            "title": "The last run did not complete",
+            "body": (f"{html_module.escape(_run_label(_failed.get('anchor_date'), _failed.get('investment_style'), _failed.get('universe'), _failed.get('selected_index')))}"
+                     " stopped before it built a book; its error was shown when it ran. "
+                     f"Every page still shows the previous book — {_book_label}."),
+        })
+    else:
+        _rail = {
+            "Date": (ctx.get("anchor_date"), st.session_state.get("selected_date")),
+            "Style": (ctx.get("investment_style"), st.session_state.get("selected_style")),
+            "Universe": ((ctx.get("universe"), ctx.get("selected_index")),
+                         (st.session_state.get("selected_universe"),
+                          st.session_state.get("selected_index"))),
+            "Capital": (num(ctx.get("capital")), num(st.session_state.get("capital"))),
+            "Positions": (ctx.get("num_positions"), st.session_state.get("selected_positions")),
+        }
+        # A rail value that is not set (a session from before these keys) is not a change.
+        _changed = [k for k, (was, now) in _rail.items()
+                    if now not in (None, (None, None)) and was is not None and was != now]
+        if _changed:
+            def _show(key, value):
+                if key == "Date" and isinstance(value, (date, datetime)):
+                    return value.strftime("%d %b %Y")
+                if key == "Universe":
+                    return " · ".join(str(x) for x in value if x)
+                if key == "Capital":
+                    return f"₹{value:,.0f}"
+                return str(value)
+            out.append({
+                "kind": "warning",
+                "title": "The rail has changed since this book was curated",
+                "body": (f"This book is {_book_label}. The rail now differs in "
+                         + "; ".join(f"{k.lower()} ({html_module.escape(_show(k, _rail[k][0]))} → "
+                                     f"{html_module.escape(_show(k, _rail[k][1]))})"
+                                     for k in _changed)
+                         + ". Press Run Analysis to curate that one — until then every page "
+                           "shows this book."),
+            })
 
     cov_req = num(at.get("nco_coverage_required")) or 0.8
     uncovered = int(at.get("nco_positions_uncovered", 0) or 0)
@@ -907,8 +979,13 @@ def _run_analysis(
     symbols_key: str,
     universe: str,
     index: str,
-):
-    """Execute the 2-phase analysis pipeline."""
+) -> bool:
+    """Execute the 2-phase analysis pipeline.
+
+    True only when a book was curated. A failed step reports itself and ends the
+    script run with st.stop(), which raises past the caller; an unexpected error
+    is reported here and returns False. main() treats both alike.
+    """
     metrics = get_metrics()
     metrics.phases, metrics.errors, metrics.warnings = {}, [], []
     # Cleared with the rest of the per-run state, or a cache-hit run would
@@ -1455,7 +1532,7 @@ def _run_analysis(
             log.end_run()
             progress_container.empty()
             st.toast("Analysis Complete!")
-            return
+            return True
         else:
             # Defends against a stale style left in session state by an older
             # build — every live style maps into NCO_STYLES.
@@ -1475,6 +1552,7 @@ def _run_analysis(
         log.end_run("FAILED")
         metrics.add_error(type(e).__name__, str(e), "_run_analysis")
         st.error(f"Initialization failed: {e}")
+    return False
 
 
 def _render_footer() -> None:
@@ -1518,6 +1596,12 @@ def _render_appearance_control() -> None:
 def main():
     """Main application entry point."""
     _init_session_state()
+    # A run that did not complete left its snapshot of the previous run's state
+    # (see the run dispatch below); put it back before anything reads it.
+    _rollback = st.session_state.pop("run_rollback", None)
+    if _rollback is not None:
+        for _k, _v in _rollback.items():
+            st.session_state[_k] = _v
 
     # ─── The control rail ──────────────────────────────────────────────────
     # Everything GLOBAL lives here — what to curate, over what, with how much,
@@ -1539,8 +1623,16 @@ def main():
         selected_date = st.date_input(
             "Analysis date",
             value=datetime.now().date(),
+            # Explicit, because Streamlit's default floor is ten years before
+            # `value`, and it fails silently: an older date typed into the box
+            # stays on screen with a red mark while the widget keeps returning
+            # the last date it accepted — on a fresh session, today — so the
+            # run was curated today and Performance had nothing to measure.
+            min_value=_EARLIEST_ANALYSIS_DATE,
             max_value=datetime.now().date(),
-            help="The snapshot the book is curated as of.",
+            help=("The snapshot the book is curated as of — any day from "
+                  f"{_EARLIEST_ANALYSIS_DATE:%d %b %Y} to today. A date before a "
+                  "universe's history begins builds no book, and the run says so."),
             label_visibility="collapsed",
         )
         st.session_state.selected_date = selected_date
@@ -1584,6 +1676,7 @@ def main():
             ),
             label_visibility="collapsed",
         )
+        st.session_state.selected_style = investment_style
 
         # 3. Universe
         st.markdown('<div class="sidebar-title">Universe</div>', unsafe_allow_html=True)
@@ -1639,6 +1732,7 @@ def main():
             step=5,
             help="Maximum portfolio positions"
         )
+        st.session_state.selected_positions = num_positions
         st.session_state.min_pos_pct = 1.0 / 100
         st.session_state.max_pos_pct = 10.0 / 100
 
@@ -1670,15 +1764,37 @@ def main():
     # Main content area
     # ─── Show progress bar in main area (outside sidebar) when running analysis ───
     if st.session_state.get("run_analysis") and st.session_state.get("run_params"):
-        params = st.session_state["run_params"]
-        _run_analysis(
+        # The request is consumed BEFORE it runs. A failed step ends the script
+        # run with st.stop(), which raises past everything after the call, so
+        # clearing the flag afterwards left it set: every later click replayed
+        # the same failed run, and no page could be reached until the inputs
+        # changed.
+        params = st.session_state.pop("run_params")
+        st.session_state.pop("run_analysis", None)
+        # A run is all or nothing. Phase 1 replaces the regime, the snapshot and
+        # the regime history before curation can fail, so a failed run must put
+        # the previous run's state back — the pages then show one book, not the
+        # old book beside the failed run's regime. Both the snapshot and the
+        # "did not complete" marker are written BEFORE the run and cleared only
+        # when it completes: Streamlit drops session writes made after st.stop(),
+        # so nothing can be recorded on the way out of a failed one. The snapshot
+        # is put back at the top of the next script run (main()).
+        st.session_state["run_rollback"] = {k: st.session_state.get(k) for k in _RUN_STATE_KEYS}
+        st.session_state["run_incomplete"] = {
+            "anchor_date": params["selected_date"],
+            "investment_style": params["investment_style"],
+            "universe": params["universe"],
+            "selected_index": params["index"],
+        }
+        if not _run_analysis(
             params["selected_date_obj"], params["investment_style"],
             params["capital"], params["num_positions"], params["selected_date"],
             params["symbols_key"], params["universe"], params["index"],
-        )
-        # Clear the flag after analysis completes
-        st.session_state.pop("run_analysis", None)
-        st.session_state.pop("run_params", None)
+        ):
+            # The run reported its own error on this page; rerunning would wipe it.
+            st.stop()
+        st.session_state.pop("run_rollback", None)
+        st.session_state.pop("run_incomplete", None)
         # The sidebar painted BEFORE this run executed, so its regime card and
         # regime card still shows pre-run state ("Run Analysis to detect...")
         # — the freshly-computed regime sits in session_state but nothing
@@ -1692,6 +1808,15 @@ def main():
 
     if st.session_state.portfolio is None and not st.session_state.get("run_analysis"):
         _render_header()
+        _failed = st.session_state.get("run_incomplete")
+        if _failed:
+            # No earlier book to fall back to, so the failure is said here, or the
+            # next click would return to this page with no trace of the run.
+            render_warning_box(
+                "The last run did not complete",
+                _run_label(_failed.get("anchor_date"), _failed.get("investment_style"),
+                           _failed.get("universe"), _failed.get("selected_index"))
+                + " stopped before it built a book; its error was shown when it ran.")
         _render_landing_page()
         _render_footer()
     elif st.session_state.portfolio is not None:

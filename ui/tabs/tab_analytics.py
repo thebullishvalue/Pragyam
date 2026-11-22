@@ -91,7 +91,7 @@ def _analytics_series_cached(
     books from this run. Their names join the same download for the same
     reason.
     """
-    from analytics import build_return_series
+    from analytics import FETCH_FAILED, build_return_series
     _port = pd.DataFrame({"symbol": list(symbols), "units": list(units)})
     anchor_dt = datetime.fromisoformat(anchor_iso)
     _alt = dict(zip(symbols, alt_units)) if alt_units else None
@@ -132,7 +132,16 @@ def _analytics_series_cached(
             _t.ok(f"{_n_points} daily points"
                   + (f" · book {float(_port_value.iloc[-1] / _port_value.iloc[0] - 1):+.2%}"
                      if _n_points > 1 and float(_port_value.iloc[0]) > 0 else ""))
-        return result
+    if _err == FETCH_FAILED:
+        # Raised, not returned: st.cache_data keeps a return value for the TTL but
+        # never an exception, so one rate-limited download is retried on the next
+        # visit instead of being served as "unavailable" for half an hour.
+        raise _SeriesFetchFailed(_err)
+    return result
+
+
+class _SeriesFetchFailed(RuntimeError):
+    """The performance series' price download came back empty (analytics.FETCH_FAILED)."""
 
 
 def _reads_covariance(method: str) -> bool:
@@ -382,20 +391,33 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
     #    user timeframe picker). Handle edge cases. ──
     _run_ctx = st.session_state.get("run_context") or {}
     _sel = _run_ctx.get("anchor_date") or st.session_state.get("selected_date")
-    anchor_date = _sel if isinstance(_sel, date) else (
-        _sel.date() if isinstance(_sel, datetime) else datetime.now().date()
+    # datetime first: it is a subclass of date, and left as one it cannot be
+    # compared with `today` below.
+    anchor_date = _sel.date() if isinstance(_sel, datetime) else (
+        _sel if isinstance(_sel, date) else datetime.now().date()
     )
     today = datetime.now().date()
 
     # Edge: anchor is today or in the future → no forward history to measure.
     if anchor_date >= today:
+        # The anchor is the book's, not the rail's: a past date picked in the
+        # rail measures nothing until it is run. Said outright when the two
+        # differ, since that is the usual way to land here.
+        _rail = st.session_state.get("selected_date")
+        _rail = _rail.date() if isinstance(_rail, datetime) else _rail
+        _rail_differs = isinstance(_rail, date) and _rail != anchor_date
         render_interpretation_card(
             title="ANCHORED TO TODAY",
             body=(
-                f"The analysis date is <strong>{anchor_date.strftime('%d %b %Y')}</strong>, so there "
-                "is no forward performance history yet. Analytics measure the curated book from the "
-                "analysis date to the present — pick an earlier analysis date (with at least a few "
-                "trading days elapsed) to see metrics."
+                f"This book was curated for <strong>{anchor_date.strftime('%d %b %Y')}</strong>, so "
+                "there is no forward performance history yet. "
+                + (f"The rail now reads <strong>{_rail.strftime('%d %b %Y')}</strong> — press "
+                   "<strong>Run Analysis</strong> to curate the book for that date and measure it "
+                   "from there."
+                   if _rail_differs else
+                   "Analytics measure the curated book from the analysis date to the present — "
+                   "pick an earlier analysis date (with at least a few trading days elapsed) and "
+                   "press <strong>Run Analysis</strong> to see metrics.")
             ),
             color="info",
         )
@@ -460,12 +482,22 @@ def _render_analytics_tab(portfolio: pd.DataFrame):
         for code in METHOD_ORDER if code in _peer_books
     ) or None
 
-    with st.spinner(f"Loading performance history · {bench_name} benchmark…"):
-        (port_value, port_returns, bench_returns, err, unpriced,
-         alt_value, bench_value, peer_out) = _analytics_series_cached(
-            _symbols, _units, anchor_dt.isoformat(), days_back, bench_ticker, bench_name,
-            alt_units=_alt_units, peer_units=_peer_units,
+    try:
+        with st.spinner(f"Loading performance history · {bench_name} benchmark…"):
+            (port_value, port_returns, bench_returns, err, unpriced,
+             alt_value, bench_value, peer_out) = _analytics_series_cached(
+                _symbols, _units, anchor_dt.isoformat(), days_back, bench_ticker, bench_name,
+                alt_units=_alt_units, peer_units=_peer_units,
+            )
+    except _SeriesFetchFailed as _e:
+        render_interpretation_card(
+            title="DATA UNAVAILABLE",
+            body=(f"Could not build the performance series: {html_module.escape(str(_e))} "
+                  "The price download came back empty — usually a passing yfinance limit. "
+                  "Nothing was cached, so opening this page again retries it."),
+            color="danger",
         )
+        return
 
     if err:
         render_interpretation_card(
