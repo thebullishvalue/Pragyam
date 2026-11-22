@@ -2,9 +2,9 @@
 The family console: terminal output for the Pragyam family.
 
 Shared, byte for byte, by Tattva, Nishkarsh, Nivesa, Pragyam, Arthagati, Samhita, Swing,
-Sanket and VAAYDO, as the fidelity block of ``theme.css`` is for the page: one grammar for
-everything an app writes to the terminal that runs it. Edit the family copy and apply it to
-every member; a change made in one member alone is a fork.
+Sanket, VAAYDO and Vyāpti, as the fidelity block of ``theme.css`` is for the page: one
+grammar for everything an app writes to the terminal that runs it. Edit the family copy and
+apply it to every member; a change made in one member alone is a fork.
 
 The grammar
 -----------
