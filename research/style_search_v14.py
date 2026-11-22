@@ -34,6 +34,39 @@ THE BAR — a style is ACCEPTED only if all three hold:
     A style that passes 1 and 2 but not 3 is reported as UNPROVEN and is not shipped; the owner decides.
     The ETF window (19 months) and the top-30 books are reported, not ruled on.
 
+RESULT — DISCOVERY (run 2026-11-22 16:05; all 22 declared configurations, none added; committed before
+the holdout was run). Net CAGR margin over the best existing style in each cell, %/yr. Best existing:
+Nifty E1 HRP 20.39, Nifty E2 EW 18.99, Dow E1 EW 14.39, Dow E2 EW 18.32. (The rebuilt panels reproduce the
+recorded baselines: Nifty 50 full span EW 20.10%, ERC −0.49, volatility 22.2 / 20.1 / 18.8.)
+                                  Nifty E1  Nifty E2  Dow E1  Dow E2   smallest   cells
+    F forecast_risk_parity p=0.5     -2.21     -0.42   -0.49   -0.77      -2.21     0/4  ← finalist
+    F forecast_risk_parity p=1       -2.76     -0.78   -0.93   -1.50      -2.76     0/4
+    F forecast_risk_parity p=2       -3.90     -1.26   -1.90   -2.81      -3.90     0/4
+    F forecast_erc window=126        -1.67     -0.82   -0.94   -1.24      -1.67     0/4
+    F forecast_erc window=252        -1.35     -0.65   -0.98   -1.25      -1.35     0/4  ← finalist
+    F exposure_dial floor=0.25       -2.32     +0.28   -0.41   -0.07      -2.32     1/4
+    F exposure_dial floor=0.5        -2.11     +0.20   -0.25   -0.06      -2.11     1/4
+    F exposure_dial floor=0.75       -2.11     +0.09   -0.17   -0.05      -2.11     1/4  ← finalist
+    F trend_tape floor=0.25          -1.86     +0.30   -0.34   -0.02      -1.86     1/4
+    F trend_tape floor=0.5           -1.63     +0.24   -0.15   -0.01      -1.63     1/4
+    F trend_tape floor=0.75          -1.63     +0.13   -0.05   -0.00      -1.63     1/4  ← finalist
+    F breadth_switch thr=0.4         -2.30     -0.29   -0.33   -0.24      -2.30     0/4
+    F breadth_switch thr=0.5         -1.97     -0.38   -0.07   -0.29      -1.97     0/4  ← finalist
+    F breadth_switch thr=0.6         -2.03     -0.80   +0.31   -0.76      -2.03     1/4
+    G rmt_erc window=252             -0.56     -0.79   -0.91   -1.45      -1.45     0/4
+    G rmt_erc window=504             -0.95     -0.38   -0.89   -1.37      -1.37     0/4  ← finalist
+    G max_enb                        -0.14     -0.30   -1.05   -1.15      -1.15     0/4  ← finalist
+    G network_periphery lam=0.25     -0.13     -0.06   +0.13   +0.65      -0.13     2/4  ← finalist
+    G network_periphery lam=0.5      +1.37     -0.28   +0.14   +1.48      -0.28     3/4
+    G exp_gradient eta=0.05          -1.78     +0.20   -0.01   +0.14      -1.78     2/4  ← finalist
+    G exp_gradient eta=0.3           -2.11     +1.46   -0.04   +0.92      -2.11     2/4
+    G spectral_parity                +0.29     +0.58   +0.42   -0.54      -0.54     3/4  ← finalist
+NO configuration beats the best existing style in all four discovery cells, so none can meet bar 1.
+Family F loses Nifty E1 (the 2008 crash era, HRP's cell) in every configuration, by 1.35 to 3.90 %/yr:
+the risk-forecast books are not defensive enough to match HRP there, and the dial and the trend tape
+lean toward recent strength, which that era punished. Closest: network_periphery (3/4 at λ = 0.5,
+2/4 at 0.25) and spectral_parity (3/4). As declared, all ten finalists still go to the holdout once.
+
 Run:   python research/style_search_v14.py discovery        (writes research/v14_discovery.pkl)
        python research/style_search_v14.py holdout          (once; writes research/v14_holdout.pkl)
 """
