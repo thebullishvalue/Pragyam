@@ -53,7 +53,14 @@ PRE-STATED EXPECTATION
     between the two ends on breadth; the 2007-26 sample has few breadth troughs, so its edge, if any,
     rests on few events.
 
-RESULT — recorded below by research/style_search_v14.py after the runs, never before.
+RESULT (2026-11-22; tables in research/style_search_v14.py) — ALL FIVE REJECTED.
+    Discovery: no configuration beat the best existing style in more than one of the four cells. Every
+    configuration lost Nifty E1 (the 2008 crash era, HRP's cell) by 1.35 to 3.90 %/yr: the forecast-risk
+    books (F1, F2) are less defensive than HRP's bisection there, and F3 / F4 lean toward recent strength,
+    which that era punished. Outside Nifty E1, F3 and F4 sit within ±0.7 %/yr of the best existing style
+    in every cell (their monthly returns 0.999-1.000 correlated with 1/N's); F1, F2 and F5 trail it. Largest full-span t
+    0.20 (exposure_dial). Pragyam's risk engine forecasts risk well on one chart; across 30-50 names whose
+    risks move together, a better per-name forecast barely changes the book.
 """
 from __future__ import annotations
 

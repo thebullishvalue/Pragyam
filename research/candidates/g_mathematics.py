@@ -63,7 +63,15 @@ PRE-STATED EXPECTATION
     will be flattered by survivorship; the point-in-time Dow is its real test. G5 is the most likely to
     sit near 1/N: three clusters of roughly equal size give each name about its equal share.
 
-RESULT — recorded below by research/style_search_v14.py after the runs, never before.
+RESULT (2026-11-22; tables in research/style_search_v14.py) — ALL FIVE REJECTED.
+    G1 and G2 behaved as risk allocators should: lower volatility than 1/N (Nifty 20.3 and 19.9 against
+    22.2), at a return cost in most cells; G2 has Nifty's best return per unit of risk after HRP (1.02
+    against 1.05). G3 came closest — 3/4 discovery cells at λ = 0.5, the finalist (λ = 0.25) 2/4, +0.45 %/yr
+    over 1/N on Nifty over the full span — but lost every E3 cell and the point-in-time Dow. G4 at η = 0.05
+    barely leaves 1/N (+0.04 %/yr, t 0.69, the search's largest). G5 won 3/4 discovery cells and then lost
+    all three 2020+ cells (−2.68 Nifty, −1.27 Dow, −0.88 point-in-time Dow): the overfit the holdout is for.
+    None reaches bar 3; the mathematics is sound and the universes are too correlated for any weighting
+    rule to move the book far from 1/N (every finalist 0.98-1.00 correlated with it, month by month).
 """
 from __future__ import annotations
 

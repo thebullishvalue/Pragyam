@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ---
 
+## [Unreleased]
+### 🔬 Research — the v14 style search: ten new styles, none shipped
+No change to the app: nothing cleared the bar, so Equal Weight, ERC and HRP remain the styles and
+Equal Weight the default. The record is in `research/style_search_v14.py` and the two candidate files.
+- **Ten styles, pre-registered and committed before any run.** Five on Pragyam's risk engine
+  (`pragyam.pine`, copied verbatim from thebullishvalue/Indicator into `research/pragyam_engine.py`)
+  and Vaaydo's breadth reading: forecast risk parity, forecast-covariance ERC, the exposure dial, the
+  trend tape, a breadth switch. Five from mathematics first: random-matrix-cleaned ERC, maximum
+  effective number of minimum-torsion bets, correlation-network periphery, the exponentiated-gradient
+  universal portfolio, spectral-cluster parity. Vaaydo's own option-positioning signal starts in
+  July 2024 in its data, too short for these eras, and was not tested.
+- **The bar.** Beat the best of EW / ERC / HRP in all six cells (2007-13, 2014-19, 2020+ × Nifty 50,
+  Dow 30), not trail it on the point-in-time Dow since 2020, and a full-span t of at least 2.576
+  (Bonferroni over the ten finalists). Discovery on 2007-19 (22 configurations); the 2020+ holdout run
+  once on one finalist per style.
+- **All ten rejected.** None beat the best existing style in all four discovery cells; in the holdout
+  none passes the six-cell bar, eight trail on the point-in-time Dow, and the largest t is 0.69.
+  Spectral parity, the best in discovery (3 of 4 cells), lost every 2020+ cell. Every finalist's
+  monthly return is 0.98-1.00 correlated with Equal Weight's: a weighting rule moves a book of names
+  this correlated within noise of 1/N.
+- **The research panels rebuilt** (2006-2026) reproduce the recorded baselines: Nifty 50 Equal Weight
+  20.10 %/yr, ERC −0.49 against it, volatility 22.2 / 20.1 / 18.8.
+
 ## [13.0.21] - 2026-11-22
 ### Fixed
 - **A date more than ten years back is used, not silently replaced by today.** The date picker

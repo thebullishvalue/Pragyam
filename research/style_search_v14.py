@@ -67,6 +67,39 @@ the risk-forecast books are not defensive enough to match HRP there, and the dia
 lean toward recent strength, which that era punished. Closest: network_periphery (3/4 at λ = 0.5,
 2/4 at 0.25) and spectral_parity (3/4). As declared, all ten finalists still go to the holdout once.
 
+RESULT — HOLDOUT (run once, 2026-11-22 16:13, on the ten finalists above). Margin over the best existing
+style per cell, %/yr net. Best existing in E3: Equal Weight on both (Nifty 22.57, Dow 14.23); on the
+point-in-time Dow, E3: EW 11.00 · ERC 10.70 · HRP 10.00. t = full-span paired t of the monthly excess over
+each universe's full-span best (Equal Weight on both), averaged across the two (bar 3: t ≥ 2.576).
+                               Nifty                   Dow            PIT Dow  full span      ETF   top-30
+                              E1     E2     E3      E1     E2     E3      E3   t   %/yr    window  Nifty  Dow
+    breadth_switch thr=.5  -1.97  -0.38  -0.01   -0.07  -0.29  -0.42   -0.42 -1.11 -0.32    +0.03  -1.20 -0.26
+    exp_gradient eta=.05   -1.78  +0.20  +0.02   -0.01  +0.14  +0.32   +0.06 +0.69 +0.04    +0.02  -0.94 +0.15
+    exposure_dial fl=.75   -2.11  +0.09  -0.23   -0.17  -0.05  +0.66   +0.36 +0.20 +0.03    -0.56  -1.45 +0.15
+    forecast_erc w=252     -1.35  -0.65  -1.49   -0.98  -1.25  -1.21   -0.31 -1.46 -0.70    +1.73  -2.44 -1.14
+    forecast_risk_par p=.5 -2.21  -0.42  -0.86   -0.49  -0.77  -0.63   -0.11 -2.47 -0.49    -0.50  -4.85 -0.62
+    max_enb                -0.14  -0.30  -1.96   -1.05  -1.15  -1.37   -0.48 -1.16 -0.66    +1.63  -1.47 -1.19
+    network_periphery .25  -0.13  -0.06  -0.26   +0.13  +0.65  -0.35   -0.48 +0.48 +0.13    +0.70  +0.74 +0.12
+    rmt_erc w=504          -0.95  -0.38  -1.89   -0.89  -1.37  -1.62   -0.49 -1.79 -0.82    -0.31  -2.06 -1.29
+    spectral_parity        +0.29  +0.58  -2.68   +0.42  -0.54  -1.27   -0.88 -0.71 -0.40    +1.33  +0.09 -0.45
+    trend_tape fl=.75      -1.63  +0.13  -0.27   -0.05  -0.00  -0.04   -0.08 -0.76 -0.06    -0.21  -0.66 -0.03
+
+VERDICT: ALL TEN REJECTED. None passes bar 1 (no style beats the best existing in all six cells), eight fail
+bar 2 (behind on the point-in-time Dow), and none comes near bar 3 (largest t 0.69, exp_gradient at
+η = 0.05 — a learner that, at that rate, barely leaves 1/N: +0.04 %/yr). Nothing enters the system; Equal
+Weight stays the default.
+    * The holdout caught the overfit: spectral_parity, 3/4 in discovery, lost every 2020+ cell (Nifty
+      −2.68, Dow −1.27, point-in-time Dow −0.88).
+    * Every finalist's monthly net return is 0.98-1.00 correlated with Equal Weight's, full span, on both
+      universes (turnover 0.20-1.13x/yr against 1/N's 0.27-0.37x): in universes whose names move this
+      much together a weighting rule moves the book within noise of 1/N, which is why none beats it
+      reproducibly — the ceiling the v11 notes put on the ETF book (~1.9 effective bets), measured again.
+    * The best full-span figures, both inside noise: network_periphery +0.45 %/yr on Nifty and +0.12 on
+      the Dow (behind in E3 on both, and on the point-in-time Dow); max_enb has Nifty's best return per
+      unit of risk after HRP (1.02 against HRP's 1.05 and 1/N's 0.94) at −0.20 %/yr.
+    * The ETF window (19 months) and the top-30 books are reported, not ruled on; several read positive
+      there (forecast_erc +1.73, max_enb +1.63 on the ETF window), which over 19 months is noise.
+
 Run:   python research/style_search_v14.py discovery        (writes research/v14_discovery.pkl)
        python research/style_search_v14.py holdout          (once; writes research/v14_holdout.pkl)
 """
