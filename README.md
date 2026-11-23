@@ -83,7 +83,7 @@ is cached.
 
 ## The Pragyam Family
 
-Ten Streamlit applications built on one design system and one set of components, so a
+Eleven Streamlit applications built on one design system and one set of components, so a
 panel, a table, a chart or a number reads the same in each.
 
 | Product | What it is |
@@ -95,6 +95,7 @@ panel, a table, a chart or a number reads the same in each.
 | **Pragyam** · *this repository* | Portfolio curation that spreads risk rather than predicting returns |
 | [**Sanket**](https://github.com/thebullishvalue/Sanket) | A market signal screener: what fired, what is about to, and whether it has paid |
 | [**Vaaydo**](https://github.com/thebullishvalue/Vaaydo) | An F&O trade screener on option positioning, with futures tickets |
+| [**Anumaan**](https://github.com/thebullishvalue/Indicator) | A chart terminal: calibrated risk, stops and exposure, audited on the chart it is on |
 | [**Nivesa**](https://github.com/thebullishvalue/Nivesa) | A bond portfolio ledger: cost, yield, duration and cashflows across accounts |
 | [**Samhita**](https://github.com/thebullishvalue/Samhita) | A portfolio tracker: live prices, performance and risk against the benchmark |
 | [**Swing**](https://github.com/thebullishvalue/Swing) | A portfolio tracker for the swing book, on the same engine as Samhita |
