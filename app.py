@@ -794,6 +794,37 @@ def _book_notices(portfolio: pd.DataFrame, ctx: dict) -> "list[dict]":
     return out
 
 
+#: Every page: (group, title, icon, url path). One table for both navigations: the app
+#: registers its pages on every run, hidden before a book exists, so the same addresses always
+#: resolve. Grouped by what a reader is asking (see _render_results).
+PAGES = (
+    ("The Book", "Holdings", ":material/inventory_2:", "_page_holdings"),
+    ("The Book", "Performance", ":material/show_chart:", "_page_performance"),
+    ("Context", "Regime", ":material/explore:", "_page_regime"),
+    ("System", "Broker Sync", ":material/sync_alt:", "_page_broker"),
+    ("System", "Configuration", ":material/tune:", "_page_system"),
+)
+
+
+def _hidden_pages(render) -> None:
+    """Register every page, hidden, each drawing ``render`` (the landing page).
+
+    Before a run there is nothing for the pages to show, and the app used to draw the landing
+    page without registering them at all. A session that starts on a page's address, or
+    restarts under an open one (Streamlit Cloud reboots the app on every push to main, and
+    wakes a sleeping one the same way), then held links to pages it had never registered: the
+    landing page showed, and every link in the rail did nothing until the next run. Registered
+    and hidden, every address resolves, the stale links go, and the page the reader was on
+    comes back after a run.
+    """
+    def page() -> None:
+        render()
+        _render_footer()
+
+    st.navigation([st.Page(page, title=title, icon=icon, url_path=path, default=(i == 0))
+                   for i, (_, title, icon, path) in enumerate(PAGES)], position="hidden").run()
+
+
 def _render_results(display_capital: float):
     """Render results page with portfolio, regime, and system tabs."""
     portfolio = st.session_state.portfolio
@@ -952,20 +983,12 @@ def _render_results(display_capital: float):
     # Grouped by what a reader is asking. THE BOOK is what was curated; CONTEXT
     # is the market it was curated into, which nothing downstream depends on;
     # SYSTEM is how it was produced and what to do with it next.
-    pages = {
-        "The Book": [
-            st.Page(_page_holdings, title="Holdings",
-                    icon=":material/inventory_2:", default=True),
-            st.Page(_page_performance, title="Performance", icon=":material/show_chart:"),
-        ],
-        "Context": [
-            st.Page(_page_regime, title="Regime", icon=":material/explore:"),
-        ],
-        "System": [
-            st.Page(_page_broker, title="Broker Sync", icon=":material/sync_alt:"),
-            st.Page(_page_system, title="Configuration", icon=":material/tune:"),
-        ],
-    }
+    render_page = {"Holdings": _page_holdings, "Performance": _page_performance, "Regime": _page_regime,
+                   "Broker Sync": _page_broker, "Configuration": _page_system}
+    pages: dict = {}
+    for i, (group, title, icon, path) in enumerate(PAGES):
+        pages.setdefault(group, []).append(
+            st.Page(render_page[title], title=title, icon=icon, url_path=path, default=(i == 0)))
     st.navigation(pages, position="sidebar").run()
     _render_footer()
 
@@ -1807,18 +1830,21 @@ def main():
         st.rerun()
 
     if st.session_state.portfolio is None and not st.session_state.get("run_analysis"):
-        _render_header()
         _failed = st.session_state.get("run_incomplete")
-        if _failed:
-            # No earlier book to fall back to, so the failure is said here, or the
-            # next click would return to this page with no trace of the run.
-            render_warning_box(
-                "The last run did not complete",
-                _run_label(_failed.get("anchor_date"), _failed.get("investment_style"),
-                           _failed.get("universe"), _failed.get("selected_index"))
-                + " stopped before it built a book; its error was shown when it ran.")
-        _render_landing_page()
-        _render_footer()
+
+        def _cold_start() -> None:
+            _render_header()
+            if _failed:
+                # No earlier book to fall back to, so the failure is said here, or the
+                # next click would return to this page with no trace of the run.
+                render_warning_box(
+                    "The last run did not complete",
+                    _run_label(_failed.get("anchor_date"), _failed.get("investment_style"),
+                               _failed.get("universe"), _failed.get("selected_index"))
+                    + " stopped before it built a book; its error was shown when it ran.")
+            _render_landing_page()
+
+        _hidden_pages(_cold_start)
     elif st.session_state.portfolio is not None:
         # Capital comes from the FROZEN run_context — the amount this book was
         # actually sized against — not the live sidebar widget. Streamlit reruns

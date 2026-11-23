@@ -30,6 +30,18 @@ Equal Weight the default. The record is in `research/style_search_v14.py` and th
 - **The research panels rebuilt** (2006-2026) reproduce the recorded baselines: Nifty 50 Equal Weight
   20.10 %/yr, ERC −0.49 against it, volatility 22.2 / 20.1 / 18.8.
 
+## [13.0.22] - 2026-11-23
+### Fixed
+- **A page link never goes dead.** Before a run there is nothing for the pages to show, and the
+  app drew the landing page without registering them at all. A session that started on a page's
+  address, or restarted under an open one (Streamlit Cloud reboots the app on every push to main,
+  and wakes a sleeping app the same way), kept the old page links on screen for pages it had never
+  registered: the next click showed the landing page, the address stayed where it was, and every
+  link in the rail did nothing until the next run. The pages are now registered on every run,
+  hidden before a book exists and each showing the landing page, so every address resolves, the
+  stale links go, and a new run brings the pages back. Found in Vyāpti, reproduced here the same
+  way.
+
 ## [13.0.21] - 2026-11-22
 ### Fixed
 - **A date more than ten years back is used, not silently replaced by today.** The date picker
