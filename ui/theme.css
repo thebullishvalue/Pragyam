@@ -3581,3 +3581,11 @@ input, textarea { caret-color: var(--ink) !important; }
 }
 [data-testid="stTooltipContent"] p,
 [data-testid="stTooltipContent"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
+
+/* ── A help icon follows its colour ───────────────────────────────────────────────
+   A widget's (?) is an SVG ring that Streamlit strokes with its own colour, near-white
+   at 60% (230, 234, 241) from the static dark base, whatever colour the icon is given.
+   On Paper it all but vanished: the rail's help icons, and Anumaan's Settings. The stroke
+   follows the colour, and the colour is the family's quiet ink, brighter on hover. */
+[data-testid="stTooltipIcon"] svg { stroke: currentColor !important; color: var(--ink-quaternary) !important; }
+[data-testid="stTooltipIcon"]:hover svg { color: var(--ink-secondary) !important; }

@@ -30,6 +30,14 @@ Equal Weight the default. The record is in `research/style_search_v14.py` and th
 - **The research panels rebuilt** (2006-2026) reproduce the recorded baselines: Nifty 50 Equal Weight
   20.10 %/yr, ERC −0.49 against it, volatility 22.2 / 20.1 / 18.8.
 
+## [13.0.23] - 2026-11-24
+### Fixed
+- **Help icons show on Paper.** A widget's (?) is a ring that Streamlit strokes with its own colour, near-white at
+  60% from its static dark base, whatever colour the icon is given: on Paper the rail's hints (Capital, Positions) and the universe picker's (Market Index, Upload Symbol List) all but vanished.
+  The family's fidelity block now makes the stroke follow the colour, the quiet ink, brighter on hover.
+
+---
+
 ## [13.0.22] - 2026-11-23
 ### Fixed
 - **A page link never goes dead.** Before a run there is nothing for the pages to show, and the
