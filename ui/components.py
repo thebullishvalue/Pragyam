@@ -1055,6 +1055,7 @@ def render_data_table(
     table_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     @import url('{_TABLE_FONTS}');
     * {{ margin:0; padding:0; box-sizing:border-box; }}
+    html {{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }}   /* iOS keeps the type scale as written (theme.css: "Text keeps its size on a phone") */
     /* JetBrains Mono — the app's data face, and the one _TABLE_FONTS actually
        imports. This said 'IBM Plex Mono' while importing JetBrains, so the
        declared family was never loaded and every table in the app fell through

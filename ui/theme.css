@@ -3589,3 +3589,11 @@ input, textarea { caret-color: var(--ink) !important; }
    follows the colour, and the colour is the family's quiet ink, brighter on hover. */
 [data-testid="stTooltipIcon"] svg { stroke: currentColor !important; color: var(--ink-quaternary) !important; }
 [data-testid="stTooltipIcon"]:hover svg { color: var(--ink-secondary) !important; }
+
+/* ── Text keeps its size on a phone ───────────────────────────────────────────────
+   iOS Safari enlarges the text of a block it judges too wide to read on the screen
+   ("text autosizing"). A table that scrolls sideways with long lines in it (Nivesa's
+   Audit Trail) had its prose columns drawn at twice the size of the rest of the table
+   on an iPhone, and their headers with them. The family's type scale is already set
+   for a phone, so the browser keeps it as written. */
+html, body { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }
